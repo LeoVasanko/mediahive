@@ -1,0 +1,25 @@
+[project]
+name = "torrentmanager"
+version = "0.1.0"
+description = "Media torrent manager with download scanning and indexing"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "bencodepy>=0.9.5",
+    "httpx[http2]>=0.28.1",
+    "parse-torrent-title>=2.8.1",
+    "tqdm>=4.67.3",
+]
+
+[project.scripts]
+hivescan = "hivescan.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["hivescan"]
+
+[tool.uv.sources]
+parse-torrent-title = { git = "https://github.com/platelminto/parse-torrent-title.git" }

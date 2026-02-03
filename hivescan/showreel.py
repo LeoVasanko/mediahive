@@ -1,0 +1,704 @@
+"""
+Showreel generation module for media preview clips.
+
+Generates short video clips (reels) from movies and TV episodes using ffmpeg.
+Supports automatic black bar detection and removal, hardware-accelerated encoding,
+and HDR passthrough.
+"""
+
+import json
+import re
+import shlex
+import subprocess
+from collections import Counter
+from pathlib import Path
+from typing import Optional
+
+from tqdm import tqdm
+
+
+# Showreel timestamp positions in seconds (5, 10, 15, 20, 25 minutes)
+SHOWREEL_TIMESTAMPS = [5 * 60, 10 * 60, 15 * 60, 20 * 60, 25 * 60]
+
+
+def get_expected_showreel_paths(
+    media_folder: Path,
+    timestamps: list[int] = SHOWREEL_TIMESTAMPS,
+    media_root: Optional[Path] = None,
+) -> list[str]:
+    """
+    Compute the expected showreel paths without generating them.
+
+    Args:
+        media_folder: Folder for this specific media item
+        timestamps: List of timestamps (determines number of reels)
+        media_root: Root path for computing relative paths (optional)
+
+    Returns:
+        List of relative paths where showreels will be created
+    """
+    paths = []
+    for reel_num in range(1, len(timestamps) + 1):
+        output_path = media_folder / f"reel{reel_num}.webm"
+        if media_root:
+            try:
+                paths.append(str(output_path.relative_to(media_root)))
+            except ValueError:
+                paths.append(str(output_path))
+        else:
+            paths.append(str(output_path))
+    return paths
+
+
+def get_expected_episode_reel_path(
+    media_folder: Path,
+    season_num: int,
+    episode_num: int,
+    media_root: Optional[Path] = None,
+) -> str:
+    """
+    Compute the expected episode reel path without generating it.
+
+    Args:
+        media_folder: Folder for this series
+        season_num: Season number
+        episode_num: Episode number
+        media_root: Root path for computing relative paths (optional)
+
+    Returns:
+        Relative path where the reel will be created
+    """
+    output_path = media_folder / f"S{season_num:02d}E{episode_num:02d}.webm"
+    if media_root:
+        try:
+            return str(output_path.relative_to(media_root))
+        except ValueError:
+            return str(output_path)
+    return str(output_path)
+
+
+def movie_showreels_exist(media_folder: Path, timestamps: list[int] = SHOWREEL_TIMESTAMPS) -> bool:
+    """Check if all showreel files for a movie already exist."""
+    for reel_num in range(1, len(timestamps) + 1):
+        if not (media_folder / f"reel{reel_num}.webm").exists():
+            return False
+    return True
+
+
+def episode_reel_exists(media_folder: Path, season_num: int, episode_num: int) -> bool:
+    """Check if an episode reel file already exists."""
+    return (media_folder / f"S{season_num:02d}E{episode_num:02d}.webm").exists()
+
+
+def get_bluray_uri(video_path: str) -> Optional[str]:
+    """
+    Convert a Blu-ray index.bdmv path to an ffmpeg-compatible bluray: URI.
+
+    Args:
+        video_path: Path that may be a Blu-ray index.bdmv file
+
+    Returns:
+        bluray: URI if this is a Blu-ray disc, None otherwise
+    """
+    if not video_path.endswith(".bdmv"):
+        return None
+
+    path = Path(video_path)
+    # index.bdmv is in BDMV folder, so parent's parent is the disc root
+    # e.g., /path/to/disc/BDMV/index.bdmv -> /path/to/disc
+    if path.parent.name == "BDMV":
+        disc_root = path.parent.parent
+        return f"bluray:{disc_root}"
+
+    return None
+
+
+# Cache for AV1 encoder availability
+_av1_encoder_cache: Optional[str] = None
+
+
+def get_av1_encoder() -> str:
+    """
+    Detect the best available AV1 encoder.
+
+    Prefers hardware encoders (NVIDIA av1_nvenc) over software (libsvtav1).
+    Falls back to libsvtav1 if no hardware encoder is available.
+
+    Returns:
+        Encoder name to use with ffmpeg -c:v
+    """
+    global _av1_encoder_cache
+    if _av1_encoder_cache is not None:
+        return _av1_encoder_cache
+
+    # Check for NVIDIA AV1 encoder
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-encoders"],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        if "av1_nvenc" in result.stdout:
+            # Verify it actually works (driver support)
+            test_result = subprocess.run(
+                ["ffmpeg", "-f", "lavfi", "-i", "nullsrc=s=64x64:d=1", "-c:v", "av1_nvenc", "-f", "null", "-"],
+                capture_output=True,
+                timeout=10
+            )
+            if test_result.returncode == 0:
+                _av1_encoder_cache = "av1_nvenc"
+                return _av1_encoder_cache
+    except Exception:
+        pass
+
+    # Default to libsvtav1
+    _av1_encoder_cache = "libsvtav1"
+    return _av1_encoder_cache
+
+
+def get_encoder_options(encoder: str) -> list[str]:
+    """
+    Get encoder-specific options for the given AV1 encoder.
+
+    Args:
+        encoder: The encoder name (av1_nvenc, libsvtav1)
+
+    Returns:
+        List of ffmpeg arguments for encoder settings
+    """
+    if encoder == "av1_nvenc":
+        # NVIDIA hardware encoder - use constant quality mode
+        return ["-cq", "35", "-preset", "p4"]
+    else:
+        # libsvtav1 software encoder
+        return ["-crf", "38", "-preset", "6"]
+
+
+def detect_dovi_profile(video_path: str) -> Optional[int]:
+    """
+    Detect Dolby Vision profile from a video file.
+
+    Returns the DoVi profile number (5, 7, 8, etc.) or None if not DoVi.
+    Profile 5: Dual-layer, no HDR10 base (needs conversion)
+    Profile 7: Dual-layer with HDR10 base, but may have EL issues
+    Profile 8: Single-layer HDR10 compatible (usually OK)
+    """
+    try:
+        # Check for Dolby Vision configuration record in video stream
+        cmd = [
+            "ffprobe", "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "stream_side_data_list",
+            "-of", "json", video_path
+        ]
+        print(f"    $ {shlex.join(cmd)}")
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+
+        if result.returncode != 0:
+            return None
+
+        data = json.loads(result.stdout)
+        streams = data.get("streams", [])
+        if not streams:
+            return None
+
+        # Look for DOVI configuration in side data
+        side_data_list = streams[0].get("side_data_list", [])
+        for side_data in side_data_list:
+            side_data_type = side_data.get("side_data_type", "")
+            if "DOVI" in side_data_type or "Dolby Vision" in side_data_type:
+                # Try to extract profile from dv_profile field
+                dv_profile = side_data.get("dv_profile")
+                if dv_profile is not None:
+                    return int(dv_profile)
+
+        # Alternative: check using mediainfo-style detection via codec tag
+        # Some DoVi content has "dvhe" or "dvh1" codec tags
+        codec_cmd = [
+            "ffprobe", "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "stream=codec_tag_string,codec_name",
+            "-of", "csv=p=0", video_path
+        ]
+        codec_result = subprocess.run(codec_cmd, capture_output=True, text=True, timeout=30)
+        if codec_result.returncode == 0:
+            codec_info = codec_result.stdout.lower()
+            if "dvhe" in codec_info or "dvh1" in codec_info or "dav1" in codec_info:
+                # DoVi detected but profile unknown, assume needs conversion
+                return 7  # Conservative: treat as dual-layer
+
+        return None
+    except Exception as e:
+        print(f"    DoVi detection error: {e}")
+        return None
+
+
+def get_dovi_to_hdr10_filter() -> str:
+    """
+    Get the video filter string for converting DoVi to HDR10.
+
+    Uses libplacebo to strip DoVi metadata while preserving HDR10 colorspace.
+    No tonemapping is applied - this just converts the container format.
+    """
+    # libplacebo converts DoVi to clean HDR10 without tonemapping
+    # Preserves bt2020 primaries and SMPTE ST 2084 (PQ) transfer
+    return (
+        "libplacebo=colorspace=bt2020nc:color_primaries=bt2020:"
+        "color_trc=smpte2084:range=tv"
+    )
+
+
+def is_hdr_video(video_path: str) -> bool:
+    """
+    Check if a video file is HDR using ffprobe.
+
+    Returns True if the video has HDR metadata (bt2020, SMPTE ST 2084, etc.)
+    """
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe", "-v", "quiet", "-select_streams", "v:0",
+                "-show_entries", "stream=color_transfer,color_primaries,color_space",
+                "-of", "json", video_path
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        if result.returncode != 0:
+            return False
+
+        data = json.loads(result.stdout)
+        streams = data.get("streams", [])
+        if not streams:
+            return False
+
+        stream = streams[0]
+        color_transfer = stream.get("color_transfer", "")
+        color_primaries = stream.get("color_primaries", "")
+
+        # HDR indicators
+        hdr_transfers = ["smpte2084", "arib-std-b67"]  # PQ and HLG
+        hdr_primaries = ["bt2020"]
+
+        return color_transfer in hdr_transfers or color_primaries in hdr_primaries
+    except Exception:
+        return False
+
+
+def detect_crop(video_path: str) -> Optional[str]:
+    """
+    Detect black bars in a video and return the crop filter string.
+
+    Only runs on 16:9 (1.78:1) source videos, since other aspect ratios like
+    2.35:1 or 4:3 are already correctly framed. Trusts cropping results only
+    when symmetric (same top/bottom OR same left/right). Final coordinates
+    are aligned to 8 pixels.
+
+    Uses ffmpeg to analyze just 2 seconds of video at the 5-minute mark for speed.
+
+    Args:
+        video_path: Path to the video file (or bluray: URI)
+
+    Returns:
+        Crop filter string like "crop=1920:800:0:140" if black bars detected,
+        or None if no cropping needed or detection failed.
+    """
+    try:
+        # First, get source video dimensions to check if it's 16:9
+        dim_cmd = [
+            "ffprobe", "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "stream=width,height",
+            "-of", "csv=p=0", video_path
+        ]
+        print(f"    $ {shlex.join(dim_cmd)}")
+        dim_result = subprocess.run(dim_cmd, capture_output=True, text=True, timeout=30)
+        if dim_result.returncode != 0:
+            print(f"    Failed to get dimensions: {dim_result.stderr.strip()}")
+            return None
+
+        # Parse "width,height" output
+        parts = dim_result.stdout.strip().split(",")
+        if len(parts) < 2:
+            return None
+        src_width, src_height = int(parts[0]), int(parts[1])
+
+        # Check if source is 16:9 (allow small tolerance for weird resolutions)
+        # 16:9 = 1.777..., typical: 1920x1080, 3840x2160, 1280x720
+        aspect_ratio = src_width / src_height
+        if not (1.7 <= aspect_ratio <= 1.85):
+            # Not 16:9, skip crop detection (already correctly framed)
+            return None
+
+        # Use ffmpeg to run cropdetect on just 2 seconds at 5-minute mark
+        # This is much faster than scanning 60 seconds with ffprobe lavfi
+        cmd = [
+            "ffmpeg", "-hide_banner", "-ss", "300", "-i", video_path,
+            "-t", "2", "-vf", "cropdetect=limit=24:round=2:reset=0",
+            "-f", "null", "-"
+        ]
+        print(f"    $ {shlex.join(cmd)}")
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+
+        # cropdetect outputs to stderr like: [Parsed_cropdetect_0 @ ...] x1:0 x2:1919 y1:138 y2:941 w:1920 h:800 ...
+        # We need to parse the crop values from stderr
+        crop_pattern = re.compile(r'crop=(\d+):(\d+):(\d+):(\d+)')
+        crop_values = []
+        for line in result.stderr.split('\n'):
+            match = crop_pattern.search(line)
+            if match:
+                w, h, x, y = int(match.group(1)), int(match.group(2)), int(match.group(3)), int(match.group(4))
+                if w > 0 and h > 0 and x >= 0 and y >= 0:
+                    crop_values.append((w, h, x, y))
+
+        if not crop_values:
+            return None
+
+        # Use the most common crop values (mode) for stability
+        most_common = Counter(crop_values).most_common(1)
+        if not most_common:
+            return None
+
+        w, h, x, y = most_common[0][0]
+
+        # Only crop if there's meaningful black bar removal (at least 8 pixels offset)
+        if x < 8 and y < 8:
+            return None
+
+        # Validate symmetry: trust only if cropping is symmetric in one direction
+        # (same top/bottom for letterbox, OR same left/right for pillarbox)
+        # Allow up to 4 pixels of rounding error
+        left_crop = x
+        right_crop = src_width - (x + w)
+        top_crop = y
+        bottom_crop = src_height - (y + h)
+
+        horizontal_symmetric = abs(left_crop - right_crop) <= 4
+        vertical_symmetric = abs(top_crop - bottom_crop) <= 4
+
+        # Must be symmetric in at least one direction, but not require both
+        # (letterbox = vertical symmetric, pillarbox = horizontal symmetric)
+        if not (horizontal_symmetric or vertical_symmetric):
+            return None
+
+        # If cropping in both directions, both must be symmetric
+        if x >= 8 and y >= 8:
+            if not (horizontal_symmetric and vertical_symmetric):
+                return None
+
+        # Align all coordinates to 8 pixels (shrink content area if needed)
+        # x and y: round UP to next multiple of 8
+        x_aligned = ((x + 7) // 8) * 8
+        y_aligned = ((y + 7) // 8) * 8
+        # w and h: round DOWN to multiple of 8, accounting for adjusted x/y
+        w_aligned = ((w - (x_aligned - x)) // 8) * 8
+        h_aligned = ((h - (y_aligned - y)) // 8) * 8
+
+        # Ensure we still have valid dimensions
+        if w_aligned <= 0 or h_aligned <= 0:
+            return None
+
+        crop_result = f"crop={w_aligned}:{h_aligned}:{x_aligned}:{y_aligned}"
+        print(f"    Detected crop: {crop_result}")
+        return crop_result
+
+    except Exception as e:
+        print(f"    Crop detection error: {e}")
+        return None
+
+
+def get_video_duration(video_path: str) -> Optional[float]:
+    """
+    Get the duration of a video file in seconds using ffprobe.
+    """
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+                "-of", "json", video_path
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        if result.returncode != 0:
+            return None
+
+        data = json.loads(result.stdout)
+        duration = data.get("format", {}).get("duration")
+        return float(duration) if duration else None
+    except Exception:
+        return None
+
+
+def generate_showreel_images(
+    video_path: str,
+    media_folder: Path,
+    timestamps: list[int] = SHOWREEL_TIMESTAMPS,
+    title: str = None,
+    pbar: Optional[tqdm] = None,
+) -> list[str]:
+    """
+    Generate showreel video clips from a video file at specified timestamps.
+
+    Saves 10-second clips in WebM format (AV1 video + Opus 2.0 audio), downscaled to max 720px width,
+    preserving original color metadata. Files are named reel1.webm, reel2.webm, etc.
+
+    Args:
+        video_path: Path to the video file (or index.bdmv for Blu-ray discs)
+        media_folder: Folder for this specific media item
+        timestamps: List of timestamps in seconds to capture
+        pbar: Optional tqdm progress bar to update
+
+    Returns:
+        List of relative paths to generated showreel video clips
+    """
+    if not video_path:
+        return []
+
+    # Handle Blu-ray disc structures using bluray: protocol
+    bluray_uri = get_bluray_uri(video_path)
+    if bluray_uri:
+        ffmpeg_input = bluray_uri
+    else:
+        if not Path(video_path).exists():
+            return []
+        ffmpeg_input = video_path
+
+    # Fast path: check if all showreel clips already exist before any ffprobe calls
+    existing_paths = []
+    all_exist = True
+    for reel_num in range(1, len(timestamps) + 1):
+        output_filename = f"reel{reel_num}.webm"
+        output_path = media_folder / output_filename
+        if output_path.exists():
+            existing_paths.append(str(output_path))
+        else:
+            all_exist = False
+            break
+
+    if all_exist and existing_paths:
+        return existing_paths
+
+    media_folder.mkdir(parents=True, exist_ok=True)
+
+    # Check video duration to avoid seeking past the end
+    duration = get_video_duration(ffmpeg_input)
+    if duration is None:
+        print(f"    Could not get duration for: {video_path}")
+        return []
+
+    # Filter timestamps that are within the video duration (with 40s margin for 10s clips)
+    valid_timestamps = [t for t in timestamps if t < (duration - 40)]
+    if not valid_timestamps:
+        # If video is too short, try to get at least one clip from middle
+        if duration > 60:
+            valid_timestamps = [int(duration / 2) - 5]  # Center the 10s clip
+        else:
+            return []
+
+    # Get the best available AV1 encoder
+    encoder = get_av1_encoder()
+    encoder_opts = get_encoder_options(encoder)
+
+    # Detect Dolby Vision profile for tonemapping (profiles 5/7 need conversion)
+    dovi_profile = detect_dovi_profile(ffmpeg_input)
+    needs_tonemap = dovi_profile is not None and dovi_profile in (5, 7)
+    if needs_tonemap:
+        print(f"    DoVi profile {dovi_profile} detected, will convert to HDR10")
+
+    # Detect black bars once for all clips (uses same video source)
+    crop_filter = detect_crop(ffmpeg_input)
+
+    generated_paths = []
+
+    for reel_num, timestamp in enumerate(valid_timestamps, 1):
+        output_filename = f"reel{reel_num}.webm"
+        output_path = media_folder / output_filename
+
+        # Skip if already exists
+        if output_path.exists():
+            generated_paths.append(str(output_path))
+            if pbar:
+                pbar.update(1)
+            continue
+
+        # Build video filter chain:
+        # 1. DoVi to HDR10 conversion (if needed) - must come first
+        # 2. Crop black bars (if detected)
+        # 3. Scale to max 720px width
+        vf_parts = []
+        if needs_tonemap:
+            vf_parts.append(get_dovi_to_hdr10_filter())
+        if crop_filter:
+            vf_parts.append(crop_filter)
+        vf_parts.append("scale='min(720,iw)':-2")
+        vf_filter = ",".join(vf_parts)
+        cmd = [
+            "ffmpeg", "-y", "-ss", str(timestamp), "-i", ffmpeg_input,
+            "-hide_banner", "-loglevel", "warning", "-stats",
+            "-map", "0:v:0", "-map", "0:a:0?",  # First video, first audio (optional)
+            "-t", "10",
+            "-vf", vf_filter,
+            "-c:v", encoder,
+            *encoder_opts,
+            "-c:a", "libopus",
+            "-ac", "2",
+            "-b:a", "128k",
+            str(output_path),
+        ]
+
+        print(f"    $ {shlex.join(cmd)}")
+        try:
+            result = subprocess.run(cmd, timeout=120)
+
+            if result.returncode == 0 and output_path.exists():
+                generated_paths.append(str(output_path))
+                if pbar:
+                    pbar.update(1)
+            else:
+                output_path.unlink(missing_ok=True)
+                if pbar:
+                    # Update remaining reels as skipped
+                    remaining = len(valid_timestamps) - reel_num + 1
+                    pbar.update(remaining)
+                    pbar.refresh()
+                # Abort remaining reels - if first one fails, others likely will too
+                break
+        except BaseException as e:
+            output_path.unlink(missing_ok=True)
+            if isinstance(e, (KeyboardInterrupt, SystemExit)):
+                raise
+            if pbar:
+                pbar.clear()
+            print(f"\n\033[91mError generating showreel for {title or 'unknown'} at {timestamp}s: {e}\033[0m")
+            if pbar:
+                # Update remaining reels as skipped
+                remaining = len(valid_timestamps) - reel_num + 1
+                pbar.update(remaining)
+                pbar.refresh()
+            # Abort remaining reels
+            break
+
+    return generated_paths
+
+
+def generate_episode_reel(
+    video_path: str,
+    media_folder: Path,
+    season_num: int,
+    episode_num: int,
+    pbar: Optional[tqdm] = None,
+) -> Optional[str]:
+    """
+    Generate a single 10-second reel video clip for a TV episode.
+
+    Saves clip as SxxExx.webm (e.g., S01E05.webm) in the series folder.
+    WebM container with AV1 video + Opus 2.0 audio, downscaled to max 720px width,
+    preserving original color metadata.
+
+    Args:
+        video_path: Path to the episode video file (or index.bdmv for Blu-ray discs)
+        media_folder: Folder for this series
+        season_num: Season number
+        episode_num: Episode number
+        pbar: Optional tqdm progress bar to update
+
+    Returns:
+        Relative path to generated image, or None if failed
+    """
+    if not video_path:
+        return None
+
+    # Handle Blu-ray disc structures using bluray: protocol
+    bluray_uri = get_bluray_uri(video_path)
+    if bluray_uri:
+        ffmpeg_input = bluray_uri
+    else:
+        if not Path(video_path).exists():
+            return None
+        ffmpeg_input = video_path
+
+    media_folder.mkdir(parents=True, exist_ok=True)
+
+    # Normalize episode code to SxxExx format
+    output_filename = f"S{season_num:02d}E{episode_num:02d}.webm"
+    output_path = media_folder / output_filename
+
+    # Skip if already exists
+    if output_path.exists():
+        return str(output_path)
+
+    # Check video duration
+    duration = get_video_duration(ffmpeg_input)
+    if duration is None:
+        return None
+
+    # Use 40% of total length for the clip start
+    actual_timestamp = int(duration * 0.4)
+    # Ensure we're at least 10 seconds in and have room for 10s clip
+    actual_timestamp = max(10, min(actual_timestamp, duration - 40))
+
+    # Get the best available AV1 encoder
+    encoder = get_av1_encoder()
+    encoder_opts = get_encoder_options(encoder)
+
+    # Detect Dolby Vision profile for tonemapping (profiles 5/7 need conversion)
+    dovi_profile = detect_dovi_profile(ffmpeg_input)
+    needs_tonemap = dovi_profile is not None and dovi_profile in (5, 7)
+    if needs_tonemap:
+        print(f"    DoVi profile {dovi_profile} detected, will convert to HDR10")
+
+    # Detect black bars for cropping
+    crop_filter = detect_crop(ffmpeg_input)
+
+    # Build video filter chain:
+    # 1. DoVi to HDR10 conversion (if needed) - must come first
+    # 2. Crop black bars (if detected)
+    # 3. Scale to max 720px width
+    vf_parts = []
+    if needs_tonemap:
+        vf_parts.append(get_dovi_to_hdr10_filter())
+    if crop_filter:
+        vf_parts.append(crop_filter)
+    vf_parts.append("scale='min(720,iw)':-2")
+    vf_filter = ",".join(vf_parts)
+    cmd = [
+        "ffmpeg", "-y", "-ss", str(actual_timestamp), "-i", ffmpeg_input,
+        "-hide_banner", "-loglevel", "warning", "-stats",
+        "-map", "0:v:0", "-map", "0:a:0?",  # First video, first audio (optional)
+        "-t", "10",
+        "-vf", vf_filter,
+        "-c:v", encoder,
+        *encoder_opts,
+        "-c:a", "libopus",
+        "-ac", "2",
+        "-b:a", "128k",
+        str(output_path),
+    ]
+
+    print(f"    $ {shlex.join(cmd)}")
+    try:
+        result = subprocess.run(cmd, timeout=120)
+
+        if result.returncode == 0 and output_path.exists():
+            if pbar:
+                pbar.update(1)
+            return str(output_path)
+        else:
+            output_path.unlink(missing_ok=True)
+            if pbar:
+                pbar.update(1)
+                pbar.refresh()
+            return None
+    except BaseException as e:
+        output_path.unlink(missing_ok=True)
+        if isinstance(e, (KeyboardInterrupt, SystemExit)):
+            raise
+        if pbar:
+            pbar.clear()
+        episode_code = f"S{season_num:02d}E{episode_num:02d}"
+        print(f"\n\033[91mError generating episode reel for {episode_code}: {e}\033[0m")
+        if pbar:
+            pbar.update(1)
+            pbar.refresh()
+        return None
