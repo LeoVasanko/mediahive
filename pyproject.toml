@@ -1,25 +1,43 @@
 [project]
-name = "torrentmanager"
+name = "mediahive"
 version = "0.1.0"
-description = "Media torrent manager with download scanning and indexing"
+description = "MediaHive - Media scanning, indexing, and Netflix-style streaming"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
+    "aiofiles>=25.1.0",
     "bencodepy>=0.9.5",
+    "fastapi-vue>=0.5.2",
+    "fastapi[standard]>=0.128.0",
     "httpx[http2]>=0.28.1",
     "parse-torrent-title>=2.8.1",
     "tqdm>=4.67.3",
+    "uvicorn[standard]>=0.40.0",
 ]
 
 [project.scripts]
+mediahive = "mediahive.__main__:main"
 hivescan = "hivescan.__main__:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-[tool.hatch.build.targets.wheel]
-packages = ["hivescan"]
+[tool.hatch.build]
+packages = ["mediahive", "hivescan"]
+artifacts = ["mediahive/frontend-build"]
+only-packages = true
+
+[tool.hatch.build.targets.sdist.hooks.custom]
+path = "scripts/fastapi-vue/build-frontend.py"
+
+[tool.uv]
+package = true
 
 [tool.uv.sources]
 parse-torrent-title = { git = "https://github.com/platelminto/parse-torrent-title.git" }
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+]

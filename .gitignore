@@ -1,9 +1,20 @@
+# Python
 __pycache__/
 *.py[oc]
 build/
 dist/
 wheels/
 *.egg-info
+
+# Node / Frontend
+node_modules/
+frontend/dist/
+mediahive/frontend-build/
+
+# Lockfiles (uv.lock, package-lock.json, deno.lock, bun.lockb, etc.)
 *.lock
+*.lockb
+
+# Dotfiles
 .*
 !.gitignore
