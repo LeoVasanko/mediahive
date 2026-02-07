@@ -14,8 +14,10 @@ _ATIME_FRESHNESS_THRESHOLD = 3600
 
 # Resolution priority for quality sorting (higher = better)
 RESOLUTION_PRIORITY = {
-    "2160p": 4, "4K": 4,
-    "1080p": 3, "1080i": 3,
+    "2160p": 4,
+    "4K": 4,
+    "1080p": 3,
+    "1080i": 3,
     "720p": 2,
     "480p": 1,
 }
@@ -35,7 +37,7 @@ def get_added_timestamp(path: Path) -> Optional[int]:
     """
     try:
         stat_info = path.stat()
-    except (OSError, PermissionError):
+    except OSError, PermissionError:
         return None
 
     if path.is_dir():
@@ -59,7 +61,7 @@ def get_directory_size(path: Path) -> int:
         for item in path.rglob("*"):
             if item.is_file():
                 total += item.stat().st_size
-    except (OSError, PermissionError):
+    except OSError, PermissionError:
         pass
     return total
 
@@ -126,7 +128,9 @@ def find_common_root(paths: List[Path]) -> Optional[Path]:
     return Path(*common_parts)
 
 
-def make_relative_path(path: Optional[str], root: Optional[str] = None) -> Optional[str]:
+def make_relative_path(
+    path: Optional[str], root: Optional[str] = None
+) -> Optional[str]:
     """
     Convert an absolute path to a path relative to the given root.
 
@@ -138,16 +142,16 @@ def make_relative_path(path: Optional[str], root: Optional[str] = None) -> Optio
         return path
     root_str = str(root).rstrip("/")
     if path.startswith(root_str):
-        rel = path[len(root_str):]
+        rel = path[len(root_str) :]
         return rel.lstrip("/")
     return path
 
 
 def sanitize_filename(name: str) -> str:
     """Sanitize a string for use as a filename."""
-    for char in ['/', '\\', ':', '*', '?', '"', '<', '>', '|']:
-        name = name.replace(char, '_')
-    name = name.strip('. ')
+    for char in ["/", "\\", ":", "*", "?", '"', "<", ">", "|"]:
+        name = name.replace(char, "_")
+    name = name.strip(". ")
     return name
 
 
@@ -159,16 +163,29 @@ def get_media_folder_name(title: str, year: Optional[int], media_type: str) -> s
     return sanitized_title
 
 
-def get_media_folder_path(title: str, year: Optional[int], media_type: str, cover_dir: Path) -> Path:
+def get_media_folder_path(
+    title: str, year: Optional[int], media_type: str, cover_dir: Path
+) -> Path:
     """Get the full path to a media item's folder."""
     subdir = "movies" if media_type == "movie" else "series"
     folder_name = get_media_folder_name(title, year, media_type)
     return cover_dir / subdir / folder_name
 
 
-def sort_by_quality(items: list[dict], reverse: bool = True) -> None:
-    """Sort items in-place by resolution quality and size."""
+def sort_by_quality(items: list, reverse: bool = True) -> None:
+    """Sort items in-place by resolution quality and size.
+
+    Works with both plain dicts (intermediate episode files) and
+    msgspec.Struct instances (MovieVersion, EpisodeRelease).
+    """
+
+    def _val(v, key, default=None):
+        return v.get(key, default) if isinstance(v, dict) else getattr(v, key, default)
+
     items.sort(
-        key=lambda v: (RESOLUTION_PRIORITY.get(v.get("resolution", ""), 0), v.get("size", 0) or 0),
-        reverse=reverse
+        key=lambda v: (
+            RESOLUTION_PRIORITY.get(_val(v, "resolution", "") or "", 0),
+            _val(v, "size", 0) or 0,
+        ),
+        reverse=reverse,
     )

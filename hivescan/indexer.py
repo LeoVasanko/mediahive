@@ -1,25 +1,26 @@
-"""Media index generation."""
+"""Media index generation — async generators for continuous scanning."""
 
 import hashlib
-import json
-from datetime import datetime
+import logging
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
-
-from tqdm import tqdm
+from typing import AsyncIterator, Dict, List, Optional, Tuple
 
 from hivescan.showreel import (
-    episode_reel_exists,
-    generate_episode_reel,
-    generate_showreel_images,
     get_expected_episode_reel_path,
     get_expected_showreel_paths,
-    movie_showreels_exist,
 )
-from hivescan.tmdb_client import (
+from hivescan.structs import (
+    Episode,
+    EpisodeRelease,
+    Movie,
+    MovieVersion,
+    Season,
+    Series,
+    TMDbEpisodeInfo,
     TMDbInfo,
     TMDbSeasonInfo,
-    TMDbEpisodeInfo,
+)
+from hivescan.tmdb_client import (
     fetch_movie_info,
     fetch_series_info,
     fetch_season_details,
@@ -27,7 +28,11 @@ from hivescan.tmdb_client import (
 
 from hivescan.models import ContentType, ParsedContent
 from hivescan.scanning import find_cover_image, find_episode_files, find_playable_file
-from hivescan.images import download_cover_image, download_backdrop_image, download_season_poster
+from hivescan.images import (
+    download_cover_image,
+    download_backdrop_image,
+    download_season_poster,
+)
 from hivescan.utils import (
     get_added_timestamp,
     get_media_folder_path,
@@ -35,27 +40,33 @@ from hivescan.utils import (
     sort_by_quality,
 )
 
+logger = logging.getLogger("hivescan.indexer")
 
-def _build_version_info(item: ParsedContent, media_root: Optional[str] = None) -> dict:
-    """Build version/release info dict for a single torrent."""
+
+def _build_version_info(
+    item: ParsedContent, media_root: Optional[str] = None
+) -> MovieVersion:
+    """Build version/release info for a single torrent."""
     playable_file = find_playable_file(item.path)
     size = item.content_hash.size if item.content_hash else None
     newest = get_added_timestamp(item.path)
 
-    return {
-        "path": make_relative_path(str(item.path), media_root),
-        "playable_file": make_relative_path(playable_file, media_root),
-        "resolution": item.resolution,
-        "quality": item.quality,
-        "codec": item.codec,
-        "audio": item.audio,
-        "encoder": item.encoder,
-        "size": size,
-        "newest": newest,
-    }
+    return MovieVersion(
+        path=make_relative_path(str(item.path), media_root),
+        playable_file=make_relative_path(playable_file, media_root),
+        resolution=item.resolution,
+        quality=item.quality,
+        codec=item.codec,
+        audio=item.audio,
+        encoder=item.encoder,
+        size=size,
+        newest=newest,
+    )
 
 
-def _collect_episode_files(items: List[ParsedContent]) -> Dict[Tuple[int, int], List[Dict]]:
+def _collect_episode_files(
+    items: List[ParsedContent],
+) -> Dict[Tuple[int, int], List[Dict]]:
     """
     Collect all episode files from a list of torrent items.
 
@@ -71,21 +82,27 @@ def _collect_episode_files(items: List[ParsedContent]) -> Dict[Tuple[int, int], 
             if key not in all_episode_files:
                 all_episode_files[key] = []
             for file_path, file_size in files:
-                all_episode_files[key].append({
-                    "path": file_path,
-                    "size": file_size,
-                    "resolution": item.resolution,
-                    "quality": item.quality,
-                    "codec": item.codec,
-                    "audio": item.audio,
-                    "encoder": item.encoder,
-                    "torrent_path": str(item.path),
-                })
+                all_episode_files[key].append(
+                    {
+                        "path": file_path,
+                        "size": file_size,
+                        "resolution": item.resolution,
+                        "quality": item.quality,
+                        "codec": item.codec,
+                        "audio": item.audio,
+                        "encoder": item.encoder,
+                        "torrent_path": str(item.path),
+                    }
+                )
 
         # Handle individual episodes from PTN parsing
         if item.episode is not None and item.season is not None:
-            season_nums = item.season if isinstance(item.season, list) else [item.season]
-            episode_nums = item.episode if isinstance(item.episode, list) else [item.episode]
+            season_nums = (
+                item.season if isinstance(item.season, list) else [item.season]
+            )
+            episode_nums = (
+                item.episode if isinstance(item.episode, list) else [item.episode]
+            )
 
             playable = find_playable_file(item.path)
             if playable:
@@ -94,19 +111,24 @@ def _collect_episode_files(items: List[ParsedContent]) -> Dict[Tuple[int, int], 
                         key = (sn, ep)
                         if key not in all_episode_files:
                             all_episode_files[key] = []
-                        already_added = any(f["path"] == playable for f in all_episode_files.get(key, []))
+                        already_added = any(
+                            f["path"] == playable
+                            for f in all_episode_files.get(key, [])
+                        )
                         if not already_added:
                             size = item.content_hash.size if item.content_hash else 0
-                            all_episode_files[key].append({
-                                "path": playable,
-                                "size": size,
-                                "resolution": item.resolution,
-                                "quality": item.quality,
-                                "codec": item.codec,
-                                "audio": item.audio,
-                                "encoder": item.encoder,
-                                "torrent_path": str(item.path),
-                            })
+                            all_episode_files[key].append(
+                                {
+                                    "path": playable,
+                                    "size": size,
+                                    "resolution": item.resolution,
+                                    "quality": item.quality,
+                                    "codec": item.codec,
+                                    "audio": item.audio,
+                                    "encoder": item.encoder,
+                                    "torrent_path": str(item.path),
+                                }
+                            )
 
     return all_episode_files
 
@@ -120,7 +142,7 @@ def _build_episodes_data(
     episode_reel_tasks: List,
     series_title: str,
     media_root: Optional[str] = None,
-) -> List[dict]:
+) -> List[Episode]:
     """Build episode data list for a season."""
     episodes_data = []
 
@@ -134,40 +156,49 @@ def _build_episodes_data(
         if generate_showreels and episode_files:
             best_file = episode_files[0]["path"]
             if best_file and not best_file.endswith(".bdmv"):
-                reel_path = get_expected_episode_reel_path(series_folder, season_num, episode_num, media_root=Path(media_root) if media_root else None)
-                episode_reel_tasks.append((best_file, series_folder, season_num, episode_num, series_title))
+                reel_path = get_expected_episode_reel_path(
+                    series_folder,
+                    season_num,
+                    episode_num,
+                    media_root=Path(media_root) if media_root else None,
+                )
+                episode_reel_tasks.append(
+                    (best_file, series_folder, season_num, episode_num, series_title)
+                )
 
         releases = []
         for f in episode_files:
-            releases.append({
-                "path": make_relative_path(f["torrent_path"], media_root),
-                "playable_file": make_relative_path(f["path"], media_root),
-                "resolution": f.get("resolution"),
-                "quality": f.get("quality"),
-                "codec": f.get("codec"),
-                "audio": f.get("audio"),
-                "encoder": f.get("encoder"),
-                "size": f.get("size"),
-            })
+            releases.append(
+                EpisodeRelease(
+                    path=make_relative_path(f["torrent_path"], media_root),
+                    playable_file=make_relative_path(f["path"], media_root),
+                    resolution=f.get("resolution"),
+                    quality=f.get("quality"),
+                    codec=f.get("codec"),
+                    audio=f.get("audio"),
+                    encoder=f.get("encoder"),
+                    size=f.get("size"),
+                )
+            )
 
-        episode_data = {
-            "episode_number": episode_num,
-            "name": tmdb_ep.name if tmdb_ep else None,
-            "overview": tmdb_ep.overview if tmdb_ep else None,
-            "air_date": tmdb_ep.air_date if tmdb_ep else None,
-            "runtime": tmdb_ep.runtime if tmdb_ep else None,
-            "still_path": tmdb_ep.still_path if tmdb_ep else None,
-            "rating": tmdb_ep.vote_average if tmdb_ep else None,
-            "director": tmdb_ep.director if tmdb_ep else None,
-            "reel_image": reel_path,
-            "releases": releases,
-        }
+        episode_data = Episode(
+            episode_number=episode_num,
+            name=tmdb_ep.name if tmdb_ep else None,
+            overview=tmdb_ep.overview if tmdb_ep else None,
+            air_date=tmdb_ep.air_date if tmdb_ep else None,
+            runtime=tmdb_ep.runtime if tmdb_ep else None,
+            still_path=tmdb_ep.still_path if tmdb_ep else None,
+            rating=tmdb_ep.vote_average if tmdb_ep else None,
+            director=tmdb_ep.director if tmdb_ep else None,
+            reel_image=reel_path,
+            releases=releases,
+        )
         episodes_data.append(episode_data)
 
     return episodes_data
 
 
-def _build_seasons_data(
+async def _build_seasons_data(
     all_episode_files: Dict[Tuple[int, int], List[Dict]],
     tmdb_id: Optional[int],
     series_folder: Path,
@@ -177,7 +208,7 @@ def _build_seasons_data(
     season_cache: Dict,
     episode_reel_tasks: List,
     media_root: Optional[str] = None,
-) -> List[dict]:
+) -> List[Season]:
     """Build seasons data structure for a series."""
     # Group episodes by season
     seasons_map: Dict[int, Dict[int, List[Dict]]] = {}
@@ -197,8 +228,12 @@ def _build_seasons_data(
         if tmdb_id:
             cache_key = (tmdb_id, season_num)
             if cache_key not in season_cache:
-                print(f"    Fetching season {season_num} details for {display_title}")
-                season_cache[cache_key] = fetch_season_details(tmdb_id, season_num)
+                logger.info(
+                    "    Fetching season %d details for %s", season_num, display_title
+                )
+                season_cache[cache_key] = await fetch_season_details(
+                    tmdb_id, season_num
+                )
             tmdb_season = season_cache[cache_key]
 
             if tmdb_season and tmdb_season.episodes:
@@ -208,43 +243,57 @@ def _build_seasons_data(
         # Download season poster
         season_poster_path = None
         if fetch_covers and tmdb_season and tmdb_season.poster_path:
-            season_poster_path = download_season_poster(tmdb_season.poster_path, series_folder, season_num)
+            season_poster_path = await download_season_poster(
+                tmdb_season.poster_path, series_folder, season_num
+            )
 
         episodes_data = _build_episodes_data(
-            episodes_in_season, tmdb_episodes, series_folder, season_num,
-            generate_showreels, episode_reel_tasks, display_title, media_root
+            episodes_in_season,
+            tmdb_episodes,
+            series_folder,
+            season_num,
+            generate_showreels,
+            episode_reel_tasks,
+            display_title,
+            media_root,
         )
 
-        season_data = {
-            "season_number": season_num,
-            "name": tmdb_season.name if tmdb_season else None,
-            "overview": tmdb_season.overview if tmdb_season else None,
-            "air_date": tmdb_season.air_date if tmdb_season else None,
-            "poster_path": make_relative_path(season_poster_path, media_root) if season_poster_path else None,
-            "episode_count": len(episodes_data),
-            "episodes": episodes_data,
-        }
+        season_data = Season(
+            season_number=season_num,
+            name=tmdb_season.name if tmdb_season else None,
+            overview=tmdb_season.overview if tmdb_season else None,
+            air_date=tmdb_season.air_date if tmdb_season else None,
+            poster_path=make_relative_path(season_poster_path, media_root)
+            if season_poster_path
+            else None,
+            episode_count=len(episodes_data),
+            episodes=episodes_data,
+        )
         seasons_data.append(season_data)
 
     return seasons_data
 
 
-def _process_movies(
+async def _process_movies(
     categories: dict,
     cover_dir: Path,
     fetch_covers: bool,
     generate_showreels: bool,
     media_root: Optional[str] = None,
-) -> Tuple[List[dict], List[Tuple[str, Path, str]]]:
-    """Process all movies and return (movies_list, showreel_tasks)."""
+) -> AsyncIterator[Tuple[Movie, Optional[Tuple[str, Path, str]]]]:
+    """
+    Async generator that processes all movies.
+
+    Yields (Movie, showreel_task_or_None) for each movie as it is processed.
+    """
     # In-memory cache for TMDb lookups
     movie_tmdb_cache: Dict[str, Optional[TMDbInfo]] = {}
 
-    def get_movie_tmdb(title: str, year: Optional[int]) -> Optional[TMDbInfo]:
+    async def get_movie_tmdb(title: str, year: Optional[int]) -> Optional[TMDbInfo]:
         cache_key = f"{title.lower()}:{year}"
         if cache_key in movie_tmdb_cache:
             return movie_tmdb_cache[cache_key]
-        tmdb_info = fetch_movie_info(title, year)
+        tmdb_info = await fetch_movie_info(title, year)
         movie_tmdb_cache[cache_key] = tmdb_info
         return tmdb_info
 
@@ -252,7 +301,9 @@ def _process_movies(
         return find_playable_file(item.path) is not None
 
     # Filter movies with playable files
-    valid_movies = [item for item in categories[ContentType.MOVIE] if has_playable(item)]
+    valid_movies = [
+        item for item in categories[ContentType.MOVIE] if has_playable(item)
+    ]
     skipped = len(categories[ContentType.MOVIE]) - len(valid_movies)
     if skipped > 0:
         print(f"  Skipped {skipped} movie torrents with no playable video files")
@@ -269,13 +320,23 @@ def _process_movies(
     tmdb_movie_groups: Dict[int, Dict] = {}
     no_tmdb_movie_groups: Dict[str, Dict] = {}
 
-    print(f"  Processing {len(movie_groups)} unique movies ({len(categories[ContentType.MOVIE])} total versions)...")
+    logger.info(
+        "  Processing %d unique movies (%d total versions)...",
+        len(movie_groups),
+        len(categories[ContentType.MOVIE]),
+    )
 
     for idx, (movie_key, items) in enumerate(movie_groups.items(), 1):
         first_item = items[0]
-        print(f"    [{idx}/{len(movie_groups)}] {first_item.title} ({first_item.year})\x1b[K", end="\r")
+        logger.info(
+            "    [%d/%d] %s (%s)",
+            idx,
+            len(movie_groups),
+            first_item.title,
+            first_item.year,
+        )
 
-        tmdb_info = get_movie_tmdb(first_item.title, first_item.year)
+        tmdb_info = await get_movie_tmdb(first_item.title, first_item.year)
 
         if tmdb_info and tmdb_info.tmdb_id:
             if tmdb_info.tmdb_id not in tmdb_movie_groups:
@@ -290,15 +351,14 @@ def _process_movies(
         else:
             key = f"{first_item.title.lower()}:{first_item.year or 0}"
             if key not in no_tmdb_movie_groups:
-                no_tmdb_movie_groups[key] = {"items": [], "title": first_item.title, "year": first_item.year}
+                no_tmdb_movie_groups[key] = {
+                    "items": [],
+                    "title": first_item.title,
+                    "year": first_item.year,
+                }
             no_tmdb_movie_groups[key]["items"].extend(items)
 
-    print()
-
-    movies = []
-    movie_showreel_tasks: List[Tuple[str, Path, str]] = []
-
-    # Process movies with TMDb info
+    # Process movies with TMDb info — yield each as ready
     for tmdb_id, group_data in tmdb_movie_groups.items():
         tmdb_info = group_data["tmdb_info"]
         items = group_data["items"]
@@ -318,59 +378,74 @@ def _process_movies(
                     if cover_path:
                         break
             if not cover_path and tmdb_info.poster_path:
-                cover_path = download_cover_image(tmdb_info.poster_path, display_title, year, "movie", cover_dir)
+                cover_path = await download_cover_image(
+                    tmdb_info.poster_path, display_title, year, "movie", cover_dir
+                )
 
         versions = [_build_version_info(item, media_root) for item in items]
         sort_by_quality(versions)
 
         # Queue showreel generation
         showreel_paths = []
+        showreel_task = None
         if generate_showreels and versions:
-            best_playable = versions[0].get("playable_file")
+            best_playable = versions[0].playable_file
             if best_playable:
-                # Reconstruct absolute path from relative path
-                abs_playable = str(Path(media_root) / best_playable) if media_root else best_playable
-                media_folder = get_media_folder_path(display_title, year, "movie", cover_dir)
-                showreel_paths = get_expected_showreel_paths(media_folder, media_root=Path(media_root) if media_root else None)
-                movie_showreel_tasks.append((abs_playable, media_folder, display_title))
+                abs_playable = (
+                    str(Path(media_root) / best_playable)
+                    if media_root
+                    else best_playable
+                )
+                media_folder = get_media_folder_path(
+                    display_title, year, "movie", cover_dir
+                )
+                showreel_paths = get_expected_showreel_paths(
+                    media_folder, media_root=Path(media_root) if media_root else None
+                )
+                showreel_task = (abs_playable, media_folder, display_title)
 
         # Download backdrop
         backdrop_path = None
         if fetch_covers and tmdb_info.backdrop_path:
-            backdrop_path = download_backdrop_image(tmdb_info.backdrop_path, display_title, year, "movie", cover_dir)
+            backdrop_path = await download_backdrop_image(
+                tmdb_info.backdrop_path, display_title, year, "movie", cover_dir
+            )
 
-        different_titles = [t for t in torrent_titles if t.lower() != display_title.lower()]
-        version_timestamps = [v["newest"] for v in versions if v.get("newest")]
+        different_titles = [
+            t for t in torrent_titles if t.lower() != display_title.lower()
+        ]
+        version_timestamps = [v.newest for v in versions if v.newest]
         newest = max(version_timestamps) if version_timestamps else None
 
-        movies.append({
-            "id": item_id,
-            "title": display_title,
-            "original_title": tmdb_info.original_title,
-            "alternative_titles": tmdb_info.alternative_titles,
-            "torrent_titles": different_titles if different_titles else None,
-            "year": year,
-            "newest": newest,
-            "cover_path": make_relative_path(cover_path, media_root),
-            "backdrop_path": make_relative_path(backdrop_path, media_root),
-            "showreel_images": showreel_paths if showreel_paths else None,
-            "versions": versions,
-            "tmdb_id": tmdb_info.tmdb_id,
-            "tmdb_title": tmdb_info.title,
-            "rating": tmdb_info.rating,
-            "vote_count": tmdb_info.vote_count,
-            "overview": tmdb_info.overview,
-            "genres": tmdb_info.genres,
-            "release_date": tmdb_info.release_date,
-            "runtime": tmdb_info.runtime,
-            "status": tmdb_info.status,
-            "tagline": tmdb_info.tagline,
-            "poster_path": tmdb_info.poster_path,
-            "similar": tmdb_info.similar,
-            "keywords": tmdb_info.keywords,
-            "cast": tmdb_info.cast,
-            "director": tmdb_info.director,
-        })
+        movie = Movie(
+            id=item_id,
+            title=display_title,
+            original_title=tmdb_info.original_title,
+            alternative_titles=tmdb_info.alternative_titles,
+            torrent_titles=different_titles if different_titles else None,
+            year=year,
+            newest=newest,
+            cover_path=make_relative_path(cover_path, media_root),
+            backdrop_path=make_relative_path(backdrop_path, media_root),
+            showreel_images=showreel_paths if showreel_paths else None,
+            versions=versions,
+            tmdb_id=tmdb_info.tmdb_id,
+            tmdb_title=tmdb_info.title,
+            rating=tmdb_info.rating,
+            vote_count=tmdb_info.vote_count,
+            overview=tmdb_info.overview,
+            genres=tmdb_info.genres,
+            release_date=tmdb_info.release_date,
+            runtime=tmdb_info.runtime,
+            status=tmdb_info.status,
+            tagline=tmdb_info.tagline,
+            poster_path=tmdb_info.poster_path,
+            similar=tmdb_info.similar,
+            keywords=tmdb_info.keywords,
+            cast=tmdb_info.cast,
+            director=tmdb_info.director,
+        )
+        yield movie, showreel_task
 
     # Process movies without TMDb info
     for key, group_data in no_tmdb_movie_groups.items():
@@ -379,57 +454,69 @@ def _process_movies(
         year = group_data["year"]
         item_id = hashlib.md5(f"movie:{title}:{year}".encode()).hexdigest()[:12]
 
-        cover_path = find_cover_image(title, year, "movie", cover_dir) if fetch_covers else None
+        cover_path = (
+            find_cover_image(title, year, "movie", cover_dir) if fetch_covers else None
+        )
 
         versions = [_build_version_info(item, media_root) for item in items]
         sort_by_quality(versions)
 
         showreel_paths = []
+        showreel_task = None
         if generate_showreels and versions:
-            best_playable = versions[0].get("playable_file")
+            best_playable = versions[0].playable_file
             if best_playable:
-                # Reconstruct absolute path from relative path
-                abs_playable = str(Path(media_root) / best_playable) if media_root else best_playable
+                abs_playable = (
+                    str(Path(media_root) / best_playable)
+                    if media_root
+                    else best_playable
+                )
                 if not abs_playable.endswith(".bdmv"):
-                    media_folder = get_media_folder_path(title, year, "movie", cover_dir)
-                    showreel_paths = get_expected_showreel_paths(media_folder, media_root=Path(media_root) if media_root else None)
-                    movie_showreel_tasks.append((abs_playable, media_folder, title))
+                    media_folder = get_media_folder_path(
+                        title, year, "movie", cover_dir
+                    )
+                    showreel_paths = get_expected_showreel_paths(
+                        media_folder,
+                        media_root=Path(media_root) if media_root else None,
+                    )
+                    showreel_task = (abs_playable, media_folder, title)
 
-        version_timestamps = [v["newest"] for v in versions if v.get("newest")]
+        version_timestamps = [v.newest for v in versions if v.newest]
         newest = max(version_timestamps) if version_timestamps else None
 
-        movies.append({
-            "id": item_id,
-            "title": title,
-            "original_title": None,
-            "torrent_titles": None,
-            "year": year,
-            "newest": newest,
-            "cover_path": make_relative_path(cover_path, media_root),
-            "showreel_images": showreel_paths if showreel_paths else None,
-            "versions": versions,
-        })
-
-    return movies, movie_showreel_tasks
+        movie = Movie(
+            id=item_id,
+            title=title,
+            year=year,
+            newest=newest,
+            cover_path=make_relative_path(cover_path, media_root),
+            showreel_images=showreel_paths if showreel_paths else None,
+            versions=versions,
+        )
+        yield movie, showreel_task
 
 
-def _process_series(
+async def _process_series(
     categories: dict,
     cover_dir: Path,
     fetch_covers: bool,
     generate_showreels: bool,
     media_root: Optional[str] = None,
-) -> Tuple[List[dict], List[Tuple[str, Path, int, int, str]]]:
-    """Process all series and return (series_list, episode_reel_tasks)."""
+) -> AsyncIterator[Tuple[Series, List[Tuple[str, Path, int, int, str]]]]:
+    """
+    Async generator that processes all series.
+
+    Yields (Series, episode_reel_tasks) for each series as it is processed.
+    """
     # In-memory cache for TMDb lookups
     series_tmdb_cache: Dict[str, Optional[TMDbInfo]] = {}
     season_cache: Dict[Tuple[int, int], Optional[TMDbSeasonInfo]] = {}
 
-    def get_series_tmdb(title: str) -> Optional[TMDbInfo]:
+    async def get_series_tmdb(title: str) -> Optional[TMDbInfo]:
         cache_key = title.lower()
         if cache_key in series_tmdb_cache:
             return series_tmdb_cache[cache_key]
-        tmdb_info = fetch_series_info(title)
+        tmdb_info = await fetch_series_info(title)
         series_tmdb_cache[cache_key] = tmdb_info
         return tmdb_info
 
@@ -439,10 +526,14 @@ def _process_series(
         return len(find_episode_files(item.path)) > 0
 
     # Filter series with video content
-    valid_series = [item for item in categories[ContentType.SERIES] if has_video_content(item)]
+    valid_series = [
+        item for item in categories[ContentType.SERIES] if has_video_content(item)
+    ]
     skipped = len(categories[ContentType.SERIES]) - len(valid_series)
     if skipped > 0:
-        print(f"  Skipped {skipped} series torrents with no playable video files")
+        logger.info(
+            "  Skipped %d series torrents with no playable video files", skipped
+        )
 
     # Group by title
     series_groups: Dict[str, List[ParsedContent]] = {}
@@ -456,13 +547,17 @@ def _process_series(
     tmdb_groups: Dict[int, Dict] = {}
     no_tmdb_groups: Dict[str, Dict] = {}
 
-    print(f"  Processing {len(series_groups)} unique series ({len(categories[ContentType.SERIES])} total entries)...")
+    logger.info(
+        "  Processing %d unique series (%d total entries)...",
+        len(series_groups),
+        len(categories[ContentType.SERIES]),
+    )
 
     for idx, (series_key, items) in enumerate(series_groups.items(), 1):
         first_item = items[0]
-        print(f"    [{idx}/{len(series_groups)}] {first_item.title}\x1b[K", end="\r")
+        logger.info("    [%d/%d] %s", idx, len(series_groups), first_item.title)
 
-        tmdb_info = get_series_tmdb(first_item.title)
+        tmdb_info = await get_series_tmdb(first_item.title)
 
         if tmdb_info and tmdb_info.tmdb_id:
             if tmdb_info.tmdb_id not in tmdb_groups:
@@ -479,12 +574,7 @@ def _process_series(
                 no_tmdb_groups[key] = {"items": [], "title": first_item.title}
             no_tmdb_groups[key]["items"].extend(items)
 
-    print()
-
-    series = []
-    episode_reel_tasks: List[Tuple[str, Path, int, int, str]] = []
-
-    # Process series with TMDb info
+    # Process series with TMDb info — yield each as ready
     for series_idx, (tmdb_id, group_data) in enumerate(tmdb_groups.items(), 1):
         tmdb_info = group_data["tmdb_info"]
         items = group_data["items"]
@@ -493,7 +583,7 @@ def _process_series(
         display_title = tmdb_info.title
         series_id = hashlib.md5(f"series:{tmdb_id}".encode()).hexdigest()[:12]
 
-        print(f"  [{series_idx}/{len(tmdb_groups)}] {display_title}\x1b[K")
+        logger.info("  [%d/%d] %s", series_idx, len(tmdb_groups), display_title)
 
         series_folder = get_media_folder_path(display_title, None, "series", cover_dir)
 
@@ -507,56 +597,71 @@ def _process_series(
                     if cover_path:
                         break
             if not cover_path and tmdb_info.poster_path:
-                cover_path = download_cover_image(tmdb_info.poster_path, display_title, None, "series", cover_dir)
+                cover_path = await download_cover_image(
+                    tmdb_info.poster_path, display_title, None, "series", cover_dir
+                )
 
         # Download backdrop
         backdrop_path = None
         if fetch_covers and tmdb_info.backdrop_path:
-            backdrop_path = download_backdrop_image(tmdb_info.backdrop_path, display_title, None, "series", cover_dir)
+            backdrop_path = await download_backdrop_image(
+                tmdb_info.backdrop_path, display_title, None, "series", cover_dir
+            )
 
         # Collect and build episode data
         all_episode_files = _collect_episode_files(items)
-        seasons_data = _build_seasons_data(
-            all_episode_files, tmdb_id, series_folder, display_title,
-            fetch_covers, generate_showreels, season_cache, episode_reel_tasks, media_root
+        ep_reel_tasks: List[Tuple[str, Path, int, int, str]] = []
+        seasons_data = await _build_seasons_data(
+            all_episode_files,
+            tmdb_id,
+            series_folder,
+            display_title,
+            fetch_covers,
+            generate_showreels,
+            season_cache,
+            ep_reel_tasks,
+            media_root,
         )
 
         if not seasons_data:
-            print(f"    Skipping {display_title} - no episodes found")
+            logger.info("    Skipping %s - no episodes found", display_title)
             continue
 
-        different_titles = [t for t in torrent_titles if t.lower() != display_title.lower()]
+        different_titles = [
+            t for t in torrent_titles if t.lower() != display_title.lower()
+        ]
         item_timestamps = [get_added_timestamp(item.path) for item in items]
         item_timestamps = [t for t in item_timestamps if t is not None]
         newest = max(item_timestamps) if item_timestamps else None
 
-        series.append({
-            "id": series_id,
-            "title": display_title,
-            "original_title": tmdb_info.original_title,
-            "torrent_titles": different_titles if different_titles else None,
-            "newest": newest,
-            "cover_path": make_relative_path(cover_path, media_root),
-            "backdrop_path": make_relative_path(backdrop_path, media_root),
-            "seasons": seasons_data,
-            "tmdb_id": tmdb_info.tmdb_id,
-            "tmdb_title": tmdb_info.title,
-            "rating": tmdb_info.rating,
-            "vote_count": tmdb_info.vote_count,
-            "overview": tmdb_info.overview,
-            "genres": tmdb_info.genres,
-            "release_date": tmdb_info.release_date,
-            "status": tmdb_info.status,
-            "tagline": tmdb_info.tagline,
-            "poster_path": tmdb_info.poster_path,
-            "similar": tmdb_info.similar,
-            "keywords": tmdb_info.keywords,
-            "cast": tmdb_info.cast,
-            "creators": tmdb_info.creators,
-            "number_of_seasons": tmdb_info.number_of_seasons,
-            "number_of_episodes": tmdb_info.number_of_episodes,
-            "networks": tmdb_info.networks,
-        })
+        series = Series(
+            id=series_id,
+            title=display_title,
+            original_title=tmdb_info.original_title,
+            torrent_titles=different_titles if different_titles else None,
+            newest=newest,
+            cover_path=make_relative_path(cover_path, media_root),
+            backdrop_path=make_relative_path(backdrop_path, media_root),
+            seasons=seasons_data,
+            tmdb_id=tmdb_info.tmdb_id,
+            tmdb_title=tmdb_info.title,
+            rating=tmdb_info.rating,
+            vote_count=tmdb_info.vote_count,
+            overview=tmdb_info.overview,
+            genres=tmdb_info.genres,
+            release_date=tmdb_info.release_date,
+            status=tmdb_info.status,
+            tagline=tmdb_info.tagline,
+            poster_path=tmdb_info.poster_path,
+            similar=tmdb_info.similar,
+            keywords=tmdb_info.keywords,
+            cast=tmdb_info.cast,
+            creators=tmdb_info.creators,
+            number_of_seasons=tmdb_info.number_of_seasons,
+            number_of_episodes=tmdb_info.number_of_episodes,
+            networks=tmdb_info.networks,
+        )
+        yield series, ep_reel_tasks
 
     # Process series without TMDb info
     for key, group_data in no_tmdb_groups.items():
@@ -564,135 +669,38 @@ def _process_series(
         title = group_data["title"]
         series_id = hashlib.md5(f"series:{title}".encode()).hexdigest()[:12]
 
-        cover_path = find_cover_image(title, None, "series", cover_dir) if fetch_covers else None
+        cover_path = (
+            find_cover_image(title, None, "series", cover_dir) if fetch_covers else None
+        )
         series_folder = get_media_folder_path(title, None, "series", cover_dir)
 
         all_episode_files = _collect_episode_files(items)
-        seasons_data = _build_seasons_data(
-            all_episode_files, None, series_folder, title,
-            fetch_covers, generate_showreels, season_cache, episode_reel_tasks, media_root
+        ep_reel_tasks: List[Tuple[str, Path, int, int, str]] = []
+        seasons_data = await _build_seasons_data(
+            all_episode_files,
+            None,
+            series_folder,
+            title,
+            fetch_covers,
+            generate_showreels,
+            season_cache,
+            ep_reel_tasks,
+            media_root,
         )
 
         if not seasons_data:
-            print(f"    Skipping {title} - no episodes found")
+            logger.info("    Skipping %s - no episodes found", title)
             continue
 
         item_timestamps = [get_added_timestamp(item.path) for item in items]
         item_timestamps = [t for t in item_timestamps if t is not None]
         newest = max(item_timestamps) if item_timestamps else None
 
-        series.append({
-            "id": series_id,
-            "title": title,
-            "original_title": None,
-            "torrent_titles": None,
-            "newest": newest,
-            "cover_path": make_relative_path(cover_path, media_root),
-            "seasons": seasons_data,
-        })
-
-    return series, episode_reel_tasks
-
-
-def _run_showreel_generation(
-    movie_tasks: List[Tuple[str, Path, str]],
-    episode_tasks: List[Tuple[str, Path, int, int, str]],
-) -> None:
-    """Run showreel generation for movies and episodes."""
-    pending_movie_tasks = [
-        (vp, mf, t) for vp, mf, t in movie_tasks
-        if not movie_showreels_exist(mf)
-    ]
-    pending_episode_tasks = [
-        (vp, mf, s, e, t) for vp, mf, s, e, t in episode_tasks
-        if not episode_reel_exists(mf, s, e)
-    ]
-
-    total_units = len(pending_movie_tasks) * 5 + len(pending_episode_tasks)
-    skipped_movies = len(movie_tasks) - len(pending_movie_tasks)
-    skipped_episodes = len(episode_tasks) - len(pending_episode_tasks)
-
-    if total_units > 0:
-        print(f"\nGenerating showreels: {len(pending_movie_tasks)} movies, {len(pending_episode_tasks)} episodes")
-        if skipped_movies > 0 or skipped_episodes > 0:
-            print(f"  (skipping {skipped_movies} movies, {skipped_episodes} episodes already done)")
-
-        with tqdm(total=total_units, unit="clip", dynamic_ncols=True) as pbar:
-            for video_path, media_folder, title in pending_movie_tasks:
-                pbar.set_description(f"{title[:40]}")
-                generate_showreel_images(video_path, media_folder, title=title, pbar=pbar)
-
-            for video_path, media_folder, season_num, episode_num, series_title in pending_episode_tasks:
-                episode_code = f"S{season_num:02d}E{episode_num:02d}"
-                pbar.set_description(f"{series_title[:30]} {episode_code}")
-                generate_episode_reel(video_path, media_folder, season_num, episode_num, pbar=pbar)
-
-        print("Showreel generation complete.")
-    elif movie_tasks or episode_tasks:
-        print(f"\nAll showreels already exist ({skipped_movies} movies, {skipped_episodes} episodes).")
-
-
-def generate_media_index(
-    categories: dict[ContentType, list[ParsedContent]],
-    output_path: Path,
-    cover_dir: Path,
-    media_root: Optional[Path] = None,
-    fetch_covers: bool = True,
-    generate_showreels: bool = True,
-) -> None:
-    """
-    Generate a comprehensive metadata index for the media browser app.
-
-    The index includes:
-    - Media metadata with versions bundled together
-    - Cover image paths (relative to media_root)
-    - Playable file paths
-    - TMDb data: ratings, cast, similar items, keywords, etc.
-    - Showreel images for movies and episodes
-    """
-    print(f"Generating media index: {output_path}")
-
-    # Convert media_root to string for relative path calculations
-    media_root_str = str(media_root) if media_root else None
-
-    # Process movies and series
-    movies, movie_showreel_tasks = _process_movies(categories, cover_dir, fetch_covers, generate_showreels, media_root_str)
-    series, episode_reel_tasks = _process_series(categories, cover_dir, fetch_covers, generate_showreels, media_root_str)
-
-    # Sort results
-    movies.sort(key=lambda x: (x["title"].lower(), x.get("year") or 0))
-    series.sort(key=lambda x: x["title"].lower())
-
-    # Calculate totals
-    total_movie_versions = sum(len(m["versions"]) for m in movies)
-    total_series_episodes = sum(
-        sum(len(season.get("episodes", [])) for season in s["seasons"])
-        for s in series
-    )
-
-    # Build and write the index
-    index = {
-        "version": 5,
-        "generated_at": datetime.now().isoformat(),
-        "media_root": media_root_str,
-        "stats": {
-            "total_movies": len(movies),
-            "total_movie_versions": total_movie_versions,
-            "total_series": len(series),
-            "total_series_episodes": total_series_episodes,
-        },
-        "movies": movies,
-        "series": series,
-    }
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(index, f, indent=2, ensure_ascii=False)
-
-    print(f"  Movies: {len(movies)} ({total_movie_versions} versions)")
-    print(f"  Series: {len(series)} ({total_series_episodes} episodes)")
-    print(f"  Output: {output_path}")
-
-    # Generate showreels
-    if generate_showreels:
-        _run_showreel_generation(movie_showreel_tasks, episode_reel_tasks)
+        series = Series(
+            id=series_id,
+            title=title,
+            newest=newest,
+            cover_path=make_relative_path(cover_path, media_root),
+            seasons=seasons_data,
+        )
+        yield series, ep_reel_tasks

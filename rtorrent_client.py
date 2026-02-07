@@ -24,7 +24,7 @@ class SCGITransport(xmlrpc.client.Transport):
         # Connect to socket
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.connect(self.socket_path)
-        sock.send(request.encode('utf-8'))
+        sock.send(request.encode("utf-8"))
 
         # Read response
         response = b""
@@ -54,7 +54,9 @@ class RTorrentClient:
     def __init__(self, socket_path: str = "/home/user/rtorrent/.session/rpc.socket"):
         self.socket_path = socket_path
         transport = SCGITransport(socket_path)
-        self.proxy = xmlrpc.client.ServerProxy("http://localhost/RPC2", transport=transport)
+        self.proxy = xmlrpc.client.ServerProxy(
+            "http://localhost/RPC2", transport=transport
+        )
 
     def get_loaded_hashes(self) -> set[str]:
         """Get set of info hashes for all currently loaded torrents."""
@@ -81,9 +83,7 @@ class RTorrentClient:
             # load.start_verbose with d.directory.set to specify download location
             # This will hash-check existing files instead of re-downloading
             self.proxy.load.start_verbose(
-                "",
-                str(torrent_path),
-                f"d.directory.set=\"{download_dir}\""
+                "", str(torrent_path), f'd.directory.set="{download_dir}"'
             )
             return True
         except Exception as e:
@@ -125,8 +125,10 @@ class RTorrentClient:
             for info_hash in hashes:
                 try:
                     message = self.proxy.d.message(info_hash)
-                    if message and ("unregistered" in message.lower() or
-                                   "not registered" in message.lower()):
+                    if message and (
+                        "unregistered" in message.lower()
+                        or "not registered" in message.lower()
+                    ):
                         info = self.get_torrent_info(info_hash)
                         if info:
                             unregistered.append(info)

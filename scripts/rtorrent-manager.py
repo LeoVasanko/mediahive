@@ -18,6 +18,7 @@ from rtorrent_client import RTorrentClient
 @dataclass
 class TorrentInfo:
     """Information extracted from a torrent file."""
+
     path: Path
     name: str
     trackers: list[str]
@@ -88,7 +89,7 @@ def parse_torrent(filepath: Path) -> TorrentInfo | None:
         TorrentInfo object or None if parsing fails
     """
     try:
-        with open(filepath, 'rb') as f:
+        with open(filepath, "rb") as f:
             data = bencodepy.decode(f.read())
     except Exception as e:
         print(f"Error parsing {filepath}: {e}")
@@ -98,23 +99,23 @@ def parse_torrent(filepath: Path) -> TorrentInfo | None:
     trackers = []
 
     # Main announce URL
-    if b'announce' in data:
-        announce = data[b'announce']
+    if b"announce" in data:
+        announce = data[b"announce"]
         if isinstance(announce, bytes):
-            trackers.append(announce.decode('utf-8', errors='replace'))
+            trackers.append(announce.decode("utf-8", errors="replace"))
 
     # Announce list (multiple trackers)
-    if b'announce-list' in data:
-        for tier in data[b'announce-list']:
+    if b"announce-list" in data:
+        for tier in data[b"announce-list"]:
             for tracker in tier:
                 if isinstance(tracker, bytes):
-                    url = tracker.decode('utf-8', errors='replace')
+                    url = tracker.decode("utf-8", errors="replace")
                     if url not in trackers:
                         trackers.append(url)
 
     # Extract name
-    info = data.get(b'info', {})
-    name = info.get(b'name', b'Unknown').decode('utf-8', errors='replace')
+    info = data.get(b"info", {})
+    name = info.get(b"name", b"Unknown").decode("utf-8", errors="replace")
 
     # Calculate info hash
     info_hash = hashlib.sha1(bencodepy.encode(info)).hexdigest().upper()
@@ -124,23 +125,22 @@ def parse_torrent(filepath: Path) -> TorrentInfo | None:
     files = None
     is_multi_file = False
 
-    if b'length' in info:
+    if b"length" in info:
         # Single file torrent
-        size = info[b'length']
+        size = info[b"length"]
         files = [name]
         is_multi_file = False
-    elif b'files' in info:
+    elif b"files" in info:
         # Multi-file torrent
         files = []
         size = 0
         is_multi_file = True
-        for file_info in info[b'files']:
-            file_path = '/'.join(
-                p.decode('utf-8', errors='replace')
-                for p in file_info.get(b'path', [])
+        for file_info in info[b"files"]:
+            file_path = "/".join(
+                p.decode("utf-8", errors="replace") for p in file_info.get(b"path", [])
             )
             files.append(file_path)
-            size += file_info.get(b'length', 0)
+            size += file_info.get(b"length", 0)
 
     return TorrentInfo(
         path=filepath,
@@ -171,8 +171,9 @@ def scan_torrent_directories(paths: list[str]) -> Iterator[Path]:
                     yield torrent_file
 
 
-def find_torrents_with_tracker(tracker_domain: str,
-                                paths: list[str]) -> list[TorrentInfo]:
+def find_torrents_with_tracker(
+    tracker_domain: str, paths: list[str]
+) -> list[TorrentInfo]:
     """
     Find all torrents that have a specific tracker domain.
 
@@ -198,7 +199,7 @@ def format_size(size_bytes: int | None) -> str:
     if size_bytes is None:
         return "Unknown"
 
-    for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+    for unit in ["B", "KB", "MB", "GB", "TB"]:
         if size_bytes < 1024:
             return f"{size_bytes:.2f} {unit}"
         size_bytes /= 1024
@@ -223,9 +224,16 @@ Examples:
         nargs="+",
         help="Directories or glob patterns containing .torrent files",
     )
-    parser.add_argument("--dry", action="store_true", help="Dry run - show what would be done without making changes")
-    parser.add_argument("--tracker", default="hdbits.org",
-                        help="Tracker domain to filter by (default: hdbits.org)")
+    parser.add_argument(
+        "--dry",
+        action="store_true",
+        help="Dry run - show what would be done without making changes",
+    )
+    parser.add_argument(
+        "--tracker",
+        default="hdbits.org",
+        help="Tracker domain to filter by (default: hdbits.org)",
+    )
     args = parser.parse_args()
 
     dry_run = args.dry
@@ -245,7 +253,7 @@ Examples:
         print("DRY RUN MODE - No changes will be made")
         print("=" * 60)
 
-    print(f"Scanning for torrents...")
+    print("Scanning for torrents...")
     print(f"Search paths: {expanded_paths}")
     print("-" * 60)
 
@@ -261,18 +269,18 @@ Examples:
     without_hdbits = [t for t in all_torrents if not t.has_tracker(tracker_domain)]
 
     # Print stats
-    print(f"\n{'='*60}")
-    print(f"SUMMARY")
-    print(f"{'='*60}")
+    print(f"\n{'=' * 60}")
+    print("SUMMARY")
+    print(f"{'=' * 60}")
     print(f"Total torrents scanned: {len(all_torrents)}")
     print(f"With {tracker_domain}: {len(with_hdbits)}")
     print(f"Without {tracker_domain}: {len(without_hdbits)}")
 
     # Add hdbits torrents to rtorrent
     if with_hdbits:
-        print(f"\n{'='*60}")
-        print(f"VERIFYING DOWNLOADS & ADDING TO RTORRENT")
-        print(f"{'='*60}")
+        print(f"\n{'=' * 60}")
+        print("VERIFYING DOWNLOADS & ADDING TO RTORRENT")
+        print(f"{'=' * 60}")
 
         # First, verify which torrents have their data
         verified = []
@@ -285,15 +293,15 @@ Examples:
             else:
                 missing_data.append((torrent, message))
 
-        print(f"\nVerification results:")
+        print("\nVerification results:")
         print(f"  Downloads found: {len(verified)}")
         print(f"  Downloads missing: {len(missing_data)}")
 
         # Report missing downloads
         if missing_data:
-            print(f"\n{'='*60}")
-            print(f"TORRENTS WITH MISSING DATA (will not add)")
-            print(f"{'='*60}")
+            print(f"\n{'=' * 60}")
+            print("TORRENTS WITH MISSING DATA (will not add)")
+            print(f"{'=' * 60}")
             for torrent, message in missing_data:
                 print(f"\n  Name: {torrent.name}")
                 print(f"  Torrent: {torrent.path}")
@@ -301,9 +309,9 @@ Examples:
 
         # Now add verified torrents to rtorrent
         if verified:
-            print(f"\n{'='*60}")
+            print(f"\n{'=' * 60}")
             print(f"ADDING {len(verified)} VERIFIED TORRENTS TO RTORRENT")
-            print(f"{'='*60}")
+            print(f"{'=' * 60}")
 
             client = RTorrentClient()
             loaded_hashes = client.get_loaded_hashes()
@@ -334,12 +342,14 @@ Examples:
             if dry_run:
                 print(f"\nDry run: {added} would be added, {skipped} already loaded")
             else:
-                print(f"\nRtorrent results: {added} added, {skipped} skipped, {failed} failed")
+                print(
+                    f"\nRtorrent results: {added} added, {skipped} skipped, {failed} failed"
+                )
 
     # Clean up unregistered torrents from rtorrent
-    print(f"\n{'='*60}")
-    print(f"CHECKING FOR UNREGISTERED TORRENTS")
-    print(f"{'='*60}")
+    print(f"\n{'=' * 60}")
+    print("CHECKING FOR UNREGISTERED TORRENTS")
+    print(f"{'=' * 60}")
 
     client = RTorrentClient()
     unregistered = client.get_unregistered_torrents()
@@ -353,7 +363,9 @@ Examples:
 
         for torrent_info in unregistered:
             # Determine the download path (base_path is the actual file/folder)
-            download_path = Path(torrent_info['base_path']) if torrent_info['base_path'] else None
+            download_path = (
+                Path(torrent_info["base_path"]) if torrent_info["base_path"] else None
+            )
 
             if dry_run:
                 status = "[DRY]"
@@ -363,11 +375,11 @@ Examples:
                     print(f"  {status} {torrent_info['name']} (no data path)")
             else:
                 # Remove from rtorrent (keeps downloaded files)
-                if client.remove_torrent(torrent_info['hash']):
+                if client.remove_torrent(torrent_info["hash"]):
                     removed_from_rtorrent += 1
 
                     # Delete the .torrent file if it exists
-                    tied_file = torrent_info['tied_file']
+                    tied_file = torrent_info["tied_file"]
                     if tied_file:
                         torrent_file = Path(tied_file)
                         if torrent_file.exists():
@@ -391,42 +403,48 @@ Examples:
                     else:
                         print(f"  [DEL] {torrent_info['name']} (no data)")
                 else:
-                    print(f"  [ERR] {torrent_info['name']}: failed to remove from rtorrent")
+                    print(
+                        f"  [ERR] {torrent_info['name']}: failed to remove from rtorrent"
+                    )
 
         print()
         if dry_run:
-            print(f"Dry run: {len(unregistered)} would be removed (rtorrent + .torrent + downloads)")
+            print(
+                f"Dry run: {len(unregistered)} would be removed (rtorrent + .torrent + downloads)"
+            )
         else:
-            print(f"Cleanup: {removed_from_rtorrent} from rtorrent, {removed_torrent_files} .torrents, {removed_downloads} downloads")
+            print(
+                f"Cleanup: {removed_from_rtorrent} from rtorrent, {removed_torrent_files} .torrents, {removed_downloads} downloads"
+            )
     else:
         print("No unregistered torrents found.")
 
     # List torrents without hdbits.org
     if without_hdbits:
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"TORRENTS WITHOUT {tracker_domain.upper()}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
         for torrent in without_hdbits:
             print(f"\nName: {torrent.name}")
             print(f"Path: {torrent.path}")
             print(f"Size: {format_size(torrent.size)}")
             if torrent.trackers:
-                print(f"Trackers:")
+                print("Trackers:")
                 for tracker in torrent.trackers:
                     print(f"  - {tracker}")
             else:
                 print("Trackers: (none)")
 
         # Remove the non-hdbits torrent files
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         if dry_run:
             print(f"WOULD REMOVE {len(without_hdbits)} TORRENT FILE(S)")
-            print(f"{'='*60}")
+            print(f"{'=' * 60}")
             for torrent in without_hdbits:
                 print(f"Would remove: {torrent.path}")
         else:
             print(f"REMOVING {len(without_hdbits)} TORRENT FILE(S)")
-            print(f"{'='*60}")
+            print(f"{'=' * 60}")
             for torrent in without_hdbits:
                 try:
                     torrent.path.unlink()

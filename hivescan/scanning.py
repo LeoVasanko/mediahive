@@ -10,7 +10,18 @@ from hivescan.utils import get_media_folder_path, sanitize_filename
 
 
 # Video file extensions
-VIDEO_EXTENSIONS = {'.mkv', '.mp4', '.avi', '.m4v', '.mov', '.wmv', '.flv', '.webm', '.ts', '.m2ts'}
+VIDEO_EXTENSIONS = {
+    ".mkv",
+    ".mp4",
+    ".avi",
+    ".m4v",
+    ".mov",
+    ".wmv",
+    ".flv",
+    ".webm",
+    ".ts",
+    ".m2ts",
+}
 
 # Caches for expensive operations
 _episode_files_cache: Dict[str, Dict[Tuple[int, int], List[Tuple[str, int]]]] = {}
@@ -44,7 +55,9 @@ def scan_downloads(base_pattern: str) -> Iterator[ParsedContent]:
         yield parse_download(path)
 
 
-def categorize_downloads(downloads: list[ParsedContent]) -> dict[ContentType, list[ParsedContent]]:
+def categorize_downloads(
+    downloads: list[ParsedContent],
+) -> dict[ContentType, list[ParsedContent]]:
     """Categorize downloads by content type."""
     categories: dict[ContentType, list[ParsedContent]] = {
         ContentType.MOVIE: [],
@@ -85,14 +98,14 @@ def find_episode_files(path: Path) -> Dict[Tuple[int, int], List[Tuple[str, int]
     try:
         for f in path.rglob("*"):
             if f.is_file() and f.suffix.lower() in VIDEO_EXTENSIONS:
-                if 'sample' in f.name.lower():
+                if "sample" in f.name.lower():
                     continue
                 ep_info = parse_episode_from_filename(f.name)
                 if ep_info:
                     if ep_info not in episodes:
                         episodes[ep_info] = []
                     episodes[ep_info].append((str(f), f.stat().st_size))
-    except (OSError, PermissionError):
+    except OSError, PermissionError:
         pass
 
     _episode_files_cache[cache_key] = episodes
@@ -134,7 +147,7 @@ def find_playable_file(path: Path) -> Optional[str]:
                     result = str(nested_bdmv)
                     _playable_file_cache[cache_key] = result
                     return result
-    except (OSError, PermissionError):
+    except OSError, PermissionError:
         pass
 
     # Find largest video file
@@ -142,10 +155,10 @@ def find_playable_file(path: Path) -> Optional[str]:
     try:
         for f in path.rglob("*"):
             if f.is_file() and f.suffix.lower() in VIDEO_EXTENSIONS:
-                if 'sample' in f.name.lower():
+                if "sample" in f.name.lower():
                     continue
                 video_files.append((f, f.stat().st_size))
-    except (OSError, PermissionError):
+    except OSError, PermissionError:
         pass
 
     if not video_files:
@@ -158,7 +171,9 @@ def find_playable_file(path: Path) -> Optional[str]:
     return result
 
 
-def find_cover_image(title: str, year: Optional[int], media_type: str, cover_dir: Path) -> Optional[str]:
+def find_cover_image(
+    title: str, year: Optional[int], media_type: str, cover_dir: Path
+) -> Optional[str]:
     """Find a cover image for the given media item."""
     media_folder = get_media_folder_path(title, year, media_type, cover_dir)
     cover_path = media_folder / "cover.jpg"

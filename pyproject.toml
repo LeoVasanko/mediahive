@@ -10,8 +10,8 @@ dependencies = [
     "fastapi-vue>=0.5.2",
     "fastapi[standard]>=0.128.0",
     "httpx[http2]>=0.28.1",
+    "msgspec>=0.19",
     "parse-torrent-title>=2.8.1",
-    "tqdm>=4.67.3",
     "uvicorn[standard]>=0.40.0",
 ]
 

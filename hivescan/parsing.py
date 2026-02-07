@@ -62,17 +62,17 @@ def parse_episode_from_filename(filename: str) -> Optional[Tuple[int, int]]:
     name = filename.lower()
 
     # S01E05 format
-    match = re.search(r's(\d{1,2})e(\d{1,3})', name)
+    match = re.search(r"s(\d{1,2})e(\d{1,3})", name)
     if match:
         return int(match.group(1)), int(match.group(2))
 
     # 1x05 format
-    match = re.search(r'(\d{1,2})x(\d{1,3})', name)
+    match = re.search(r"(\d{1,2})x(\d{1,3})", name)
     if match:
         return int(match.group(1)), int(match.group(2))
 
     # Season 1 Episode 5 format
-    match = re.search(r'season\s*(\d{1,2}).*episode\s*(\d{1,3})', name)
+    match = re.search(r"season\s*(\d{1,2}).*episode\s*(\d{1,3})", name)
     if match:
         return int(match.group(1)), int(match.group(2))
 

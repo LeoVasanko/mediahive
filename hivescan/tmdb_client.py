@@ -3,17 +3,24 @@
 TMDb Client - Fetch movie and TV series metadata from The Movie Database (TMDb).
 """
 
+import asyncio
 import hashlib
 import json
 import os
 import sys
-import time
 import urllib.parse
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 import httpx
+
+from hivescan.structs import (
+    CastMember,
+    SimilarMedia,
+    TMDbEpisodeInfo,
+    TMDbInfo,
+    TMDbSeasonInfo,
+)
 
 # TMDb API configuration
 TMDB_API_KEY = os.environ.get("TMDB_API_KEY", "6bd914e6a5df1c6d1ddf622cf2dbc232")
@@ -22,8 +29,8 @@ TMDB_API_BASE = "https://api.themoviedb.org/3"
 # API response cache directory (can be overridden via set_cache_dir)
 _tmdb_cache_dir: Optional[Path] = None
 
-# Persistent HTTP client for connection reuse
-_http_client: Optional[httpx.Client] = None
+# Persistent async HTTP client for connection reuse
+_http_client: Optional[httpx.AsyncClient] = None
 
 
 def set_cache_dir(cache_dir: Path) -> None:
@@ -40,11 +47,11 @@ def _get_cache_dir() -> Path:
     return Path.cwd() / ".tmdb-cache"
 
 
-def _get_http_client() -> httpx.Client:
-    """Get or create a persistent HTTP client for connection reuse."""
+def _get_http_client() -> httpx.AsyncClient:
+    """Get or create a persistent async HTTP client for connection reuse."""
     global _http_client
     if _http_client is None:
-        _http_client = httpx.Client(
+        _http_client = httpx.AsyncClient(
             base_url=TMDB_API_BASE,
             headers={"Accept": "application/json", "User-Agent": "TorrentManager/1.0"},
             timeout=10.0,
@@ -70,7 +77,7 @@ def _load_from_cache(cache_path: Path):
     if not cache_path.exists():
         return _NOT_FOUND
     try:
-        with open(cache_path, "r") as f:
+        with open(cache_path, "r", encoding="utf-8") as f:
             data = json.load(f)
             # Handle cached "no results" / errors
             if data.get("_cached_none"):
@@ -84,7 +91,7 @@ def _save_to_cache(cache_path: Path, data: Optional[Dict]):
     """Save response to cache."""
     try:
         _get_cache_dir().mkdir(parents=True, exist_ok=True)
-        with open(cache_path, "w") as f:
+        with open(cache_path, "w", encoding="utf-8") as f:
             if data is None:
                 json.dump({"_cached_none": True}, f)
             else:
@@ -93,62 +100,12 @@ def _save_to_cache(cache_path: Path, data: Optional[Dict]):
         pass  # Cache write failures are not critical
 
 
-@dataclass
-class TMDbEpisodeInfo:
-    """Information about a TV episode from TMDb."""
-    episode_number: int
-    season_number: int
-    name: Optional[str] = None
-    overview: Optional[str] = None
-    air_date: Optional[str] = None
-    runtime: Optional[int] = None  # Minutes
-    still_path: Optional[str] = None  # Episode screenshot
-    vote_average: Optional[float] = None
-    vote_count: Optional[int] = None
-    director: Optional[str] = None
+# TMDbEpisodeInfo, TMDbSeasonInfo, TMDbInfo imported from hivescan.structs
 
 
-@dataclass
-class TMDbSeasonInfo:
-    """Information about a TV season from TMDb."""
-    season_number: int
-    name: Optional[str] = None
-    overview: Optional[str] = None
-    air_date: Optional[str] = None
-    poster_path: Optional[str] = None
-    episode_count: Optional[int] = None
-    episodes: Optional[List[TMDbEpisodeInfo]] = None
-
-
-@dataclass
-class TMDbInfo:
-    """Information fetched from TMDb."""
-    tmdb_id: int
-    title: Optional[str] = None  # Official title from TMDb
-    original_title: Optional[str] = None
-    alternative_titles: Optional[List[str]] = None  # Titles in other languages
-    rating: Optional[float] = None
-    vote_count: Optional[int] = None
-    overview: Optional[str] = None
-    genres: Optional[List[str]] = None
-    release_date: Optional[str] = None
-    runtime: Optional[int] = None  # Minutes for movies
-    status: Optional[str] = None  # Released, Ended, etc.
-    tagline: Optional[str] = None
-    poster_path: Optional[str] = None  # TMDb poster path
-    backdrop_path: Optional[str] = None
-    similar: Optional[List[Dict]] = None  # List of similar movies/shows
-    keywords: Optional[List[str]] = None
-    cast: Optional[List[Dict]] = None  # Top cast members
-    director: Optional[str] = None  # For movies
-    creators: Optional[List[str]] = None  # For TV series
-    number_of_seasons: Optional[int] = None  # For TV series
-    number_of_episodes: Optional[int] = None  # For TV series
-    networks: Optional[List[str]] = None  # For TV series
-    seasons: Optional[List[TMDbSeasonInfo]] = None  # Season details for TV series
-
-
-def tmdb_api_request(endpoint: str, params: Optional[Dict[str, str]] = None) -> Optional[Dict[str, str]]:
+async def tmdb_api_request(
+    endpoint: str, params: Optional[Dict[str, str]] = None
+) -> Optional[Dict[str, str]]:
     """Make a request to the TMDb API with disk caching and connection reuse."""
     params = params or {}
 
@@ -162,13 +119,15 @@ def tmdb_api_request(endpoint: str, params: Optional[Dict[str, str]] = None) -> 
 
     try:
         client = _get_http_client()
-        response = client.get(endpoint, params=params)
+        response = await client.get(endpoint, params=params)
 
         if response.status_code == 429:
             # Rate limited - wait and retry
-            print(f"  Rate limited, waiting...", file=sys.stderr)
-            time.sleep(1)
-            return tmdb_api_request(endpoint, {k: v for k, v in params.items() if k != "api_key"})
+            print("  Rate limited, waiting...", file=sys.stderr)
+            await asyncio.sleep(1)
+            return await tmdb_api_request(
+                endpoint, {k: v for k, v in params.items() if k != "api_key"}
+            )
 
         response.raise_for_status()
         data = response.json()
@@ -184,27 +143,28 @@ def tmdb_api_request(endpoint: str, params: Optional[Dict[str, str]] = None) -> 
         return None
 
 
-def fetch_movie_details(movie_id: int) -> Optional[Dict]:
+async def fetch_movie_details(movie_id: int) -> Optional[Dict]:
     """Fetch detailed movie info including credits, similar, keywords, and alternative titles."""
     # Use append_to_response to get multiple data in one request
-    data = tmdb_api_request(
+    data = await tmdb_api_request(
         f"/movie/{movie_id}",
-        {"append_to_response": "credits,similar,keywords,alternative_titles"}
+        {"append_to_response": "credits,similar,keywords,alternative_titles"},
     )
     return data
 
 
-def fetch_series_details(series_id: int) -> Optional[Dict]:
+async def fetch_series_details(series_id: int) -> Optional[Dict]:
     """Fetch detailed TV series info including credits, similar, and keywords."""
     # Use append_to_response to get multiple data in one request
-    data = tmdb_api_request(
-        f"/tv/{series_id}",
-        {"append_to_response": "credits,similar,keywords"}
+    data = await tmdb_api_request(
+        f"/tv/{series_id}", {"append_to_response": "credits,similar,keywords"}
     )
     return data
 
 
-def fetch_season_details(series_id: int, season_number: int) -> Optional[TMDbSeasonInfo]:
+async def fetch_season_details(
+    series_id: int, season_number: int
+) -> Optional[TMDbSeasonInfo]:
     """
     Fetch detailed season info including all episodes.
 
@@ -214,9 +174,8 @@ def fetch_season_details(series_id: int, season_number: int) -> Optional[TMDbSea
     - Runtime, ratings
     - Directors for each episode
     """
-    data = tmdb_api_request(
-        f"/tv/{series_id}/season/{season_number}",
-        {"append_to_response": "images"}
+    data = await tmdb_api_request(
+        f"/tv/{series_id}/season/{season_number}", {"append_to_response": "images"}
     )
 
     if not data:
@@ -310,7 +269,21 @@ def _titles_match(original_title: str, tmdb_title: str, search_query: str) -> bo
     query_words = _normalize_for_match(search_query)
 
     # Remove common stop words that don't help matching
-    stop_words = {"the", "a", "an", "of", "and", "or", "in", "on", "at", "to", "for", "is", "it"}
+    stop_words = {
+        "the",
+        "a",
+        "an",
+        "of",
+        "and",
+        "or",
+        "in",
+        "on",
+        "at",
+        "to",
+        "for",
+        "is",
+        "it",
+    }
     original_significant = original_words - stop_words
     tmdb_significant = tmdb_words - stop_words
     query_significant = query_words - stop_words
@@ -331,10 +304,16 @@ def _titles_match(original_title: str, tmdb_title: str, search_query: str) -> bo
     overlap = original_significant & tmdb_significant
 
     # Either good overlap, or the TMDb title is contained in original (or vice versa)
-    return bool(overlap) or tmdb_significant <= original_significant or original_significant <= tmdb_significant
+    return (
+        bool(overlap)
+        or tmdb_significant <= original_significant
+        or original_significant <= tmdb_significant
+    )
 
 
-def _search_movie_with_fallbacks(title: str, year: Optional[int]) -> Optional[Dict]:
+async def _search_movie_with_fallbacks(
+    title: str, year: Optional[int]
+) -> Optional[Dict]:
     """
     Search for a movie with progressive title shortening fallbacks.
 
@@ -346,20 +325,25 @@ def _search_movie_with_fallbacks(title: str, year: Optional[int]) -> Optional[Di
     words = title.split()
     variants = _generate_title_variants(words, min_words=2)
 
-    def _result_matches(top_result: Dict, original_title: str, search_query: str) -> bool:
+    def _result_matches(
+        top_result: Dict, original_title: str, search_query: str
+    ) -> bool:
         """Check if result matches against either title or original_title."""
         tmdb_title = top_result.get("title", "")
         tmdb_original = top_result.get("original_title", "")
-        return (
-            _titles_match(original_title, tmdb_title, search_query)
-            or _titles_match(original_title, tmdb_original, search_query)
+        return _titles_match(original_title, tmdb_title, search_query) or _titles_match(
+            original_title, tmdb_original, search_query
         )
 
     # Try all variants with year first
     if year:
         for search_title in variants:
-            params = {"query": search_title, "include_adult": "false", "year": str(year)}
-            data = tmdb_api_request("/search/movie", params)
+            params = {
+                "query": search_title,
+                "include_adult": "false",
+                "year": str(year),
+            }
+            data = await tmdb_api_request("/search/movie", params)
             if data and data.get("results"):
                 # Validate the top result matches our title (check both title and original_title)
                 top_result = data["results"][0]
@@ -369,7 +353,7 @@ def _search_movie_with_fallbacks(title: str, year: Optional[int]) -> Optional[Di
     # Then try without year
     for search_title in variants:
         params = {"query": search_title, "include_adult": "false"}
-        data = tmdb_api_request("/search/movie", params)
+        data = await tmdb_api_request("/search/movie", params)
         if data and data.get("results"):
             top_result = data["results"][0]
             if _result_matches(top_result, title, search_title):
@@ -378,9 +362,11 @@ def _search_movie_with_fallbacks(title: str, year: Optional[int]) -> Optional[Di
     return None
 
 
-def fetch_movie_info(title: str, year: Optional[int] = None) -> Optional[TMDbInfo]:
+async def fetch_movie_info(
+    title: str, year: Optional[int] = None
+) -> Optional[TMDbInfo]:
     """Fetch comprehensive movie info from TMDb."""
-    data = _search_movie_with_fallbacks(title, year)
+    data = await _search_movie_with_fallbacks(title, year)
 
     if not data or not data.get("results"):
         return None
@@ -389,7 +375,7 @@ def fetch_movie_info(title: str, year: Optional[int] = None) -> Optional[TMDbInf
     movie_id = result["id"]
 
     # Fetch full details with credits, similar movies, and keywords
-    details = fetch_movie_details(movie_id)
+    details = await fetch_movie_details(movie_id)
     if not details:
         # Fall back to basic info from search
         return TMDbInfo(
@@ -429,7 +415,11 @@ def fetch_movie_info(title: str, year: Optional[int] = None) -> Optional[TMDbInf
     credits = details.get("credits", {})
     cast_data = credits.get("cast", [])[:10]
     cast = [
-        {"name": c["name"], "character": c.get("character", ""), "profile_path": c.get("profile_path")}
+        CastMember(
+            name=c["name"],
+            character=c.get("character", ""),
+            profile_path=c.get("profile_path"),
+        )
         for c in cast_data
     ]
 
@@ -441,7 +431,7 @@ def fetch_movie_info(title: str, year: Optional[int] = None) -> Optional[TMDbInf
     # Extract similar movies (limit to 10)
     similar_data = details.get("similar", {}).get("results", [])[:10]
     similar = [
-        {"id": s["id"], "title": s["title"], "poster_path": s.get("poster_path")}
+        SimilarMedia(id=s["id"], title=s["title"], poster_path=s.get("poster_path"))
         for s in similar_data
     ]
 
@@ -467,7 +457,7 @@ def fetch_movie_info(title: str, year: Optional[int] = None) -> Optional[TMDbInf
     )
 
 
-def _search_series_with_fallbacks(title: str) -> Optional[Dict]:
+async def _search_series_with_fallbacks(title: str) -> Optional[Dict]:
     """
     Search for a TV series with progressive title shortening fallbacks.
 
@@ -479,7 +469,7 @@ def _search_series_with_fallbacks(title: str) -> Optional[Dict]:
 
     for search_title in variants:
         params = {"query": search_title, "include_adult": "false"}
-        data = tmdb_api_request("/search/tv", params)
+        data = await tmdb_api_request("/search/tv", params)
         if data and data.get("results"):
             # Validate the top result matches our title
             top_result = data["results"][0]
@@ -490,9 +480,9 @@ def _search_series_with_fallbacks(title: str) -> Optional[Dict]:
     return None
 
 
-def fetch_series_info(title: str) -> Optional[TMDbInfo]:
+async def fetch_series_info(title: str) -> Optional[TMDbInfo]:
     """Fetch comprehensive TV series info from TMDb."""
-    data = _search_series_with_fallbacks(title)
+    data = await _search_series_with_fallbacks(title)
 
     if not data or not data.get("results"):
         return None
@@ -501,7 +491,7 @@ def fetch_series_info(title: str) -> Optional[TMDbInfo]:
     series_id = result["id"]
 
     # Fetch full details with credits, similar shows, and keywords
-    details = fetch_series_details(series_id)
+    details = await fetch_series_details(series_id)
     if not details:
         # Fall back to basic info from search
         return TMDbInfo(
@@ -526,7 +516,11 @@ def fetch_series_info(title: str) -> Optional[TMDbInfo]:
     credits = details.get("credits", {})
     cast_data = credits.get("cast", [])[:10]
     cast = [
-        {"name": c["name"], "character": c.get("character", ""), "profile_path": c.get("profile_path")}
+        CastMember(
+            name=c["name"],
+            character=c.get("character", ""),
+            profile_path=c.get("profile_path"),
+        )
         for c in cast_data
     ]
 
@@ -539,7 +533,7 @@ def fetch_series_info(title: str) -> Optional[TMDbInfo]:
     # Extract similar series (limit to 10)
     similar_data = details.get("similar", {}).get("results", [])[:10]
     similar = [
-        {"id": s["id"], "title": s["name"], "poster_path": s.get("poster_path")}
+        SimilarMedia(id=s["id"], title=s["name"], poster_path=s.get("poster_path"))
         for s in similar_data
     ]
 

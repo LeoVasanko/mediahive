@@ -1,32 +1,25 @@
-"""CLI entry point for hivescan."""
+"""Entry point for hivescan — launches the scanning FastAPI server."""
 
 import argparse
-import glob
-import sys
-from pathlib import Path
-
-from hivescan.scanning import scan_downloads, categorize_downloads
-from hivescan.indexer import generate_media_index
-from hivescan.utils import DEFAULT_OUTPUT_FOLDER, find_common_root
-from hivescan.tmdb_client import set_cache_dir
+import os
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Scan downloaded torrents and generate a media index.",
+        description="Hivescan server — continuous media scanning with live WS updates.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s /path/to/torrents/*          # Scan paths, auto-detect common root
-  %(prog)s /mnt/disk1/* /mnt/disk2/*    # Scan multiple locations
-  %(prog)s /torrents/* -o /srv/media    # Override output directory
-  %(prog)s /torrents/* --no-showreels   # Skip showreel generation
-  %(prog)s /torrents/* --no-covers      # Skip cover/backdrop downloads
+  %(prog)s /path/to/torrents/*              # Scan paths, auto-detect common root
+  %(prog)s /mnt/disk1/* /mnt/disk2/*        # Scan multiple locations
+  %(prog)s /torrents/* -o /srv/media        # Override output directory
+  %(prog)s /torrents/* --port 9000          # Custom port
 
-Output:
-  By default, creates a .mediahive folder at the common root of scanned paths.
-  All paths in the index are stored relative to the .mediahive parent folder.
-  Use -o/--output-dir to override the output location.
+The server exposes:
+  WS   /ws          Live index updates & task progress
+  POST /api/scan    Trigger a new scan
+  GET  /api/status  Current server status
+  GET  /api/index   Full index as JSON (HTTP fallback)
         """,
     )
 
@@ -36,85 +29,32 @@ Output:
         help="Folders or glob patterns to scan for downloads",
     )
     parser.add_argument(
-        "-o", "--output-dir",
+        "-o",
+        "--output-dir",
         metavar="DIR",
-        help=f"Output directory for index and covers (default: {DEFAULT_OUTPUT_FOLDER} at common root)",
+        help="Output directory for index and covers (default: .mediahive at common root)",
     )
     parser.add_argument(
-        "--no-showreels",
-        action="store_true",
-        help="Skip generating showreel images",
+        "--host",
+        default="0.0.0.0",
+        help="Host to bind to (default: 0.0.0.0)",
     )
     parser.add_argument(
-        "--no-covers",
-        action="store_true",
-        help="Skip downloading cover and backdrop images from TMDb",
+        "--port",
+        type=int,
+        default=8421,
+        help="Port to listen on (default: 8421)",
     )
-
     args = parser.parse_args()
 
-    # Expand glob patterns and collect all paths
-    all_paths = []
-    for pattern in args.paths:
-        expanded = glob.glob(pattern)
-        if expanded:
-            all_paths.extend(Path(p) for p in expanded)
-        else:
-            # Treat as literal path if no glob match
-            all_paths.append(Path(pattern))
-
-    if not all_paths:
-        print("Error: No paths found to scan", file=sys.stderr)
-        sys.exit(1)
-
-    # Determine output directory
+    # Pass configuration via environment variables (read by server.py lifespan)
+    os.environ["HIVESCAN_PATHS"] = os.pathsep.join(args.paths)
     if args.output_dir:
-        output_dir = Path(args.output_dir)
-        media_root = output_dir.parent
-    else:
-        # Find common root of all scan paths
-        media_root = find_common_root(all_paths)
-        if media_root is None:
-            print("Error: Cannot determine common root for paths (different drives?)", file=sys.stderr)
-            print("       Use -o/--output-dir to specify output location", file=sys.stderr)
-            sys.exit(1)
-        output_dir = media_root / DEFAULT_OUTPUT_FOLDER
+        os.environ["HIVESCAN_OUTPUT"] = args.output_dir
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    index_path = output_dir / "index.json"
+    from hivescan.server import run
 
-    # Set TMDb cache directory within output dir
-    set_cache_dir(output_dir / ".tmdb-cache")
-
-    print(f"Media root: {media_root}")
-    print(f"Output dir: {output_dir}")
-    print(f"Scanning {len(all_paths)} paths...")
-
-    # Scan all paths
-    downloads = []
-    for path in all_paths:
-        if path.is_dir():
-            # Scan directory contents
-            for item in path.iterdir():
-                if not item.name.startswith("."):
-                    from hivescan.parsing import parse_download
-                    downloads.append(parse_download(item))
-        elif path.exists():
-            from hivescan.parsing import parse_download
-            downloads.append(parse_download(path))
-
-    print(f"Found {len(downloads)} items")
-
-    categories = categorize_downloads(downloads)
-
-    generate_media_index(
-        categories,
-        index_path,
-        output_dir,
-        media_root=media_root,
-        fetch_covers=not args.no_covers,
-        generate_showreels=not args.no_showreels,
-    )
+    run(host=args.host, port=args.port)
 
 
 if __name__ == "__main__":

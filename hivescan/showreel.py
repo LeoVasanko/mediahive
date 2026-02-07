@@ -6,15 +6,16 @@ Supports automatic black bar detection and removal, hardware-accelerated encodin
 and HDR passthrough.
 """
 
+import asyncio
 import json
+import logging
 import re
 import shlex
-import subprocess
 from collections import Counter
 from pathlib import Path
 from typing import Optional
 
-from tqdm import tqdm
+logger = logging.getLogger("hivescan.showreel")
 
 
 # Showreel timestamp positions in seconds (5, 10, 15, 20, 25 minutes)
@@ -77,7 +78,9 @@ def get_expected_episode_reel_path(
     return str(output_path)
 
 
-def movie_showreels_exist(media_folder: Path, timestamps: list[int] = SHOWREEL_TIMESTAMPS) -> bool:
+def movie_showreels_exist(
+    media_folder: Path, timestamps: list[int] = SHOWREEL_TIMESTAMPS
+) -> bool:
     """Check if all showreel files for a movie already exist."""
     for reel_num in range(1, len(timestamps) + 1):
         if not (media_folder / f"reel{reel_num}.webm").exists():
@@ -117,7 +120,7 @@ def get_bluray_uri(video_path: str) -> Optional[str]:
 _av1_encoder_cache: Optional[str] = None
 
 
-def get_av1_encoder() -> str:
+async def get_av1_encoder() -> str:
     """
     Detect the best available AV1 encoder.
 
@@ -133,20 +136,32 @@ def get_av1_encoder() -> str:
 
     # Check for NVIDIA AV1 encoder
     try:
-        result = subprocess.run(
-            ["ffmpeg", "-hide_banner", "-encoders"],
-            capture_output=True,
-            text=True,
-            timeout=10
+        proc = await asyncio.create_subprocess_exec(
+            "ffmpeg",
+            "-hide_banner",
+            "-encoders",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
-        if "av1_nvenc" in result.stdout:
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+        if b"av1_nvenc" in stdout:
             # Verify it actually works (driver support)
-            test_result = subprocess.run(
-                ["ffmpeg", "-f", "lavfi", "-i", "nullsrc=s=64x64:d=1", "-c:v", "av1_nvenc", "-f", "null", "-"],
-                capture_output=True,
-                timeout=10
+            test_proc = await asyncio.create_subprocess_exec(
+                "ffmpeg",
+                "-f",
+                "lavfi",
+                "-i",
+                "nullsrc=s=64x64:d=1",
+                "-c:v",
+                "av1_nvenc",
+                "-f",
+                "null",
+                "-",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
-            if test_result.returncode == 0:
+            await asyncio.wait_for(test_proc.communicate(), timeout=10)
+            if test_proc.returncode == 0:
                 _av1_encoder_cache = "av1_nvenc"
                 return _av1_encoder_cache
     except Exception:
@@ -175,7 +190,7 @@ def get_encoder_options(encoder: str) -> list[str]:
         return ["-crf", "38", "-preset", "6"]
 
 
-def detect_dovi_profile(video_path: str) -> Optional[int]:
+async def detect_dovi_profile(video_path: str) -> Optional[int]:
     """
     Detect Dolby Vision profile from a video file.
 
@@ -187,17 +202,29 @@ def detect_dovi_profile(video_path: str) -> Optional[int]:
     try:
         # Check for Dolby Vision configuration record in video stream
         cmd = [
-            "ffprobe", "-v", "error", "-select_streams", "v:0",
-            "-show_entries", "stream_side_data_list",
-            "-of", "json", video_path
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream_side_data_list",
+            "-of",
+            "json",
+            video_path,
         ]
-        print(f"    $ {shlex.join(cmd)}")
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        logger.debug("    $ %s", shlex.join(cmd))
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
 
-        if result.returncode != 0:
+        if proc.returncode != 0:
             return None
 
-        data = json.loads(result.stdout)
+        data = json.loads(stdout)
         streams = data.get("streams", [])
         if not streams:
             return None
@@ -215,20 +242,32 @@ def detect_dovi_profile(video_path: str) -> Optional[int]:
         # Alternative: check using mediainfo-style detection via codec tag
         # Some DoVi content has "dvhe" or "dvh1" codec tags
         codec_cmd = [
-            "ffprobe", "-v", "error", "-select_streams", "v:0",
-            "-show_entries", "stream=codec_tag_string,codec_name",
-            "-of", "csv=p=0", video_path
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=codec_tag_string,codec_name",
+            "-of",
+            "csv=p=0",
+            video_path,
         ]
-        codec_result = subprocess.run(codec_cmd, capture_output=True, text=True, timeout=30)
-        if codec_result.returncode == 0:
-            codec_info = codec_result.stdout.lower()
+        codec_proc = await asyncio.create_subprocess_exec(
+            *codec_cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        codec_stdout, _ = await asyncio.wait_for(codec_proc.communicate(), timeout=30)
+        if codec_proc.returncode == 0:
+            codec_info = codec_stdout.decode("utf-8").lower()
             if "dvhe" in codec_info or "dvh1" in codec_info or "dav1" in codec_info:
                 # DoVi detected but profile unknown, assume needs conversion
                 return 7  # Conservative: treat as dual-layer
 
         return None
     except Exception as e:
-        print(f"    DoVi detection error: {e}")
+        logger.warning("    DoVi detection error: %s", e)
         return None
 
 
@@ -247,27 +286,32 @@ def get_dovi_to_hdr10_filter() -> str:
     )
 
 
-def is_hdr_video(video_path: str) -> bool:
+async def is_hdr_video(video_path: str) -> bool:
     """
     Check if a video file is HDR using ffprobe.
 
     Returns True if the video has HDR metadata (bt2020, SMPTE ST 2084, etc.)
     """
     try:
-        result = subprocess.run(
-            [
-                "ffprobe", "-v", "quiet", "-select_streams", "v:0",
-                "-show_entries", "stream=color_transfer,color_primaries,color_space",
-                "-of", "json", video_path
-            ],
-            capture_output=True,
-            text=True,
-            timeout=30
+        proc = await asyncio.create_subprocess_exec(
+            "ffprobe",
+            "-v",
+            "quiet",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=color_transfer,color_primaries,color_space",
+            "-of",
+            "json",
+            video_path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
-        if result.returncode != 0:
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
+        if proc.returncode != 0:
             return False
 
-        data = json.loads(result.stdout)
+        data = json.loads(stdout)
         streams = data.get("streams", [])
         if not streams:
             return False
@@ -285,7 +329,7 @@ def is_hdr_video(video_path: str) -> bool:
         return False
 
 
-def detect_crop(video_path: str) -> Optional[str]:
+async def detect_crop(video_path: str) -> Optional[str]:
     """
     Detect black bars in a video and return the crop filter string.
 
@@ -306,18 +350,30 @@ def detect_crop(video_path: str) -> Optional[str]:
     try:
         # First, get source video dimensions to check if it's 16:9
         dim_cmd = [
-            "ffprobe", "-v", "error", "-select_streams", "v:0",
-            "-show_entries", "stream=width,height",
-            "-of", "csv=p=0", video_path
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=width,height",
+            "-of",
+            "csv=p=0",
+            video_path,
         ]
-        print(f"    $ {shlex.join(dim_cmd)}")
-        dim_result = subprocess.run(dim_cmd, capture_output=True, text=True, timeout=30)
-        if dim_result.returncode != 0:
-            print(f"    Failed to get dimensions: {dim_result.stderr.strip()}")
+        logger.debug("    $ %s", shlex.join(dim_cmd))
+        dim_proc = await asyncio.create_subprocess_exec(
+            *dim_cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        dim_stdout, _ = await asyncio.wait_for(dim_proc.communicate(), timeout=30)
+        if dim_proc.returncode != 0:
             return None
 
-        # Parse "width,height" output
-        parts = dim_result.stdout.strip().split(",")
+        # Parse "width,height" output (take first line only, ffprobe may emit multiple)
+        first_line = dim_stdout.decode("utf-8").strip().splitlines()[0].strip()
+        parts = first_line.split(",")
         if len(parts) < 2:
             return None
         src_width, src_height = int(parts[0]), int(parts[1])
@@ -332,21 +388,42 @@ def detect_crop(video_path: str) -> Optional[str]:
         # Use ffmpeg to run cropdetect on just 2 seconds at 5-minute mark
         # This is much faster than scanning 60 seconds with ffprobe lavfi
         cmd = [
-            "ffmpeg", "-hide_banner", "-ss", "300", "-i", video_path,
-            "-t", "2", "-vf", "cropdetect=limit=24:round=2:reset=0",
-            "-f", "null", "-"
+            "ffmpeg",
+            "-hide_banner",
+            "-ss",
+            "300",
+            "-i",
+            video_path,
+            "-t",
+            "2",
+            "-vf",
+            "cropdetect=limit=24:round=2:reset=0",
+            "-f",
+            "null",
+            "-",
         ]
-        print(f"    $ {shlex.join(cmd)}")
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        logger.debug("    $ %s", shlex.join(cmd))
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=60)
+        stderr_text = stderr_bytes.decode("utf-8", errors="replace")
 
         # cropdetect outputs to stderr like: [Parsed_cropdetect_0 @ ...] x1:0 x2:1919 y1:138 y2:941 w:1920 h:800 ...
         # We need to parse the crop values from stderr
-        crop_pattern = re.compile(r'crop=(\d+):(\d+):(\d+):(\d+)')
+        crop_pattern = re.compile(r"crop=(\d+):(\d+):(\d+):(\d+)")
         crop_values = []
-        for line in result.stderr.split('\n'):
+        for line in stderr_text.split("\n"):
             match = crop_pattern.search(line)
             if match:
-                w, h, x, y = int(match.group(1)), int(match.group(2)), int(match.group(3)), int(match.group(4))
+                w, h, x, y = (
+                    int(match.group(1)),
+                    int(match.group(2)),
+                    int(match.group(3)),
+                    int(match.group(4)),
+                )
                 if w > 0 and h > 0 and x >= 0 and y >= 0:
                     crop_values.append((w, h, x, y))
 
@@ -398,44 +475,48 @@ def detect_crop(video_path: str) -> Optional[str]:
             return None
 
         crop_result = f"crop={w_aligned}:{h_aligned}:{x_aligned}:{y_aligned}"
-        print(f"    Detected crop: {crop_result}")
+        logger.debug("    Detected crop: %s", crop_result)
         return crop_result
 
     except Exception as e:
-        print(f"    Crop detection error: {e}")
+        logger.warning("    Crop detection error: %s", e)
         return None
 
 
-def get_video_duration(video_path: str) -> Optional[float]:
+async def get_video_duration(video_path: str) -> Optional[float]:
     """
     Get the duration of a video file in seconds using ffprobe.
     """
     try:
-        result = subprocess.run(
-            [
-                "ffprobe", "-v", "quiet", "-show_entries", "format=duration",
-                "-of", "json", video_path
-            ],
-            capture_output=True,
-            text=True,
-            timeout=30
+        proc = await asyncio.create_subprocess_exec(
+            "ffprobe",
+            "-v",
+            "quiet",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "json",
+            video_path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
-        if result.returncode != 0:
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
+        if proc.returncode != 0:
             return None
 
-        data = json.loads(result.stdout)
+        data = json.loads(stdout)
         duration = data.get("format", {}).get("duration")
         return float(duration) if duration else None
     except Exception:
         return None
 
 
-def generate_showreel_images(
+async def generate_showreel_images(
     video_path: str,
     media_folder: Path,
     timestamps: list[int] = SHOWREEL_TIMESTAMPS,
     title: str = None,
-    pbar: Optional[tqdm] = None,
+    on_progress=None,
 ) -> list[str]:
     """
     Generate showreel video clips from a video file at specified timestamps.
@@ -447,7 +528,8 @@ def generate_showreel_images(
         video_path: Path to the video file (or index.bdmv for Blu-ray discs)
         media_folder: Folder for this specific media item
         timestamps: List of timestamps in seconds to capture
-        pbar: Optional tqdm progress bar to update
+        title: Title for logging
+        on_progress: Optional callback(reel_num) called after each reel completes
 
     Returns:
         List of relative paths to generated showreel video clips
@@ -482,9 +564,9 @@ def generate_showreel_images(
     media_folder.mkdir(parents=True, exist_ok=True)
 
     # Check video duration to avoid seeking past the end
-    duration = get_video_duration(ffmpeg_input)
+    duration = await get_video_duration(ffmpeg_input)
     if duration is None:
-        print(f"    Could not get duration for: {video_path}")
+        logger.warning("    Could not get duration for: %s", video_path)
         return []
 
     # Filter timestamps that are within the video duration (with 40s margin for 10s clips)
@@ -497,17 +579,17 @@ def generate_showreel_images(
             return []
 
     # Get the best available AV1 encoder
-    encoder = get_av1_encoder()
+    encoder = await get_av1_encoder()
     encoder_opts = get_encoder_options(encoder)
 
     # Detect Dolby Vision profile for tonemapping (profiles 5/7 need conversion)
-    dovi_profile = detect_dovi_profile(ffmpeg_input)
+    dovi_profile = await detect_dovi_profile(ffmpeg_input)
     needs_tonemap = dovi_profile is not None and dovi_profile in (5, 7)
     if needs_tonemap:
-        print(f"    DoVi profile {dovi_profile} detected, will convert to HDR10")
+        logger.info("    DoVi profile %d detected, will convert to HDR10", dovi_profile)
 
     # Detect black bars once for all clips (uses same video source)
-    crop_filter = detect_crop(ffmpeg_input)
+    crop_filter = await detect_crop(ffmpeg_input)
 
     generated_paths = []
 
@@ -518,8 +600,8 @@ def generate_showreel_images(
         # Skip if already exists
         if output_path.exists():
             generated_paths.append(str(output_path))
-            if pbar:
-                pbar.update(1)
+            if on_progress:
+                on_progress(reel_num)
             continue
 
         # Build video filter chain:
@@ -534,60 +616,74 @@ def generate_showreel_images(
         vf_parts.append("scale='min(720,iw)':-2")
         vf_filter = ",".join(vf_parts)
         cmd = [
-            "ffmpeg", "-y", "-ss", str(timestamp), "-i", ffmpeg_input,
-            "-hide_banner", "-loglevel", "warning", "-stats",
-            "-map", "0:v:0", "-map", "0:a:0?",  # First video, first audio (optional)
-            "-t", "10",
-            "-vf", vf_filter,
-            "-c:v", encoder,
+            "ffmpeg",
+            "-y",
+            "-ss",
+            str(timestamp),
+            "-i",
+            ffmpeg_input,
+            "-hide_banner",
+            "-loglevel",
+            "warning",
+            "-stats",
+            "-map",
+            "0:v:0",
+            "-map",
+            "0:a:0?",  # First video, first audio (optional)
+            "-t",
+            "10",
+            "-vf",
+            vf_filter,
+            "-c:v",
+            encoder,
             *encoder_opts,
-            "-c:a", "libopus",
-            "-ac", "2",
-            "-b:a", "128k",
+            "-c:a",
+            "libopus",
+            "-ac",
+            "2",
+            "-b:a",
+            "128k",
             str(output_path),
         ]
 
-        print(f"    $ {shlex.join(cmd)}")
+        logger.debug("    $ %s", shlex.join(cmd))
         try:
-            result = subprocess.run(cmd, timeout=120)
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            await asyncio.wait_for(proc.communicate(), timeout=120)
 
-            if result.returncode == 0 and output_path.exists():
+            if proc.returncode == 0 and output_path.exists():
                 generated_paths.append(str(output_path))
-                if pbar:
-                    pbar.update(1)
+                if on_progress:
+                    on_progress(reel_num)
             else:
                 output_path.unlink(missing_ok=True)
-                if pbar:
-                    # Update remaining reels as skipped
-                    remaining = len(valid_timestamps) - reel_num + 1
-                    pbar.update(remaining)
-                    pbar.refresh()
                 # Abort remaining reels - if first one fails, others likely will too
                 break
         except BaseException as e:
             output_path.unlink(missing_ok=True)
-            if isinstance(e, (KeyboardInterrupt, SystemExit)):
+            if isinstance(e, (KeyboardInterrupt, SystemExit, asyncio.CancelledError)):
                 raise
-            if pbar:
-                pbar.clear()
-            print(f"\n\033[91mError generating showreel for {title or 'unknown'} at {timestamp}s: {e}\033[0m")
-            if pbar:
-                # Update remaining reels as skipped
-                remaining = len(valid_timestamps) - reel_num + 1
-                pbar.update(remaining)
-                pbar.refresh()
+            logger.error(
+                "Error generating showreel for %s at %ds: %s",
+                title or "unknown",
+                timestamp,
+                e,
+            )
             # Abort remaining reels
             break
 
     return generated_paths
 
 
-def generate_episode_reel(
+async def generate_episode_reel(
     video_path: str,
     media_folder: Path,
     season_num: int,
     episode_num: int,
-    pbar: Optional[tqdm] = None,
 ) -> Optional[str]:
     """
     Generate a single 10-second reel video clip for a TV episode.
@@ -601,7 +697,6 @@ def generate_episode_reel(
         media_folder: Folder for this series
         season_num: Season number
         episode_num: Episode number
-        pbar: Optional tqdm progress bar to update
 
     Returns:
         Relative path to generated image, or None if failed
@@ -629,7 +724,7 @@ def generate_episode_reel(
         return str(output_path)
 
     # Check video duration
-    duration = get_video_duration(ffmpeg_input)
+    duration = await get_video_duration(ffmpeg_input)
     if duration is None:
         return None
 
@@ -639,17 +734,17 @@ def generate_episode_reel(
     actual_timestamp = max(10, min(actual_timestamp, duration - 40))
 
     # Get the best available AV1 encoder
-    encoder = get_av1_encoder()
+    encoder = await get_av1_encoder()
     encoder_opts = get_encoder_options(encoder)
 
     # Detect Dolby Vision profile for tonemapping (profiles 5/7 need conversion)
-    dovi_profile = detect_dovi_profile(ffmpeg_input)
+    dovi_profile = await detect_dovi_profile(ffmpeg_input)
     needs_tonemap = dovi_profile is not None and dovi_profile in (5, 7)
     if needs_tonemap:
-        print(f"    DoVi profile {dovi_profile} detected, will convert to HDR10")
+        logger.info("    DoVi profile %d detected, will convert to HDR10", dovi_profile)
 
     # Detect black bars for cropping
-    crop_filter = detect_crop(ffmpeg_input)
+    crop_filter = await detect_crop(ffmpeg_input)
 
     # Build video filter chain:
     # 1. DoVi to HDR10 conversion (if needed) - must come first
@@ -663,42 +758,54 @@ def generate_episode_reel(
     vf_parts.append("scale='min(720,iw)':-2")
     vf_filter = ",".join(vf_parts)
     cmd = [
-        "ffmpeg", "-y", "-ss", str(actual_timestamp), "-i", ffmpeg_input,
-        "-hide_banner", "-loglevel", "warning", "-stats",
-        "-map", "0:v:0", "-map", "0:a:0?",  # First video, first audio (optional)
-        "-t", "10",
-        "-vf", vf_filter,
-        "-c:v", encoder,
+        "ffmpeg",
+        "-y",
+        "-ss",
+        str(actual_timestamp),
+        "-i",
+        ffmpeg_input,
+        "-hide_banner",
+        "-loglevel",
+        "warning",
+        "-stats",
+        "-map",
+        "0:v:0",
+        "-map",
+        "0:a:0?",  # First video, first audio (optional)
+        "-t",
+        "10",
+        "-vf",
+        vf_filter,
+        "-c:v",
+        encoder,
         *encoder_opts,
-        "-c:a", "libopus",
-        "-ac", "2",
-        "-b:a", "128k",
+        "-c:a",
+        "libopus",
+        "-ac",
+        "2",
+        "-b:a",
+        "128k",
         str(output_path),
     ]
 
-    print(f"    $ {shlex.join(cmd)}")
+    logger.debug("    $ %s", shlex.join(cmd))
     try:
-        result = subprocess.run(cmd, timeout=120)
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        await asyncio.wait_for(proc.communicate(), timeout=120)
 
-        if result.returncode == 0 and output_path.exists():
-            if pbar:
-                pbar.update(1)
+        if proc.returncode == 0 and output_path.exists():
             return str(output_path)
         else:
             output_path.unlink(missing_ok=True)
-            if pbar:
-                pbar.update(1)
-                pbar.refresh()
             return None
     except BaseException as e:
         output_path.unlink(missing_ok=True)
-        if isinstance(e, (KeyboardInterrupt, SystemExit)):
+        if isinstance(e, (KeyboardInterrupt, SystemExit, asyncio.CancelledError)):
             raise
-        if pbar:
-            pbar.clear()
         episode_code = f"S{season_num:02d}E{episode_num:02d}"
-        print(f"\n\033[91mError generating episode reel for {episode_code}: {e}\033[0m")
-        if pbar:
-            pbar.update(1)
-            pbar.refresh()
+        logger.error("Error generating episode reel for %s: %s", episode_code, e)
         return None

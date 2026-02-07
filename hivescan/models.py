@@ -9,6 +9,7 @@ from typing import Optional
 
 class ContentType(Enum):
     """Types of content that can be identified."""
+
     MOVIE = "movie"
     SERIES = "series"
     OTHER = "other"
@@ -17,6 +18,7 @@ class ContentType(Enum):
 @dataclass
 class ContentHash:
     """Hash representing a file or directory's content based on torrent name."""
+
     path: Path
     hash: str
     _size: Optional[int] = None
@@ -26,6 +28,7 @@ class ContentHash:
         """Get the size, computing it lazily if needed."""
         if self._size is None:
             from hivescan.utils import get_directory_size
+
             self._size = get_directory_size(self.path)
         return self._size
 
@@ -43,6 +46,7 @@ class ContentHash:
 @dataclass
 class ParsedContent:
     """Information parsed from a torrent name."""
+
     path: Path
     name: str
     content_type: ContentType

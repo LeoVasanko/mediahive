@@ -12,11 +12,13 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import aiofiles
-from fastapi import FastAPI, HTTPException
+import msgspec
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi_vue import Frontend
-from pydantic import BaseModel
+
+from hivescan.structs import PlayMediaRequest, OpenFolderRequest
 
 from mediahive.__main__ import DEVMODE
 
@@ -63,17 +65,6 @@ def normalize_path(url_path: str) -> Path:
     """
     clean_path = url_path.lstrip("/")
     return MEDIAROOT / clean_path
-
-
-# === API Models ===
-
-
-class PlayMediaRequest(BaseModel):
-    file_path: str
-
-
-class OpenFolderRequest(BaseModel):
-    folder_path: str
 
 
 # === API Endpoints ===
@@ -153,18 +144,17 @@ async def load_media_index():
 
 
 @app.post("/api/play")
-async def play_media(request: PlayMediaRequest):
+async def play_media(request: Request):
     """
     Open a media file with the system's default player.
     """
-    print(f"[play] Received path: {request.file_path}")
-    file_path = MEDIAROOT / request.file_path
+    req = msgspec.json.decode(await request.body(), type=PlayMediaRequest)
+    print(f"[play] Received path: {req.file_path}")
+    file_path = MEDIAROOT / req.file_path
 
     if not file_path.exists():
         print(f"[play] File not found: {file_path}")
-        raise HTTPException(
-            status_code=404, detail=f"File not found: {request.file_path}"
-        )
+        raise HTTPException(status_code=404, detail=f"File not found: {req.file_path}")
 
     try:
         # Use os.startfile on Windows (non-blocking)
@@ -182,18 +172,19 @@ async def play_media(request: PlayMediaRequest):
 
 
 @app.post("/api/open-folder")
-async def open_folder(request: OpenFolderRequest):
+async def open_folder(request: Request):
     """
     Open a folder in the system file explorer.
     If the path is a file, opens the parent folder and selects the file.
     """
-    print(f"[open-folder] Received path: {request.folder_path}")
-    target_path = MEDIAROOT / request.folder_path
+    req = msgspec.json.decode(await request.body(), type=OpenFolderRequest)
+    print(f"[open-folder] Received path: {req.folder_path}")
+    target_path = MEDIAROOT / req.folder_path
 
     if not target_path.exists():
         print(f"[open-folder] Path not found: {target_path}")
         raise HTTPException(
-            status_code=404, detail=f"Path not found: {request.folder_path}"
+            status_code=404, detail=f"Path not found: {req.folder_path}"
         )
 
     try:
