@@ -99,7 +99,7 @@
                     <button
                       class="btn btn-small btn-secondary"
                       v-bind="navAttrs(2, index * 2 + 1)"
-                      @click="handleOpenFolder(version.path)"
+                      @click="handleOpenFolder(version.playable_file || '')"
                     >📁</button>
                   </div>
                 </div>
@@ -140,7 +140,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch, onMounted } from 'vue';
-import type { MediaItem, Movie, MovieVersion, Series } from '../types';
+import type { MediaItem, Movie, Series, Torrent } from '../types';
 import { getCoverUrl } from '../api';
 import SeriesFullView from './SeriesFullView.vue';
 import { navAttrs } from '../composables/useKeyboardNavigation';
@@ -270,10 +270,10 @@ function getShowreelUrl(path: string): string {
   return getCoverUrl(path);
 }
 // Movie versions
-const movieVersions = computed((): MovieVersion[] => {
+const movieVersions = computed((): Torrent[] => {
   if (props.item.type !== 'movies') return [];
   const movie = props.item.data as Movie;
-  return movie.versions || [];
+  return Object.values(movie.torrents || {});
 });
 
 const headerStyle = computed(() => {
@@ -299,7 +299,7 @@ const backdropStyle = computed(() => {
 });
 
 // Check if a specific version is a disc format (Blu-ray disc has index.bdmv)
-function isVersionDisc(version: MovieVersion): boolean {
+function isVersionDisc(version: Torrent): boolean {
   if (!version.playable_file) return false;
   const filename = version.playable_file.toLowerCase();
   return filename.endsWith('index.bdmv') || filename.endsWith('.iso');
@@ -307,42 +307,42 @@ function isVersionDisc(version: MovieVersion): boolean {
 
 const movieGenres = computed(() => {
   if (props.item.type !== 'movies') return null;
-  return (props.item.data as Movie).genres;
+  return (props.item.data as Movie).info?.genres;
 });
 
 const movieTagline = computed(() => {
   if (props.item.type !== 'movies') return null;
-  return (props.item.data as Movie).tagline;
+  return (props.item.data as Movie).info?.tagline;
 });
 
 const movieDirector = computed(() => {
   if (props.item.type !== 'movies') return null;
-  return (props.item.data as Movie).director;
+  return (props.item.data as Movie).info?.director;
 });
 
 const movieCast = computed(() => {
   if (props.item.type !== 'movies') return null;
-  return (props.item.data as Movie).cast;
+  return (props.item.data as Movie).info?.cast;
 });
 
 const movieRuntime = computed(() => {
   if (props.item.type !== 'movies') return null;
-  return (props.item.data as Movie).runtime;
+  return (props.item.data as Movie).info?.runtime;
 });
 
 const movieReleaseDate = computed(() => {
   if (props.item.type !== 'movies') return null;
-  return (props.item.data as Movie).release_date;
+  return (props.item.data as Movie).info?.release_date;
 });
 
 const movieStatus = computed(() => {
   if (props.item.type !== 'movies') return null;
-  return (props.item.data as Movie).status;
+  return (props.item.data as Movie).info?.status;
 });
 
 const movieKeywords = computed(() => {
   if (props.item.type !== 'movies') return null;
-  return (props.item.data as Movie).keywords;
+  return (props.item.data as Movie).info?.keywords;
 });
 
 function formatRuntime(minutes: number): string {
@@ -354,16 +354,16 @@ function formatRuntime(minutes: number): string {
 
 const rating = computed(() => {
   if (props.item.type === 'movies') {
-    return (props.item.data as Movie).rating;
+    return (props.item.data as Movie).info?.rating;
   }
-  return (props.item.data as Series).rating;
+  return (props.item.data as Series).info?.rating;
 });
 
 const overview = computed(() => {
   if (props.item.type === 'movies') {
-    return (props.item.data as Movie).overview;
+    return (props.item.data as Movie).info?.overview;
   }
-  return (props.item.data as Series).overview;
+  return (props.item.data as Series).info?.overview;
 });
 
 const ratingClass = computed(() => {

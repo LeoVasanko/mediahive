@@ -5,7 +5,7 @@
     <section class="series-hero">
       <div class="hero-bg">
         <!-- Use backdrop if available, otherwise create collage from season posters -->
-        <img v-if="backdropUrl" :src="backdropUrl" class="hero-img" :alt="series.title" />
+        <img v-if="backdropUrl" :src="backdropUrl" class="hero-img" :alt="series.title || 'Unknown'" />
         <div v-else class="hero-collage">
           <div
             v-for="(season, i) in seasonsWithPosters.slice(0, 5)"
@@ -19,12 +19,12 @@
       <div class="hero-content">
         <h1 class="series-title">{{ series.title }}</h1>
         <div class="series-meta">
-          <span v-if="series.rating" class="meta-rating" :class="ratingClass">★ {{ series.rating.toFixed(1) }}</span>
-          <span v-if="series.number_of_seasons" class="meta-item">{{ series.number_of_seasons }} Seasons</span>
-          <span v-if="series.status" class="meta-badge">{{ series.status }}</span>
-          <span v-if="series.genres?.length" class="meta-genres">{{ series.genres.slice(0, 3).join(' • ') }}</span>
+          <span v-if="series.info?.rating" class="meta-rating" :class="ratingClass">★ {{ series.info.rating.toFixed(1) }}</span>
+          <span v-if="series.info?.number_of_seasons" class="meta-item">{{ series.info.number_of_seasons }} Seasons</span>
+          <span v-if="series.info?.status" class="meta-badge">{{ series.info.status }}</span>
+          <span v-if="series.info?.genres?.length" class="meta-genres">{{ series.info.genres.slice(0, 3).join(' • ') }}</span>
         </div>
-        <p v-if="series.overview" class="series-overview">{{ series.overview }}</p>
+        <p v-if="series.info?.overview" class="series-overview">{{ series.info.overview }}</p>
       </div>
     </section>
 
@@ -125,24 +125,24 @@
         <div class="context-menu-header">
           {{ contextMenu.episode.name || `Episode ${contextMenu.episode.episode_number}` }}
         </div>
-        <div v-if="contextMenu.episode.releases && contextMenu.episode.releases.length > 0">
+        <div v-if="Object.values(contextMenu.episode.torrents || {}).length > 0">
           <div
-            v-for="(release, index) in contextMenu.episode.releases"
+            v-for="(torrent, index) in Object.values(contextMenu.episode.torrents || {})"
             :key="index"
             class="context-menu-version"
           >
-            <div class="version-label">{{ getVersionLabel(release) }}</div>
+            <div class="version-label">{{ getVersionLabel(torrent) }}</div>
             <div class="version-actions">
               <button
                 class="ctx-btn ctx-btn-play"
                 tabindex="0"
-                @click="handlePlayVersion(release.playable_file)"
-                :disabled="!release.playable_file"
+                @click="handlePlayVersion(torrent.playable_file)"
+                :disabled="!torrent.playable_file"
               >▶ Play</button>
               <button
                 class="ctx-btn ctx-btn-folder"
                 tabindex="0"
-                @click="handleOpenFolder(release.path)"
+                @click="handleOpenFolder(torrent.playable_file || '')"
               >📁</button>
             </div>
           </div>
@@ -157,7 +157,7 @@
 
 <script setup lang="ts">
 import { computed, ref, nextTick, watch } from 'vue';
-import type { Series, Season, Episode, EpisodeRelease } from '../types';
+import type { Series, Season, Episode, Torrent } from '../types';
 import { getCoverUrl } from '../api';
 import { navAttrs } from '../composables/useKeyboardNavigation';
 
@@ -309,12 +309,12 @@ function handleOpenFolder(folderPath: string) {
 }
 
 // Get version display label
-function getVersionLabel(release: EpisodeRelease): string {
+function getVersionLabel(torrent: Torrent): string {
   const parts: string[] = [];
-  if (release.resolution) parts.push(release.resolution);
-  if (release.quality) parts.push(release.quality);
-  if (release.codec) parts.push(release.codec);
-  if (release.audio) parts.push(release.audio);
+  if (torrent.resolution) parts.push(torrent.resolution);
+  if (torrent.quality) parts.push(torrent.quality);
+  if (torrent.codec) parts.push(torrent.codec);
+  if (torrent.audio) parts.push(torrent.audio);
   return parts.length > 0 ? parts.join(' • ') : 'Unknown';
 }
 
@@ -390,8 +390,8 @@ function handleEpisodeHover(key: string, isEntering: boolean) {
 
 // Backdrop URL - only use backdrop_path, fall back to collage (handled in template)
 const backdropUrl = computed(() => {
-  if (props.series.backdrop_path) {
-    return getCoverUrl(props.series.backdrop_path);
+  if (props.series.info?.backdrop_path) {
+    return getCoverUrl(props.series.info.backdrop_path);
   }
   return null;
 });
@@ -403,9 +403,9 @@ const seasonsWithPosters = computed(() => {
 
 // Rating class
 const ratingClass = computed(() => {
-  if (!props.series.rating) return '';
-  if (props.series.rating >= 7.5) return 'rating-high';
-  if (props.series.rating >= 6) return 'rating-medium';
+  if (!props.series.info?.rating) return '';
+  if (props.series.info.rating >= 7.5) return 'rating-high';
+  if (props.series.info.rating >= 6) return 'rating-medium';
   return 'rating-low';
 });
 
@@ -450,7 +450,7 @@ function truncate(text: string, maxLength: number): string {
 
 // Handle play
 function handlePlay(episode: Episode) {
-  const playableFile = episode.releases?.[0]?.playable_file;
+  const playableFile = Object.values(episode.torrents || {})[0]?.playable_file;
   if (playableFile) {
     emit('play', playableFile);
   }

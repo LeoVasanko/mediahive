@@ -370,7 +370,7 @@ function showDetail(item: MediaItem) {
   if (item.type === 'episode') {
     // For episodes, play directly if possible, otherwise show the series
     const epData = item.data as EpisodeWithSeries;
-    const playableFile = epData.episode.releases?.[0]?.playable_file;
+    const playableFile = Object.values(epData.episode.torrents || {})[0]?.playable_file;
     if (playableFile) {
       handlePlay(playableFile);
     } else {
@@ -389,10 +389,9 @@ function closeDetail() {
 
 // Convert raw data to MediaItem format
 function movieToMediaItem(movie: Movie): MediaItem {
-  // Get resolution from first version if available
-  const resolution = movie.versions && movie.versions.length > 0
-    ? movie.versions[0].resolution
-    : null;
+  // Get resolution from first torrent if available
+  const torrents = Object.values(movie.torrents || {});
+  const resolution = torrents.length > 0 ? torrents[0].resolution : null;
 
   // Use first showreel image as fallback if no cover
   const coverPath = movie.cover_path ||
@@ -400,7 +399,7 @@ function movieToMediaItem(movie: Movie): MediaItem {
 
   return {
     id: movie.id,
-    title: movie.title,
+    title: movie.title || 'Unknown',
     year: movie.year,
     cover_path: coverPath,
     showreel_images: movie.showreel_images,
@@ -426,7 +425,7 @@ function seriesToMediaItem(series: Series): MediaItem {
 
   return {
     id: series.id,
-    title: series.title,
+    title: series.title || 'Unknown',
     year: null,
     cover_path: coverPath,
     showreel_images: reelImages.length > 0 ? reelImages : null,
@@ -465,16 +464,16 @@ function sortByRating(items: MediaItem[]): MediaItem[] {
 
     if (a.type === 'episode') {
       const epData = a.data as EpisodeWithSeries;
-      ratingA = epData.episode.rating ?? epData.series.rating ?? 0;
+      ratingA = epData.episode.rating ?? epData.series.info?.rating ?? 0;
     } else {
-      ratingA = (a.data as Movie | Series).rating ?? 0;
+      ratingA = (a.data as Movie | Series).info?.rating ?? 0;
     }
 
     if (b.type === 'episode') {
       const epData = b.data as EpisodeWithSeries;
-      ratingB = epData.episode.rating ?? epData.series.rating ?? 0;
+      ratingB = epData.episode.rating ?? epData.series.info?.rating ?? 0;
     } else {
-      ratingB = (b.data as Movie | Series).rating ?? 0;
+      ratingB = (b.data as Movie | Series).info?.rating ?? 0;
     }
 
     return ratingB - ratingA;
@@ -492,7 +491,7 @@ const moviesByGenre = computed(() => {
   // Apply search filter
   const searchFilter = (m: MediaItem) => {
     if (!searchQuery.value) return true;
-    return m.title.toLowerCase().includes(searchQuery.value.toLowerCase());
+    return (m.title || '').toLowerCase().includes(searchQuery.value.toLowerCase());
   };
 
   // Assign movies to categories by matching priority (lowest priority number first)
@@ -503,7 +502,7 @@ const moviesByGenre = computed(() => {
       if (!searchFilter(movie)) continue;
 
       const movieData = movie.data as Movie;
-      const genres = movieData.genres || [];
+      const genres = movieData.info?.genres || [];
 
       // Check if movie matches this category (has keyword and no excluded genres)
       const hasKeyword = category.keywords.some(keyword =>
@@ -563,7 +562,7 @@ const seriesByGenre = computed(() => {
   // Apply search filter
   const searchFilter = (s: MediaItem) => {
     if (!searchQuery.value) return true;
-    return s.title.toLowerCase().includes(searchQuery.value.toLowerCase());
+    return (s.title || '').toLowerCase().includes(searchQuery.value.toLowerCase());
   };
 
   // Assign series to categories by matching priority (lowest priority number first)
@@ -574,7 +573,7 @@ const seriesByGenre = computed(() => {
       if (!searchFilter(series)) continue;
 
       const seriesData = series.data as Series;
-      const genres = seriesData.genres || [];
+      const genres = seriesData.info?.genres || [];
 
       // Check if series matches this category (has keyword and no excluded genres)
       const hasKeyword = category.keywords.some(keyword =>
@@ -784,7 +783,7 @@ function performSearch(query: string) {
       if (movie.year === searchYear) {
         allScored.push({
           item: movieToMediaItem(movie),
-          score: 100 + (movie.rating ?? 0) / 10,  // High base score, ranked by rating
+          score: 100 + (movie.info?.rating ?? 0) / 10,  // High base score, ranked by rating
           matchType: 'movies'
         });
         processedIds.add(movie.id);
@@ -793,11 +792,11 @@ function performSearch(query: string) {
     }
 
     // Direct title match -> Movies category
-    const titleScore = getBestScore(query, movie.title, movie.original_title);
+    const titleScore = getBestScore(query, movie.title, movie.info?.original_title);
     if (titleScore > 0) {
       allScored.push({
         item: movieToMediaItem(movie),
-        score: titleScore + (movie.rating ?? 0) / 10,
+        score: titleScore + (movie.info?.rating ?? 0) / 10,
         matchType: 'movies'
       });
       processedIds.add(movie.id);
@@ -805,13 +804,13 @@ function performSearch(query: string) {
     }
 
     // Cast/director match -> People category
-    const peopleMatch = matchesPeople(query, movie.cast, movie.director);
+    const peopleMatch = matchesPeople(query, movie.info?.cast, movie.info?.director);
     if (peopleMatch.matches.length > 0) {
       const item = movieToMediaItem(movie);
       item.searchMatchInfo = { matchedPeople: formatMatchedPeople(peopleMatch.matches) };
       allScored.push({
         item,
-        score: peopleMatch.score + (movie.rating ?? 0) / 10,
+        score: peopleMatch.score + (movie.info?.rating ?? 0) / 10,
         matchType: 'people'
       });
       processedIds.add(movie.id);
@@ -820,16 +819,16 @@ function performSearch(query: string) {
 
     // Other metadata matches -> Other category
     const otherScore = getBestScore(query,
-      movie.genres?.join(' '),
-      movie.keywords?.join(' '),
-      movie.overview,
-      movie.tagline,
-      movie.similar?.map(s => s.title).join(' ')
+      movie.info?.genres?.join(' '),
+      movie.info?.keywords?.join(' '),
+      movie.info?.overview,
+      movie.info?.tagline,
+      movie.info?.similar?.map(s => s.title).join(' ')
     );
     if (otherScore > 0) {
       allScored.push({
         item: movieToMediaItem(movie),
-        score: otherScore + (movie.rating ?? 0) / 10,
+        score: otherScore + (movie.info?.rating ?? 0) / 10,
         matchType: 'other'
       });
       processedIds.add(movie.id);
@@ -841,11 +840,11 @@ function performSearch(query: string) {
     // Year search - match series that started that year
     if (isYearSearch) {
       // Extract year from release_date (format: "YYYY-MM-DD" or just "YYYY")
-      const seriesYear = series.release_date ? parseInt(series.release_date.substring(0, 4), 10) : null;
+      const seriesYear = series.info?.release_date ? parseInt(series.info.release_date.substring(0, 4), 10) : null;
       if (seriesYear === searchYear) {
         allScored.push({
           item: seriesToMediaItem(series),
-          score: 100 + (series.rating ?? 0) / 10,
+          score: 100 + (series.info?.rating ?? 0) / 10,
           matchType: 'series'
         });
         processedIds.add(series.id);
@@ -854,11 +853,11 @@ function performSearch(query: string) {
     }
 
     // Direct title match -> Series category
-    const titleScore = getBestScore(query, series.title, series.original_title);
+    const titleScore = getBestScore(query, series.title, series.info?.original_title);
     if (titleScore > 0) {
       allScored.push({
         item: seriesToMediaItem(series),
-        score: titleScore + (series.rating ?? 0) / 10,
+        score: titleScore + (series.info?.rating ?? 0) / 10,
         matchType: 'series'
       });
       processedIds.add(series.id);
@@ -869,8 +868,8 @@ function performSearch(query: string) {
     const matchedEpisodes: MatchedEpisode[] = [];
     let episodeScore = 0;
     // Check if series has only one season and has ended (hide "SN" in that case)
-    const isEndedSingleSeason = (series.number_of_seasons === 1 || (series.seasons?.length === 1)) &&
-      ['Ended', 'Canceled', 'Cancelled'].includes(series.status || '');
+    const isEndedSingleSeason = (series.info?.number_of_seasons === 1 || (series.seasons?.length === 1)) &&
+      ['Ended', 'Canceled', 'Cancelled'].includes(series.info?.status || '');
 
     for (const season of series.seasons || []) {
       for (const episode of season.episodes || []) {
@@ -898,7 +897,7 @@ function performSearch(query: string) {
       item.searchMatchInfo = { matchedEpisodes };
       allScored.push({
         item,
-        score: episodeScore + (series.rating ?? 0) / 10,
+        score: episodeScore + (series.info?.rating ?? 0) / 10,
         matchType: 'series'
       });
       processedIds.add(series.id);
@@ -906,13 +905,13 @@ function performSearch(query: string) {
     }
 
     // Cast/creators match -> People category
-    const peopleMatch = matchesPeople(query, series.cast, null, series.creators);
+    const peopleMatch = matchesPeople(query, series.info?.cast, null, series.info?.creators);
     if (peopleMatch.matches.length > 0 && !processedIds.has(series.id)) {
       const item = seriesToMediaItem(series);
       item.searchMatchInfo = { matchedPeople: formatMatchedPeople(peopleMatch.matches) };
       allScored.push({
         item,
-        score: peopleMatch.score + (series.rating ?? 0) / 10,
+        score: peopleMatch.score + (series.info?.rating ?? 0) / 10,
         matchType: 'people'
       });
       processedIds.add(series.id);
@@ -922,17 +921,17 @@ function performSearch(query: string) {
     // Other metadata matches -> Other category
     if (!processedIds.has(series.id)) {
       const otherScore = getBestScore(query,
-        series.genres?.join(' '),
-        series.keywords?.join(' '),
-        series.overview,
-        series.tagline,
-        series.similar?.map(s => s.title).join(' '),
-        series.networks?.join(' ')
+        series.info?.genres?.join(' '),
+        series.info?.keywords?.join(' '),
+        series.info?.overview,
+        series.info?.tagline,
+        series.info?.similar?.map(s => s.title).join(' '),
+        series.info?.networks?.join(' ')
       );
       if (otherScore > 0) {
         allScored.push({
           item: seriesToMediaItem(series),
-          score: otherScore + (series.rating ?? 0) / 10,
+          score: otherScore + (series.info?.rating ?? 0) / 10,
           matchType: 'other'
         });
         processedIds.add(series.id);

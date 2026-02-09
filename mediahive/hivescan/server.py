@@ -26,7 +26,8 @@ import msgspec
 from aiopathlib import AsyncPath
 from mediahive.hivescan.index_store import IndexStore
 from mediahive.hivescan.indexer import _process_movies, _process_series
-from mediahive.hivescan.structs import MsgspecResponse, ScanRequest, StatusResponse, TaskInfo
+from mediahive.models.data import TaskInfo
+from mediahive.models.protocol import MsgspecResponse, ScanRequest, StatusResponse
 from mediahive.hivescan.models import ContentType, ParsedContent
 from mediahive.hivescan.parsing import parse_download
 from mediahive.hivescan.scanning import categorize_downloads
@@ -494,4 +495,3 @@ def run(host: str = "0.0.0.0", port: int = 8421):
         datefmt="%H:%M:%S",
     )
     uvicorn.run(app, host=host, port=port, log_level="info")
-

@@ -1,19 +1,6 @@
 // Type definitions for the media browser
 
-export interface MovieVersion {
-  path: string;
-  playable_file: string | null;
-  resolution: string | null;
-  quality: string | null;
-  codec: string | null;
-  audio: string | null;
-  encoder: string | null;
-  size: number | null;
-  in_rtorrent: boolean | null;
-  torrent_path: string | null;
-}
-
-export interface TmdbPerson {
+export interface CastMember {
   name: string;
   character?: string | null;
   profile_path: string | null;
@@ -25,18 +12,11 @@ export interface SimilarMedia {
   poster_path: string | null;
 }
 
-export interface Movie {
-  id: string;
-  title: string;
+export interface Info {
+  tmdb_id: number;
+  title: string | null;
   original_title: string | null;
   alternative_titles: string[] | null;
-  torrent_title: string | null;
-  year: number | null;
-  cover_path: string | null;
-  showreel_images: string[] | null;
-  versions: MovieVersion[];
-  tmdb_id: number | null;
-  tmdb_title: string | null;
   rating: number | null;
   vote_count: number | null;
   overview: string | null;
@@ -49,13 +29,16 @@ export interface Movie {
   backdrop_path: string | null;
   similar: SimilarMedia[] | null;
   keywords: string[] | null;
-  cast: TmdbPerson[] | null;
+  cast: CastMember[] | null;
   director: string | null;
-  newest: number | null;
+  creators: string[] | null;
+  number_of_seasons: number | null;
+  number_of_episodes: number | null;
+  networks: string[] | null;
 }
 
-export interface EpisodeRelease {
-  path: string;
+export interface Torrent {
+  title: string | null;
   playable_file: string | null;
   resolution: string | null;
   quality: string | null;
@@ -63,7 +46,19 @@ export interface EpisodeRelease {
   audio: string | null;
   encoder: string | null;
   size: number | null;
-  in_rtorrent: boolean | null;
+  added_at: number | null;
+}
+
+export interface Movie {
+  id: string;
+  title: string | null;
+  info: Info | null;
+  year: number | null;
+  newest: number | null;
+  cover_path: string | null;
+  backdrop_path: string | null;
+  showreel_images: string[] | null;
+  torrents: { [key: string]: Torrent };
 }
 
 export interface Episode {
@@ -76,7 +71,7 @@ export interface Episode {
   rating: number | null;
   director: string | null;
   reel_image: string | null;
-  releases: EpisodeRelease[];
+  torrents: { [key: string]: Torrent };
 }
 
 export interface Season {
@@ -91,31 +86,12 @@ export interface Season {
 
 export interface Series {
   id: string;
-  title: string;
-  original_title: string | null;
-  alternative_titles: string[] | null;
-  torrent_title: string | null;
-  cover_path: string | null;
-  seasons: Season[];
-  tmdb_id: number | null;
-  tmdb_title: string | null;
-  rating: number | null;
-  vote_count: number | null;
-  overview: string | null;
-  genres: string[] | null;
-  release_date: string | null;
-  status: string | null;
-  tagline: string | null;
-  poster_path: string | null;
-  backdrop_path: string | null;
-  similar: SimilarMedia[] | null;
-  keywords: string[] | null;
-  cast: TmdbPerson[] | null;
-  creators: string[] | null;
-  number_of_seasons: number | null;
-  number_of_episodes: number | null;
-  networks: string[] | null;
+  title: string | null;
+  info: Info | null;
   newest: number | null;
+  cover_path: string | null;
+  backdrop_path: string | null;
+  seasons: Season[];
 }
 
 export interface MediaStats {
@@ -160,7 +136,7 @@ export interface SearchMatchInfo {
 
 export interface MediaItem {
   id: string;
-  title: string;
+  title: string | null;
   year?: number | null;
   cover_path: string | null;
   showreel_images?: string[] | null;

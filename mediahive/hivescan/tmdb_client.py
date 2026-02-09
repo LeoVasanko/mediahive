@@ -15,12 +15,10 @@ from typing import Dict, Optional
 import httpx
 from aiopathlib import AsyncPath
 
-from mediahive.hivescan.structs import (
-    CastMember,
-    SimilarMedia,
-    TMDbEpisodeInfo,
-    TMDbInfo,
-    TMDbSeasonInfo,
+from mediahive.models.tmdb import (
+    EpisodeInfo,
+    Info,
+    SeasonInfo,
 )
 
 # TMDb API configuration
@@ -101,7 +99,7 @@ async def _save_to_cache(cache_path: Path, data: Optional[Dict]):
         pass  # Cache write failures are not critical
 
 
-# TMDbEpisodeInfo, TMDbSeasonInfo, TMDbInfo imported from mediahive.hivescan.structs
+# EpisodeInfo, SeasonInfo, Info imported from mediahive.models.tmdb
 
 
 async def tmdb_api_request(
@@ -192,7 +190,7 @@ async def fetch_season_details(
                 director = crew_member.get("name")
                 break
 
-        episode = TMDbEpisodeInfo(
+        episode = EpisodeInfo(
             episode_number=ep_data.get("episode_number", 0),
             season_number=ep_data.get("season_number", season_number),
             name=ep_data.get("name"),
@@ -562,4 +560,3 @@ async def fetch_series_info(title: str) -> Optional[TMDbInfo]:
         number_of_episodes=details.get("number_of_episodes"),
         networks=networks if networks else None,
     )
-

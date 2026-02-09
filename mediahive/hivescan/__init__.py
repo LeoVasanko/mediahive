@@ -6,8 +6,7 @@ Usage:
     hivescan /path/* --port 9000        # Custom port
 
 Or as a library:
-    from mediahive.hivescan.index_store import IndexStore
-    from mediahive.hivescan.structs import Movie, Series, TaskInfo
+    from mediahive.models.data import Movie, Series, TaskInfo
     from mediahive.hivescan.server import app
 """
 
@@ -21,21 +20,15 @@ from mediahive.hivescan.scanning import (
 from mediahive.hivescan.index_store import IndexStore
 from mediahive.hivescan.utils import DEFAULT_OUTPUT_FOLDER, find_common_root
 from mediahive.hivescan.showreel import generate_showreel_images, generate_episode_reel
-from mediahive.hivescan.structs import (
-    CastMember,
+from mediahive.models.data import (
     Episode,
-    EpisodeRelease,
     IndexSnapshot,
     MediaStats,
     Movie,
-    MovieVersion,
     Season,
     Series,
-    SimilarMedia,
     TaskInfo,
-    TMDbEpisodeInfo,
-    TMDbInfo,
-    TMDbSeasonInfo,
+    Torrent,
 )
 from mediahive.hivescan.tmdb_client import (
     fetch_movie_info,
@@ -59,18 +52,17 @@ __all__ = [
     # Struct types
     "CastMember",
     "Episode",
-    "EpisodeRelease",
     "IndexSnapshot",
     "MediaStats",
     "Movie",
-    "MovieVersion",
     "Season",
     "Series",
     "SimilarMedia",
     "TaskInfo",
-    "TMDbEpisodeInfo",
-    "TMDbInfo",
-    "TMDbSeasonInfo",
+    "Torrent",
+    "EpisodeInfo",
+    "Info",
+    "SeasonInfo",
     # Showreel generation
     "generate_showreel_images",
     "generate_episode_reel",
@@ -83,4 +75,3 @@ __all__ = [
     "DEFAULT_OUTPUT_FOLDER",
     "find_common_root",
 ]
-

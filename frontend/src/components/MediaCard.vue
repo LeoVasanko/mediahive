@@ -14,7 +14,7 @@
       <img
         v-if="coverUrl && !imageError"
         :src="coverUrl"
-        :alt="item.title"
+        :alt="item.title || 'Unknown'"
         loading="lazy"
         @error="imageError = true"
       />
@@ -90,13 +90,13 @@ const coverUrl = computed(() => {
 
 const rating = computed(() => {
   if (props.item.type === 'movies') {
-    return (props.item.data as Movie).rating;
+    return (props.item.data as Movie).info?.rating;
   }
   if (props.item.type === 'episode') {
     const epData = props.item.data as EpisodeWithSeries;
-    return epData.episode.rating ?? epData.series.rating;
+    return epData.episode.rating ?? epData.series.info?.rating;
   }
-  return (props.item.data as Series).rating;
+  return (props.item.data as Series).info?.rating;
 });
 
 const ratingClass = computed(() => {
@@ -121,7 +121,7 @@ const subtitle = computed(() => {
   }
   // For series, show creators
   if (props.item.type === 'series') {
-    const creators = (props.item.data as Series).creators;
+    const creators = (props.item.data as Series).info?.creators;
     return creators && creators.length > 0 ? creators.join(', ') : null;
   }
   return null;
@@ -130,7 +130,7 @@ const subtitle = computed(() => {
 // Director for movies
 const director = computed(() => {
   if (props.item.type !== 'movies') return null;
-  return (props.item.data as Movie).director;
+  return (props.item.data as Movie).info?.director;
 });
 
 // Check if we have director and/or cast to display
@@ -142,7 +142,7 @@ const directorAndCast = computed(() => {
 // Cast names, excluding director if they appear in cast
 const filteredCastNames = computed(() => {
   if (props.item.type !== 'movies') return null;
-  const cast = (props.item.data as Movie).cast;
+  const cast = (props.item.data as Movie).info?.cast;
   if (!cast || cast.length === 0) return null;
 
   const directorName = director.value?.toLowerCase();

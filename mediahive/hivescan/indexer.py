@@ -10,16 +10,12 @@ from mediahive.hivescan.showreel import (
     get_expected_episode_reel_path,
     get_expected_showreel_paths,
 )
-from mediahive.hivescan.structs import (
+from mediahive.models.data import (
     Episode,
-    EpisodeRelease,
     Movie,
-    MovieVersion,
     Season,
     Series,
-    TMDbEpisodeInfo,
-    TMDbInfo,
-    TMDbSeasonInfo,
+    Torrent,
 )
 from mediahive.hivescan.tmdb_client import (
     fetch_movie_info,
@@ -46,18 +42,18 @@ from mediahive.hivescan.utils import (
 logger = logging.getLogger("hivescan.indexer")
 
 
-async def _build_version_info(
+async def _build_torrent_info(
     item: ParsedContent, media_root: Optional[str] = None
-) -> MovieVersion:
-    """Build version/release info for a single torrent."""
+) -> Torrent:
+    """Build torrent info for a single torrent."""
     playable_file = await find_playable_file(item.path)
     if item.content_hash and item.content_hash.size == 0:
         item.content_hash.size = await get_directory_size(item.content_hash.path)
     size = item.content_hash.size if item.content_hash else None
-    newest = await get_added_timestamp(item.path)
+    added_at = await get_added_timestamp(item.path)
 
-    return MovieVersion(
-        torrent_title=item.title,
+    return Torrent(
+        title=item.title,
         playable_file=make_relative_path(playable_file, media_root),
         resolution=item.resolution,
         quality=item.quality,
@@ -65,7 +61,7 @@ async def _build_version_info(
         audio=item.audio,
         encoder=item.encoder,
         size=size,
-        newest=newest,
+        added_at=added_at,
     )
 
 
@@ -144,7 +140,7 @@ async def _collect_episode_files(
 
 def _build_episodes_data(
     episodes_in_season: Dict[int, List[Dict]],
-    tmdb_episodes: Dict[int, TMDbEpisodeInfo],
+    tmdb_episodes: Dict[int, EpisodeInfo],
     series_folder: Path,
     season_num: int,
     generate_showreels: bool,
@@ -175,11 +171,11 @@ def _build_episodes_data(
                     (best_file, series_folder, season_num, episode_num, series_title)
                 )
 
-        releases = {}
+        torrents = {}
         for f in episode_files:
             relpath = make_relative_path(f["torrent_path"], media_root)
-            releases[relpath] = EpisodeRelease(
-                torrent_title=f["torrent_title"],
+            torrents[relpath] = Torrent(
+                title=f["torrent_title"],
                 playable_file=make_relative_path(f["path"], media_root),
                 resolution=f.get("resolution"),
                 quality=f.get("quality"),
@@ -199,7 +195,7 @@ def _build_episodes_data(
             rating=tmdb_ep.vote_average if tmdb_ep else None,
             director=tmdb_ep.director if tmdb_ep else None,
             reel_image=reel_path,
-            releases=releases,
+            torrents=torrents,
         )
         episodes_data.append(episode_data)
 
@@ -231,7 +227,7 @@ async def _build_seasons_data(
 
         # Fetch TMDb season details if we have a TMDb ID
         tmdb_season = None
-        tmdb_episodes: Dict[int, TMDbEpisodeInfo] = {}
+        tmdb_episodes: Dict[int, EpisodeInfo] = {}
 
         if tmdb_id:
             cache_key = (tmdb_id, season_num)
@@ -395,13 +391,13 @@ async def _process_movies(
                     tmdb_info.poster_path, display_title, year, "movie", cover_dir
                 )
 
-        versions = {}
+        torrents = {}
         for item in items:
             relpath = make_relative_path(str(item.path), media_root)
-            version = await _build_version_info(item, media_root)
-            versions[relpath] = version
+            torrent = await _build_torrent_info(item, media_root)
+            torrents[relpath] = torrent
 
-        sort_by_quality(list(versions.values()))
+        sort_by_quality(list(torrents.values()))
 
         # Queue showreel generation
         showreel_paths = []
@@ -413,7 +409,7 @@ async def _process_movies(
                 versions[k].size or 0,
                 k
             ))
-            best_version = versions[best_relpath]
+            best_version = torrents[best_relpath]
             if best_version.playable_file:
                 abs_playable = (
                     str(Path(media_root) / best_version.playable_file)
@@ -435,35 +431,19 @@ async def _process_movies(
                 tmdb_info.backdrop_path, display_title, year, "movie", cover_dir
             )
 
-        version_timestamps = [v.newest for v in versions.values() if v.newest]
+        version_timestamps = [v.added_at for v in torrents.values() if v.added_at]
         newest = max(version_timestamps) if version_timestamps else None
 
         movie = Movie(
             id=item_id,
             title=display_title,
-            original_title=tmdb_info.original_title,
-            alternative_titles=tmdb_info.alternative_titles,
+            info=tmdb_info,
             year=year,
             newest=newest,
             cover_path=make_relative_path(cover_path, media_root),
             backdrop_path=make_relative_path(backdrop_path, media_root),
             showreel_images=showreel_paths if showreel_paths else None,
-            versions=versions,
-            tmdb_id=tmdb_info.tmdb_id,
-            tmdb_title=tmdb_info.title,
-            rating=tmdb_info.rating,
-            vote_count=tmdb_info.vote_count,
-            overview=tmdb_info.overview,
-            genres=tmdb_info.genres,
-            release_date=tmdb_info.release_date,
-            runtime=tmdb_info.runtime,
-            status=tmdb_info.status,
-            tagline=tmdb_info.tagline,
-            poster_path=tmdb_info.poster_path,
-            similar=tmdb_info.similar,
-            keywords=tmdb_info.keywords,
-            cast=tmdb_info.cast,
-            director=tmdb_info.director,
+            torrents=torrents,
         )
         yield movie, showreel_task
 
@@ -478,24 +458,24 @@ async def _process_movies(
             await find_cover_image(title, year, "movie", cover_dir) if fetch_covers else None
         )
 
-        versions = {}
+        torrents = {}
         for item in items:
             relpath = make_relative_path(str(item.path), media_root)
-            version = await _build_version_info(item, media_root)
-            versions[relpath] = version
+            torrent = await _build_torrent_info(item, media_root)
+            torrents[relpath] = torrent
 
-        sort_by_quality(list(versions.values()))
+        sort_by_quality(list(torrents.values()))
 
         showreel_paths = []
         showreel_task = None
-        if generate_showreels and versions:
+        if generate_showreels and torrents:
             # Find the best version for showreel (highest quality)
-            best_relpath = max(versions.keys(), key=lambda k: (
-                RESOLUTION_PRIORITY.get(versions[k].resolution or "", 0),
-                versions[k].size or 0,
+            best_relpath = max(torrents.keys(), key=lambda k: (
+                RESOLUTION_PRIORITY.get(torrents[k].resolution or "", 0),
+                torrents[k].size or 0,
                 k
             ))
-            best_version = versions[best_relpath]
+            best_version = torrents[best_relpath]
             if best_version.playable_file and not best_version.playable_file.endswith(".bdmv"):
                 abs_playable = (
                     str(Path(media_root) / best_version.playable_file)
@@ -511,7 +491,7 @@ async def _process_movies(
                 )
                 showreel_task = (abs_playable, media_folder, title)
 
-        version_timestamps = [v.newest for v in versions.values() if v.newest]
+        version_timestamps = [v.added_at for v in torrents.values() if v.added_at]
         newest = max(version_timestamps) if version_timestamps else None
 
         movie = Movie(
@@ -521,7 +501,7 @@ async def _process_movies(
             newest=newest,
             cover_path=make_relative_path(cover_path, media_root),
             showreel_images=showreel_paths if showreel_paths else None,
-            versions=versions,
+            torrents=torrents,
         )
         yield movie, showreel_task
 
@@ -672,29 +652,12 @@ async def _process_series(
         series = Series(
             id=series_id,
             title=display_title,
-            original_title=tmdb_info.original_title,
+            info=tmdb_info,
             alternative_titles=different_titles if different_titles else None,
             newest=newest,
             cover_path=make_relative_path(cover_path, media_root),
             backdrop_path=make_relative_path(backdrop_path, media_root),
             seasons=seasons_data,
-            tmdb_id=tmdb_info.tmdb_id,
-            tmdb_title=tmdb_info.title,
-            rating=tmdb_info.rating,
-            vote_count=tmdb_info.vote_count,
-            overview=tmdb_info.overview,
-            genres=tmdb_info.genres,
-            release_date=tmdb_info.release_date,
-            status=tmdb_info.status,
-            tagline=tmdb_info.tagline,
-            poster_path=tmdb_info.poster_path,
-            similar=tmdb_info.similar,
-            keywords=tmdb_info.keywords,
-            cast=tmdb_info.cast,
-            creators=tmdb_info.creators,
-            number_of_seasons=tmdb_info.number_of_seasons,
-            number_of_episodes=tmdb_info.number_of_episodes,
-            networks=tmdb_info.networks,
         )
         yield series, ep_reel_tasks
 
@@ -739,4 +702,3 @@ async def _process_series(
             seasons=seasons_data,
         )
         yield series, ep_reel_tasks
-

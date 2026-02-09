@@ -16,7 +16,7 @@
             <img
               v-if="getImageUrl(item)"
               :src="getImageUrl(item)!"
-              :alt="item.title"
+              :alt="item.title || 'Unknown'"
               class="hex-clip"
             />
           </div>
@@ -28,7 +28,7 @@
           <img
             v-if="index !== 0 && getImageUrl(item)"
             :src="getImageUrl(item)!"
-            :alt="item.title"
+            :alt="item.title || 'Unknown'"
             class="collage-media"
           />
           <video
@@ -444,9 +444,9 @@ function getVideoUrl(item: MediaItem): string | undefined {
 
 function getRating(item: MediaItem): number | null {
   if (item.type === 'movies') {
-    return (item.data as Movie).rating ?? null;
+    return (item.data as Movie).info?.rating ?? null;
   }
-  return (item.data as Series).rating ?? null;
+  return (item.data as Series).info?.rating ?? null;
 }
 
 function getRatingClass(item: MediaItem): string {
@@ -460,15 +460,15 @@ function getRatingClass(item: MediaItem): string {
 function getResolution(item: MediaItem): string | null {
   if (item.type === 'movies') {
     const movie = item.data as Movie;
-    return movie.versions?.[0]?.resolution ?? null;
+    return Object.values(movie.torrents || {})[0]?.resolution ?? null;
   }
   return null;
 }
 
 function getOverview(item: MediaItem): string | null {
   const overview = item.type === 'movies'
-    ? (item.data as Movie).overview
-    : (item.data as Series).overview;
+    ? (item.data as Movie).info?.overview
+    : (item.data as Series).info?.overview;
   if (!overview) return null;
   return overview.length > 150 ? overview.slice(0, 150) + '...' : overview;
 }
@@ -476,13 +476,13 @@ function getOverview(item: MediaItem): string | null {
 function getPlayableFile(item: MediaItem): string | null {
   if (item.type === 'movies') {
     const movie = item.data as Movie;
-    return movie.versions?.[0]?.playable_file ?? null;
+    return Object.values(movie.torrents || {})[0]?.playable_file ?? null;
   }
   const series = item.data as Series;
   for (const season of series.seasons || []) {
     for (const episode of season.episodes || []) {
-      for (const release of episode.releases || []) {
-        if (release.playable_file) return release.playable_file;
+      for (const torrent of Object.values(episode.torrents || {})) {
+        if (torrent.playable_file) return torrent.playable_file;
       }
     }
   }

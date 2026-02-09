@@ -18,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi_vue import Frontend
 
-from mediahive.hivescan.structs import PlayMediaRequest, OpenFolderRequest
+from mediahive.models.protocol import PlayMediaRequest, OpenFolderRequest
 
 from mediahive.__main__ import DEVMODE
 
@@ -262,4 +262,3 @@ async def serve_media_file(file_path: str):
 
 # Serve the Vue frontend (needs to be last if SPA catch-all is used)
 frontend.route(app, "/")
-

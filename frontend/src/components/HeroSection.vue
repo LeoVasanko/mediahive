@@ -1,6 +1,6 @@
 <template>
   <section class="hero">
-    <div 
+    <div
       v-if="coverUrl"
       class="hero-background"
       :style="{ backgroundImage: `url('${coverUrl}')` }"
@@ -53,7 +53,8 @@ const coverUrl = computed(() => {
 const resolution = computed(() => {
   if (props.item.type === 'movies') {
     const movie = props.item.data as Movie;
-    return movie.versions && movie.versions.length > 0 ? movie.versions[0].resolution : null;
+    const torrents = Object.values(movie.torrents || {});
+    return torrents.length > 0 ? torrents[0].resolution : null;
   }
   return null;
 });
@@ -61,16 +62,17 @@ const resolution = computed(() => {
 const quality = computed(() => {
   if (props.item.type === 'movies') {
     const movie = props.item.data as Movie;
-    return movie.versions && movie.versions.length > 0 ? movie.versions[0].quality : null;
+    const torrents = Object.values(movie.torrents || {});
+    return torrents.length > 0 ? torrents[0].quality : null;
   }
   return null;
 });
 
 const rating = computed(() => {
   if (props.item.type === 'movies') {
-    return (props.item.data as Movie).rating;
+    return (props.item.data as Movie).info?.rating;
   }
-  return (props.item.data as Series).rating;
+  return (props.item.data as Series).info?.rating;
 });
 
 const ratingClass = computed(() => {
@@ -82,29 +84,27 @@ const ratingClass = computed(() => {
 
 const overview = computed(() => {
   if (props.item.type === 'movies') {
-    const o = (props.item.data as Movie).overview;
+    const o = (props.item.data as Movie).info?.overview;
     return o ? (o.length > 200 ? o.slice(0, 200) + '...' : o) : null;
   }
-  const o = (props.item.data as Series).overview;
+  const o = (props.item.data as Series).info?.overview;
   return o ? (o.length > 200 ? o.slice(0, 200) + '...' : o) : null;
 });
 
 const playableFile = computed(() => {
   if (props.item.type === 'movies') {
     const movie = props.item.data as Movie;
-    // Get the first version's playable file
-    if (movie.versions && movie.versions.length > 0) {
-      return movie.versions[0].playable_file;
-    }
-    return null;
+    const torrents = Object.values(movie.torrents || {});
+    return torrents.length > 0 ? torrents[0].playable_file : null;
   }
   // For series, get first available file from episodes
   const series = props.item.data as Series;
   for (const season of series.seasons || []) {
     for (const episode of season.episodes || []) {
-      for (const release of episode.releases || []) {
-        if (release.playable_file) {
-          return release.playable_file;
+      const torrents = Object.values(episode.torrents || {});
+      for (const torrent of torrents) {
+        if (torrent.playable_file) {
+          return torrent.playable_file;
         }
       }
     }
