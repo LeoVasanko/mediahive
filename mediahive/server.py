@@ -1,9 +1,12 @@
 """
 FastAPI server for MediaHive.
-Replaces Tauri backend with async HTTP server.
+
+Serves media files, the Vue frontend, and — when ``HIVESCAN_PATHS`` is set —
+also runs the continuous scanning pipeline with live WebSocket updates.
 """
 
-import json
+import asyncio
+import logging
 import mimetypes
 import os
 import subprocess
@@ -13,31 +16,105 @@ from pathlib import Path
 
 import aiofiles
 import msgspec
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi_vue import Frontend
 
-from mediahive.models.protocol import PlayMediaRequest, OpenFolderRequest
+from mediahive.index_store import IndexStore
+from mediahive.models.protocol import (
+    EvTask,
+    EvUpsert,
+    MsgspecResponse,
+    PlayMediaRequest,
+    OpenFolderRequest,
+    ScanEvent,
+    ScanRequest,
+    StatusResponse,
+    WsTask,
+)
 
 from mediahive.__main__ import DEVMODE
+
+logger = logging.getLogger("mediahive.server")
 
 # Vue Frontend static files
 frontend = Frontend(Path(__file__).with_name("frontend-build"), cached=["/assets/"])
 
-
 # Media root path (initialized in lifespan)
 MEDIAROOT = None
+
+# In-memory index store (initialized in lifespan)
+store: IndexStore | None = None
+
+# Whether the scanner subsystem is active
+_scanner_active = False
+
+# Queue for scanner → server events
+_scan_events: asyncio.Queue[ScanEvent] = asyncio.Queue()
+_consumer_task: asyncio.Task | None = None
+
+
+async def _send_event(event: ScanEvent) -> None:
+    """Push a scan event onto the queue (passed to hivescan as *send*)."""
+    await _scan_events.put(event)
+
+
+async def _consume_scan_events() -> None:
+    """Background task: apply incoming scan events to the IndexStore."""
+    while True:
+        try:
+            event = await _scan_events.get()
+            if isinstance(event, EvUpsert):
+                if event.kind == "movie":
+                    store.upsert_movie(event.item)
+                else:
+                    store.upsert_series(event.item)
+            elif isinstance(event, EvTask):
+                store.broadcast_task(event.data)
+        except asyncio.CancelledError:
+            return
+        except Exception:
+            logger.exception("Error processing scan event")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global MEDIAROOT
+    global MEDIAROOT, store, _scanner_active, _consumer_task
+
     if not os.environ.get("MEDIAHIVE_PATH"):
         raise RuntimeError("MEDIAHIVE_PATH environment variable must be set")
+
     MEDIAROOT = Path(os.environ["MEDIAHIVE_PATH"])
     await frontend.load()
+
+    # Initialise the in-memory index store
+    snapshot_path = MEDIAROOT / ".mediahive" / "index.json"
+    store = IndexStore(snapshot_path, media_root=str(MEDIAROOT))
+    await store.load_snapshot()
+    logger.info(
+        "Index store ready: %d movies, %d series",
+        len(store.movies), len(store.series),
+    )
+
+    # If scan paths are configured, start the scanner subsystem
+    if os.environ.get("HIVESCAN_PATHS"):
+        from mediahive.hivescan.scanner import start as start_scanner, stop as stop_scanner
+
+        _consumer_task = asyncio.create_task(_consume_scan_events())
+        await start_scanner(_send_event)
+        _scanner_active = True
+
     yield
+
+    # Shutdown
+    if _scanner_active:
+        from mediahive.hivescan.scanner import stop as stop_scanner
+
+        await stop_scanner()
+        if _consumer_task:
+            _consumer_task.cancel()
+    await store.flush_snapshot()
 
 
 app = FastAPI(title="MediaHive Server", lifespan=lifespan, debug=DEVMODE)
@@ -50,11 +127,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-def linux_to_windows_path(path: str) -> str:
-    """Normalize media path (now relative paths are kept as is)."""
-    return path
 
 
 def normalize_path(url_path: str) -> Path:
@@ -77,70 +149,66 @@ async def health_check():
 
 
 @app.get("/api/index")
-async def load_media_index():
-    """
-    Load and return the media index from disk.
-    Converts Linux paths to Windows paths.
-    """
-    index_path = MEDIAROOT / ".mediahive" / "index.json"
-    if not index_path.exists():
-        raise HTTPException(
-            status_code=404, detail=f"Index file not found: {index_path}"
-        )
+async def get_index():
+    """Return the full media index from the in-memory store."""
+    return MsgspecResponse(store.get_full_index())
 
+
+# ---------------------------------------------------------------------------
+# Scanning API (active when HIVESCAN_PATHS is configured)
+# ---------------------------------------------------------------------------
+
+
+@app.websocket("/ws")
+async def ws_endpoint(ws: WebSocket):
+    """Live index updates and task progress."""
+    await store.connect(ws)
     try:
-        async with aiofiles.open(index_path, "r", encoding="utf-8") as f:
-            content = await f.read()
+        while True:
+            await ws.receive_text()
+    except WebSocketDisconnect:
+        store.disconnect(ws)
+    except Exception:
+        store.disconnect(ws)
 
-        index = json.loads(content)
 
-        # Convert all Linux paths to Windows paths
-        for movie in index.get("movies", []):
-            if movie.get("cover_path"):
-                movie["cover_path"] = linux_to_windows_path(movie["cover_path"])
-            if movie.get("backdrop_path"):
-                movie["backdrop_path"] = linux_to_windows_path(movie["backdrop_path"])
-            if movie.get("showreel_images"):
-                movie["showreel_images"] = [
-                    linux_to_windows_path(p) for p in movie["showreel_images"]
-                ]
-            for version in movie.get("versions", []):
-                version["path"] = linux_to_windows_path(version["path"])
-                if version.get("playable_file"):
-                    version["playable_file"] = linux_to_windows_path(
-                        version["playable_file"]
-                    )
-                if version.get("torrent_path"):
-                    version["torrent_path"] = linux_to_windows_path(
-                        version["torrent_path"]
-                    )
+@app.post("/api/scan")
+async def trigger_scan(request: Request):
+    """Trigger a new scan. Returns 409 if a scan is already running."""
+    if not _scanner_active:
+        raise HTTPException(status_code=503, detail="Scanner not configured")
+    from mediahive.hivescan.scanner import trigger_scan as _trigger
 
-        for series in index.get("series", []):
-            if series.get("cover_path"):
-                series["cover_path"] = linux_to_windows_path(series["cover_path"])
-            if series.get("backdrop_path"):
-                series["backdrop_path"] = linux_to_windows_path(series["backdrop_path"])
-            for season in series.get("seasons", []):
-                if season.get("poster_path"):
-                    season["poster_path"] = linux_to_windows_path(season["poster_path"])
-                for episode in season.get("episodes", []):
-                    if episode.get("reel_image"):
-                        episode["reel_image"] = linux_to_windows_path(
-                            episode["reel_image"]
-                        )
-                    for release in episode.get("releases", []):
-                        release["path"] = linux_to_windows_path(release["path"])
-                        if release.get("playable_file"):
-                            release["playable_file"] = linux_to_windows_path(
-                                release["playable_file"]
-                            )
+    body_bytes = await request.body()
+    req = (
+        msgspec.json.decode(body_bytes, type=ScanRequest)
+        if body_bytes
+        else ScanRequest()
+    )
+    started = _trigger(req.paths if req.paths else None)
+    return {"status": "started" if started else "already_running"}
 
-        return index
 
-    except json.JSONDecodeError as e:
-        raise HTTPException(status_code=500, detail=f"Failed to parse index file: {e}")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to read index file: {e}")
+@app.get("/api/status")
+async def server_status():
+    """Return current server status."""
+    if _scanner_active:
+        from mediahive.hivescan.scanner import is_scanning, showreel_queue_size
+
+        return MsgspecResponse(
+            StatusResponse(
+                scanning=is_scanning(),
+                movies=len(store.movies),
+                series=len(store.series),
+                showreel_queue=showreel_queue_size(),
+            )
+        )
+    return MsgspecResponse(
+        StatusResponse(
+            movies=len(store.movies),
+            series=len(store.series),
+        )
+    )
 
 
 @app.post("/api/play")

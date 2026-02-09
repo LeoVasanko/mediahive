@@ -1,13 +1,13 @@
 """
-Hivescan - Continuous media scanning server with live WebSocket updates.
+Hivescan - Continuous media scanning with live WebSocket updates.
 
-Usage:
-    hivescan /path/to/torrents/*        # Start scanning server
-    hivescan /path/* --port 9000        # Custom port
+Usage as a module:
+    python -m mediahive.hivescan /path/to/torrents/*
+    python -m mediahive.hivescan /path/* --port 9000
 
 Or as a library:
-    from mediahive.models.data import Movie, Series, TaskInfo
-    from mediahive.hivescan.server import app
+    from mediahive.hivescan.scanning import scan_downloads, categorize_downloads
+    from mediahive.hivescan.indexer import _process_movies, _process_series
 """
 
 from mediahive.hivescan.models import ContentType, ContentHash, ParsedContent
@@ -17,9 +17,9 @@ from mediahive.hivescan.scanning import (
     find_playable_file,
     find_episode_files,
 )
-from mediahive.hivescan.index_store import IndexStore
 from mediahive.hivescan.utils import DEFAULT_OUTPUT_FOLDER, find_common_root
 from mediahive.hivescan.showreel import generate_showreel_images, generate_episode_reel
+from mediahive.hivescan import scanner
 from mediahive.models.data import (
     Episode,
     IndexSnapshot,
@@ -47,8 +47,6 @@ __all__ = [
     "categorize_downloads",
     "find_playable_file",
     "find_episode_files",
-    # Index store
-    "IndexStore",
     # Struct types
     "CastMember",
     "Episode",

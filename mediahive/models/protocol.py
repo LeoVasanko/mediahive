@@ -55,6 +55,27 @@ WsMessage = WsInit | WsUpsert | WsRemove | WsTask
 
 
 # ---------------------------------------------------------------------------
+# Scan events (scanner → server, via async queue)
+# ---------------------------------------------------------------------------
+
+
+class EvUpsert(msgspec.Struct, tag="upsert"):
+    """Scanner produced or updated a media item."""
+
+    kind: str  # "movie" or "series"
+    item: Movie | Series
+
+
+class EvTask(msgspec.Struct, tag="task"):
+    """Scanner progress update."""
+
+    data: TaskInfo
+
+
+ScanEvent = EvUpsert | EvTask
+
+
+# ---------------------------------------------------------------------------
 # API request / response types
 # ---------------------------------------------------------------------------
 

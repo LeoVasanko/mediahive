@@ -33,7 +33,7 @@ from mediahive.models.protocol import (
     WsUpsert,
 )
 
-logger = logging.getLogger("hivescan.index_store")
+logger = logging.getLogger("mediahive.index_store")
 
 # Debounce interval for writing snapshots to disk (seconds)
 SNAPSHOT_DEBOUNCE = 5.0
@@ -90,7 +90,7 @@ class IndexStore:
         )
         series_list = sorted(self.series.values(), key=lambda x: x.title.lower())
 
-        total_movie_versions = sum(len(m.versions) for m in movies_list)
+        total_movie_versions = sum(len(m.torrents) for m in movies_list)
         total_series_episodes = sum(
             sum(len(season.episodes) for season in s.seasons) for s in series_list
         )
@@ -224,6 +224,10 @@ class IndexStore:
         """Broadcast a task progress message to all WS clients."""
         self._broadcast(WsTask(data=task_info))
 
+    def broadcast(self, msg: object) -> None:
+        """Broadcast an already-encoded message to all WS clients."""
+        self._broadcast(msg)
+
     # ------------------------------------------------------------------
     # Read helpers
     # ------------------------------------------------------------------
@@ -235,7 +239,7 @@ class IndexStore:
         )
         series_list = sorted(self.series.values(), key=lambda x: x.title.lower())
 
-        total_movie_versions = sum(len(m.versions) for m in movies_list)
+        total_movie_versions = sum(len(m.torrents) for m in movies_list)
         total_series_episodes = sum(
             sum(len(season.episodes) for season in s.seasons) for s in series_list
         )
