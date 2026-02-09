@@ -15,6 +15,8 @@ from collections import Counter
 from pathlib import Path
 from typing import Optional
 
+from aiopathlib import AsyncPath
+
 logger = logging.getLogger("hivescan.showreel")
 
 
@@ -78,19 +80,19 @@ def get_expected_episode_reel_path(
     return str(output_path)
 
 
-def movie_showreels_exist(
+async def movie_showreels_exist(
     media_folder: Path, timestamps: list[int] = SHOWREEL_TIMESTAMPS
 ) -> bool:
     """Check if all showreel files for a movie already exist."""
     for reel_num in range(1, len(timestamps) + 1):
-        if not (media_folder / f"reel{reel_num}.webm").exists():
+        if not await AsyncPath(media_folder / f"reel{reel_num}.webm").exists():
             return False
     return True
 
 
-def episode_reel_exists(media_folder: Path, season_num: int, episode_num: int) -> bool:
+async def episode_reel_exists(media_folder: Path, season_num: int, episode_num: int) -> bool:
     """Check if an episode reel file already exists."""
-    return (media_folder / f"S{season_num:02d}E{episode_num:02d}.webm").exists()
+    return await AsyncPath(media_folder / f"S{season_num:02d}E{episode_num:02d}.webm").exists()
 
 
 def get_bluray_uri(video_path: str) -> Optional[str]:
@@ -542,7 +544,7 @@ async def generate_showreel_images(
     if bluray_uri:
         ffmpeg_input = bluray_uri
     else:
-        if not Path(video_path).exists():
+        if not await AsyncPath(video_path).exists():
             return []
         ffmpeg_input = video_path
 
@@ -552,7 +554,7 @@ async def generate_showreel_images(
     for reel_num in range(1, len(timestamps) + 1):
         output_filename = f"reel{reel_num}.webm"
         output_path = media_folder / output_filename
-        if output_path.exists():
+        if await AsyncPath(output_path).exists():
             existing_paths.append(str(output_path))
         else:
             all_exist = False
@@ -561,7 +563,7 @@ async def generate_showreel_images(
     if all_exist and existing_paths:
         return existing_paths
 
-    media_folder.mkdir(parents=True, exist_ok=True)
+    await AsyncPath(media_folder).mkdir(parents=True, exist_ok=True)
 
     # Check video duration to avoid seeking past the end
     duration = await get_video_duration(ffmpeg_input)
@@ -598,7 +600,7 @@ async def generate_showreel_images(
         output_path = media_folder / output_filename
 
         # Skip if already exists
-        if output_path.exists():
+        if await AsyncPath(output_path).exists():
             generated_paths.append(str(output_path))
             if on_progress:
                 on_progress(reel_num)
@@ -655,16 +657,16 @@ async def generate_showreel_images(
             )
             await asyncio.wait_for(proc.communicate(), timeout=120)
 
-            if proc.returncode == 0 and output_path.exists():
+            if proc.returncode == 0 and await AsyncPath(output_path).exists():
                 generated_paths.append(str(output_path))
                 if on_progress:
                     on_progress(reel_num)
             else:
-                output_path.unlink(missing_ok=True)
+                await AsyncPath(output_path).unlink(missing_ok=True)
                 # Abort remaining reels - if first one fails, others likely will too
                 break
         except BaseException as e:
-            output_path.unlink(missing_ok=True)
+            await AsyncPath(output_path).unlink(missing_ok=True)
             if isinstance(e, (KeyboardInterrupt, SystemExit, asyncio.CancelledError)):
                 raise
             logger.error(
@@ -709,18 +711,18 @@ async def generate_episode_reel(
     if bluray_uri:
         ffmpeg_input = bluray_uri
     else:
-        if not Path(video_path).exists():
+        if not await AsyncPath(video_path).exists():
             return None
         ffmpeg_input = video_path
 
-    media_folder.mkdir(parents=True, exist_ok=True)
+    await AsyncPath(media_folder).mkdir(parents=True, exist_ok=True)
 
     # Normalize episode code to SxxExx format
     output_filename = f"S{season_num:02d}E{episode_num:02d}.webm"
     output_path = media_folder / output_filename
 
     # Skip if already exists
-    if output_path.exists():
+    if await AsyncPath(output_path).exists():
         return str(output_path)
 
     # Check video duration
@@ -797,13 +799,13 @@ async def generate_episode_reel(
         )
         await asyncio.wait_for(proc.communicate(), timeout=120)
 
-        if proc.returncode == 0 and output_path.exists():
+        if proc.returncode == 0 and await AsyncPath(output_path).exists():
             return str(output_path)
         else:
-            output_path.unlink(missing_ok=True)
+            await AsyncPath(output_path).unlink(missing_ok=True)
             return None
     except BaseException as e:
-        output_path.unlink(missing_ok=True)
+        await AsyncPath(output_path).unlink(missing_ok=True)
         if isinstance(e, (KeyboardInterrupt, SystemExit, asyncio.CancelledError)):
             raise
         episode_code = f"S{season_num:02d}E{episode_num:02d}"

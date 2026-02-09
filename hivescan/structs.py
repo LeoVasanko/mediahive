@@ -97,9 +97,9 @@ class TMDbInfo(msgspec.Struct):
 
 
 class MovieVersion(msgspec.Struct):
-    """One release/torrent of a movie."""
+    """One release/torrent of a movie, keyed by relative torrent path."""
 
-    path: str | None = None
+    torrent_title: str | None = None
     playable_file: str | None = None
     resolution: str | None = None
     quality: str | None = None
@@ -111,9 +111,9 @@ class MovieVersion(msgspec.Struct):
 
 
 class EpisodeRelease(msgspec.Struct):
-    """One release/torrent file of an episode."""
+    """One release/torrent file of an episode, keyed by relative torrent path."""
 
-    path: str | None = None
+    torrent_title: str | None = None
     playable_file: str | None = None
     resolution: str | None = None
     quality: str | None = None
@@ -135,7 +135,7 @@ class Episode(msgspec.Struct):
     rating: float | None = None
     director: str | None = None
     reel_image: str | None = None
-    releases: list[EpisodeRelease] = []
+    releases: dict[str, EpisodeRelease] = {}
 
 
 class Season(msgspec.Struct):
@@ -157,13 +157,12 @@ class Movie(msgspec.Struct):
     title: str
     original_title: str | None = None
     alternative_titles: list[str] | None = None
-    torrent_titles: list[str] | None = None
     year: int | None = None
     newest: int | None = None
     cover_path: str | None = None
     backdrop_path: str | None = None
     showreel_images: list[str] | None = None
-    versions: list[MovieVersion] = []
+    versions: dict[str, MovieVersion] = {}
     tmdb_id: int | None = None
     tmdb_title: str | None = None
     rating: float | None = None
@@ -188,7 +187,6 @@ class Series(msgspec.Struct):
     title: str
     original_title: str | None = None
     alternative_titles: list[str] | None = None
-    torrent_titles: list[str] | None = None
     newest: int | None = None
     cover_path: str | None = None
     backdrop_path: str | None = None
@@ -229,7 +227,7 @@ class MediaStats(msgspec.Struct):
 class IndexSnapshot(msgspec.Struct):
     """On-disk recovery snapshot of the full index."""
 
-    version: int = 5
+    version: int = 6
     generated_at: str = ""
     media_root: str | None = None
     stats: MediaStats = msgspec.UNSET  # type: ignore[assignment]

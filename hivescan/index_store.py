@@ -9,11 +9,13 @@ debounced background task.
 
 import asyncio
 import logging
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 import msgspec
+from aiopathlib import AsyncPath
 from fastapi import WebSocket
 
 from hivescan.structs import (
@@ -57,14 +59,15 @@ class IndexStore:
     # Persistence
     # ------------------------------------------------------------------
 
-    def load_snapshot(self) -> None:
+    async def load_snapshot(self) -> None:
         """Load index from disk snapshot (recovery on startup)."""
-        if not self.snapshot_path.exists():
+        ap = AsyncPath(self.snapshot_path)
+        if not await ap.exists():
             logger.info("No snapshot found at %s, starting fresh", self.snapshot_path)
             return
         try:
             data = msgspec.json.decode(
-                self.snapshot_path.read_bytes(), type=IndexSnapshot
+                await ap.read_bytes(), type=IndexSnapshot
             )
             for m in data.movies:
                 self.movies[m.id] = m
@@ -78,8 +81,8 @@ class IndexStore:
         except Exception:
             logger.exception("Failed to load snapshot from %s", self.snapshot_path)
 
-    def _write_snapshot(self) -> None:
-        """Write current index to disk (synchronous, called from debounce task)."""
+    async def _write_snapshot(self) -> None:
+        """Write current index to disk (called from debounce task)."""
         movies_list = sorted(
             self.movies.values(), key=lambda x: (x.title.lower(), x.year or 0)
         )
@@ -103,25 +106,28 @@ class IndexStore:
             series=series_list,
         )
 
-        self.snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+        await AsyncPath(self.snapshot_path.parent).mkdir(parents=True, exist_ok=True)
         tmp = self.snapshot_path.with_suffix(".tmp")
-        tmp.write_bytes(msgspec.json.format(msgspec.json.encode(snapshot), indent=2))
-        tmp.replace(self.snapshot_path)
+        await AsyncPath(tmp).write_bytes(msgspec.json.format(msgspec.json.encode(snapshot), indent=2))
+        # os.replace is atomic and overwrites on all platforms (unlike rename on Windows)
+        await asyncio.to_thread(os.replace, tmp, self.snapshot_path)
         logger.debug("Snapshot written to %s", self.snapshot_path)
 
     def _schedule_snapshot(self) -> None:
         """Schedule a debounced snapshot write."""
         self._snapshot_dirty = True
         if self._snapshot_task is None or self._snapshot_task.done():
-            self._snapshot_task = asyncio.create_task(self._debounced_snapshot())
+            self._snapshot_task = asyncio.create_task(self._snapshot_writer())
 
-    async def _debounced_snapshot(self) -> None:
-        """Wait for debounce interval then write if still dirty."""
-        while self._snapshot_dirty:
-            self._snapshot_dirty = False
+    async def _snapshot_writer(self) -> None:
+        """Flush to disk every SNAPSHOT_DEBOUNCE seconds while dirty."""
+        while True:
             await asyncio.sleep(SNAPSHOT_DEBOUNCE)
-        # After the sleep, if no new mutations happened, write
-        self._write_snapshot()
+            if self._snapshot_dirty:
+                self._snapshot_dirty = False
+                await self._write_snapshot()
+            else:
+                break  # No pending mutations — stop the loop
 
     async def flush_snapshot(self) -> None:
         """Force-write a snapshot immediately (e.g. on shutdown)."""
@@ -131,23 +137,33 @@ class IndexStore:
                 await self._snapshot_task
             except asyncio.CancelledError:
                 pass
-        self._write_snapshot()
+        await self._write_snapshot()
 
     # ------------------------------------------------------------------
     # Mutations
     # ------------------------------------------------------------------
 
-    def upsert_movie(self, item: Movie) -> None:
-        """Insert or update a movie in the index and broadcast."""
+    def upsert_movie(self, item: Movie) -> bool:
+        """Insert or update a movie. Returns True if it was a real change."""
+        existing = self.movies.get(item.id)
+        if existing is not None:
+            if msgspec.json.encode(existing) == msgspec.json.encode(item):
+                return False
         self.movies[item.id] = item
         self._schedule_snapshot()
         self._broadcast(WsUpsert(kind="movie", item=item))
+        return True
 
-    def upsert_series(self, item: Series) -> None:
-        """Insert or update a series in the index and broadcast."""
+    def upsert_series(self, item: Series) -> bool:
+        """Insert or update a series. Returns True if it was a real change."""
+        existing = self.series.get(item.id)
+        if existing is not None:
+            if msgspec.json.encode(existing) == msgspec.json.encode(item):
+                return False
         self.series[item.id] = item
         self._schedule_snapshot()
         self._broadcast(WsUpsert(kind="series", item=item))
+        return True
 
     def remove_movie(self, item_id: str) -> None:
         """Remove a movie from the index and broadcast."""

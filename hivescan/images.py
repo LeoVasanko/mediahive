@@ -4,6 +4,8 @@ import httpx
 from pathlib import Path
 from typing import Optional
 
+from aiopathlib import AsyncPath
+
 from hivescan.utils import get_media_folder_path
 
 
@@ -32,15 +34,16 @@ async def _download_image(
     url: str, output_path: Path, description: str
 ) -> Optional[str]:
     """Download an image from URL to output path."""
-    if output_path.exists():
+    ap = AsyncPath(output_path)
+    if await ap.exists():
         return str(output_path)
 
     try:
         client = _get_image_client()
         response = await client.get(url)
         response.raise_for_status()
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_bytes(response.content)
+        await AsyncPath(output_path.parent).mkdir(parents=True, exist_ok=True)
+        await ap.write_bytes(response.content)
         return str(output_path)
     except Exception as e:
         print(f"    Failed to download {description}: {e}")
@@ -62,7 +65,7 @@ async def download_cover_image(
     media_folder = get_media_folder_path(title, year, media_type, cover_dir)
     cover_path = media_folder / "cover.jpg"
 
-    if cover_path.exists():
+    if await AsyncPath(cover_path).exists():
         return str(cover_path)
 
     url = f"{TMDB_IMAGE_BASE}/{size}{poster_path}"
@@ -85,7 +88,7 @@ async def download_backdrop_image(
     media_folder = get_media_folder_path(title, year, media_type, cover_dir)
     local_path = media_folder / "backdrop.jpg"
 
-    if local_path.exists():
+    if await AsyncPath(local_path).exists():
         return str(local_path)
 
     url = f"{TMDB_IMAGE_BASE}/{size}{backdrop_path}"
@@ -104,9 +107,9 @@ async def download_season_poster(
 
     output_path = media_folder / f"season{season_num:02d}.jpg"
 
-    if output_path.exists():
+    if await AsyncPath(output_path).exists():
         return str(output_path)
 
-    media_folder.mkdir(parents=True, exist_ok=True)
+    await AsyncPath(media_folder).mkdir(parents=True, exist_ok=True)
     url = f"{TMDB_IMAGE_BASE}/{DEFAULT_POSTER_SIZE}{poster_path}"
     return await _download_image(url, output_path, f"season {season_num} poster")

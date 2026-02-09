@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Optional, Tuple
 
 import PTN
+from aiopathlib import AsyncPath
 
 from hivescan.models import ContentHash, ContentType, ParsedContent
 
@@ -22,7 +23,7 @@ def determine_content_type(parsed: dict) -> ContentType:
     return ContentType.OTHER
 
 
-def parse_download(path: Path) -> ParsedContent:
+async def parse_download(path: Path) -> ParsedContent:
     """Parse a downloaded torrent directory/file name."""
     name = path.name
     parsed = PTN.parse(name)
@@ -44,7 +45,7 @@ def parse_download(path: Path) -> ParsedContent:
         episode_name=parsed.get("episodeName"),
         encoder=parsed.get("encoder"),
         language=parsed.get("language"),
-        is_directory=path.is_dir(),
+        is_directory=await AsyncPath(path).is_dir(),
         raw_parsed=parsed,
         content_hash=content_hash,
     )

@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Dict, Optional
 
 import httpx
+from aiopathlib import AsyncPath
 
 from hivescan.structs import (
     CastMember,
@@ -72,30 +73,30 @@ def _get_cache_path(endpoint: str, params: Dict[str, str]) -> Path:
     return _get_cache_dir() / f"{cache_hash}.json"
 
 
-def _load_from_cache(cache_path: Path):
+async def _load_from_cache(cache_path: Path):
     """Load cached response. Returns _NOT_FOUND if not cached."""
-    if not cache_path.exists():
+    if not await AsyncPath(cache_path).exists():
         return _NOT_FOUND
     try:
-        with open(cache_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            # Handle cached "no results" / errors
-            if data.get("_cached_none"):
-                return None
-            return data
+        text = await AsyncPath(cache_path).read_text(encoding="utf-8")
+        data = json.loads(text)
+        # Handle cached "no results" / errors
+        if data.get("_cached_none"):
+            return None
+        return data
     except Exception:
         return _NOT_FOUND
 
 
-def _save_to_cache(cache_path: Path, data: Optional[Dict]):
+async def _save_to_cache(cache_path: Path, data: Optional[Dict]):
     """Save response to cache."""
     try:
-        _get_cache_dir().mkdir(parents=True, exist_ok=True)
-        with open(cache_path, "w", encoding="utf-8") as f:
-            if data is None:
-                json.dump({"_cached_none": True}, f)
-            else:
-                json.dump(data, f)
+        await AsyncPath(_get_cache_dir()).mkdir(parents=True, exist_ok=True)
+        if data is None:
+            text = json.dumps({"_cached_none": True})
+        else:
+            text = json.dumps(data)
+        await AsyncPath(cache_path).write_text(text, encoding="utf-8")
     except Exception:
         pass  # Cache write failures are not critical
 
@@ -111,7 +112,7 @@ async def tmdb_api_request(
 
     # Check cache first (before adding API key to params for cache key)
     cache_path = _get_cache_path(endpoint, params)
-    cached = _load_from_cache(cache_path)
+    cached = await _load_from_cache(cache_path)
     if cached is not _NOT_FOUND:
         return cached
 
@@ -132,11 +133,11 @@ async def tmdb_api_request(
         response.raise_for_status()
         data = response.json()
         # Cache immediately after receiving response
-        _save_to_cache(cache_path, data)
+        await _save_to_cache(cache_path, data)
         return data
     except httpx.HTTPStatusError:
         # Cache the failure (None) to avoid retrying
-        _save_to_cache(cache_path, None)
+        await _save_to_cache(cache_path, None)
         return None
     except Exception:
         # Don't cache network errors - they may be transient

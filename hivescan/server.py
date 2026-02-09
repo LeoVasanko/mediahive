@@ -23,6 +23,7 @@ from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 import msgspec
+from aiopathlib import AsyncPath
 from hivescan.index_store import IndexStore
 from hivescan.indexer import _process_movies, _process_series
 from hivescan.structs import MsgspecResponse, ScanRequest, StatusResponse, TaskInfo
@@ -54,6 +55,7 @@ _scan_task: Optional[asyncio.Task] = None
 _showreel_queue: asyncio.Queue = asyncio.Queue()
 _showreel_worker_task: Optional[asyncio.Task] = None
 _rescan_worker_task: Optional[asyncio.Task] = None
+_seen_mtimes: dict[str, int] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -77,7 +79,7 @@ async def lifespan(app: FastAPI):
         pattern = pattern.strip()
         if not pattern:
             continue
-        expanded = glob.glob(pattern)
+        expanded = await asyncio.to_thread(glob.glob, pattern)
         if expanded:
             all_paths.extend(Path(p) for p in expanded)
         else:
@@ -89,18 +91,18 @@ async def lifespan(app: FastAPI):
         OUTPUT_DIR = Path(os.environ["HIVESCAN_OUTPUT"])
         MEDIA_ROOT = OUTPUT_DIR.parent
     else:
-        MEDIA_ROOT = find_common_root(all_paths)
+        MEDIA_ROOT = await find_common_root(all_paths)
         if MEDIA_ROOT is None:
             logger.error("Cannot determine common root; set HIVESCAN_OUTPUT")
             sys.exit(1)
         OUTPUT_DIR = MEDIA_ROOT / DEFAULT_OUTPUT_FOLDER
 
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    await AsyncPath(OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
     set_cache_dir(OUTPUT_DIR / ".tmdb-cache")
 
     # Initialise index store and load snapshot
     store = IndexStore(OUTPUT_DIR / "index.json", media_root=str(MEDIA_ROOT))
-    store.load_snapshot()
+    await store.load_snapshot()
     logger.info(
         "Index store ready: %d movies, %d series (from snapshot)",
         len(store.movies),
@@ -226,42 +228,65 @@ async def _rescan_loop():
         logger.exception("Rescan loop error")
 
 
+async def _discover_downloads(paths_to_scan: List[str]) -> List[ParsedContent]:
+    """Walk the filesystem and parse all downloads, skipping unchanged torrents."""
+    downloads: List[ParsedContent] = []
+    media_root_str = str(MEDIA_ROOT) if MEDIA_ROOT else None
+    for pattern in paths_to_scan:
+        p = Path(pattern)
+        ap = AsyncPath(p)
+        if await ap.is_dir():
+            for item in ap.iterdir():
+                if not Path(item).name.startswith("."):
+                    relpath = make_relative_path(str(item), media_root_str)
+                    stat_info = await AsyncPath(item).stat()
+                    mtime = int(stat_info.st_mtime)
+                    if relpath in _seen_mtimes and _seen_mtimes[relpath] == mtime:
+                        continue  # skip unchanged
+                    _seen_mtimes[relpath] = mtime
+                    downloads.append(await parse_download(Path(item)))
+        elif await ap.exists():
+            relpath = make_relative_path(str(p), media_root_str)
+            stat_info = await ap.stat()
+            mtime = int(stat_info.st_mtime)
+            if relpath in _seen_mtimes and _seen_mtimes[relpath] == mtime:
+                continue
+            _seen_mtimes[relpath] = mtime
+            downloads.append(await parse_download(p))
+    return downloads
+
+
 async def _run_scan(override_paths: Optional[List[str]] = None):
     """
     Full scan pipeline:
-      1. Walk filesystem, parse torrents
+      1. Walk filesystem, parse torrents (in thread)
       2. Categorise → movies / series
       3. Iterate async generators, upsert each item into IndexStore
       4. Queue showreel tasks
     """
     task_id = f"scan-{uuid.uuid4().hex[:8]}"
-    logger.info("Scan started (%s)", task_id)
-
-    store.broadcast_task(
-        TaskInfo(
-            id=task_id, status="running", progress=0, detail="Scanning filesystem..."
-        )
-    )
 
     paths_to_scan = override_paths or SCAN_PATHS
     media_root_str = str(MEDIA_ROOT) if MEDIA_ROOT else None
 
     try:
-        # 1. Discover downloads (sync filesystem walk — fast enough)
-        downloads: List[ParsedContent] = []
-        for pattern in paths_to_scan:
-            p = Path(pattern)
-            if p.is_dir():
-                for item in p.iterdir():
-                    if not item.name.startswith("."):
-                        downloads.append(parse_download(item))
-            elif p.exists():
-                downloads.append(parse_download(p))
+        # 1. Discover downloads (now async)
+        downloads = await _discover_downloads(paths_to_scan)
 
-        logger.info("Found %d items to process", len(downloads))
+        if downloads:
+            logger.info("Scan started (%s)", task_id)
+
+            store.broadcast_task(
+                TaskInfo(
+                    id=task_id, status="running", progress=0, detail="Scanning filesystem..."
+                )
+            )
+
+            logger.info("Found %d items to process", len(downloads))
         categories = categorize_downloads(downloads)
         total = len(categories[ContentType.MOVIE]) + len(categories[ContentType.SERIES])
         processed = 0
+        changed = 0
 
         # 2. Process movies
         store.broadcast_task(
@@ -276,19 +301,23 @@ async def _run_scan(override_paths: Optional[List[str]] = None):
             generate_showreels=True,
             media_root=media_root_str,
         ):
-            store.upsert_movie(movie)
+            was_changed = store.upsert_movie(movie)
+            if was_changed:
+                changed += 1
+                logger.info("  Updated movie: %s", movie.title)
             if showreel_task:
                 await _showreel_queue.put(("movie", showreel_task, movie.id))
             processed += 1
             progress = processed / total if total else 1
-            store.broadcast_task(
-                TaskInfo(
-                    id=task_id,
-                    status="running",
-                    progress=round(progress, 3),
-                    detail=movie.title,
+            if was_changed:
+                store.broadcast_task(
+                    TaskInfo(
+                        id=task_id,
+                        status="running",
+                        progress=round(progress, 3),
+                        detail=movie.title,
+                    )
                 )
-            )
 
         # 3. Process series
         store.broadcast_task(
@@ -306,29 +335,35 @@ async def _run_scan(override_paths: Optional[List[str]] = None):
             generate_showreels=True,
             media_root=media_root_str,
         ):
-            store.upsert_series(series)
+            was_changed = store.upsert_series(series)
+            if was_changed:
+                changed += 1
+                logger.info("  Updated series: %s", series.title)
             for task in ep_reel_tasks:
                 await _showreel_queue.put(("episode", task, series.id))
             processed += 1
             progress = processed / total if total else 1
-            store.broadcast_task(
-                TaskInfo(
-                    id=task_id,
-                    status="running",
-                    progress=round(progress, 3),
-                    detail=series.title,
+            if was_changed:
+                store.broadcast_task(
+                    TaskInfo(
+                        id=task_id,
+                        status="running",
+                        progress=round(progress, 3),
+                        detail=series.title,
+                    )
                 )
-            )
 
         store.broadcast_task(
             TaskInfo(id=task_id, status="completed", progress=1, detail="Scan complete")
         )
-        logger.info(
-            "Scan complete (%s): %d movies, %d series",
-            task_id,
-            len(store.movies),
-            len(store.series),
-        )
+        if downloads:
+            logger.info(
+                "Scan complete (%s): %d movies, %d series (%d changed)",
+                task_id,
+                len(store.movies),
+                len(store.series),
+                changed,
+            )
 
     except asyncio.CancelledError:
         store.broadcast_task(
@@ -359,7 +394,7 @@ async def _showreel_worker():
 
             if kind == "movie":
                 video_path, media_folder, title = task_data
-                if movie_showreels_exist(media_folder):
+                if await movie_showreels_exist(media_folder):
                     _showreel_queue.task_done()
                     continue
                 store.broadcast_task(
@@ -397,7 +432,7 @@ async def _showreel_worker():
                 video_path, media_folder, season_num, episode_num, series_title = (
                     task_data
                 )
-                if episode_reel_exists(media_folder, season_num, episode_num):
+                if await episode_reel_exists(media_folder, season_num, episode_num):
                     _showreel_queue.task_done()
                     continue
                 ep_code = f"S{season_num:02d}E{episode_num:02d}"

@@ -5,6 +5,8 @@ import time
 from pathlib import Path
 from typing import Optional, List
 
+from aiopathlib import AsyncPath
+
 
 # Default output folder name (created at common root of scanned paths)
 DEFAULT_OUTPUT_FOLDER = ".mediahive"
@@ -23,7 +25,7 @@ RESOLUTION_PRIORITY = {
 }
 
 
-def get_added_timestamp(path: Path) -> Optional[int]:
+async def get_added_timestamp(path: Path) -> Optional[int]:
     """
     Get the timestamp when a torrent was added to the collection.
 
@@ -35,12 +37,13 @@ def get_added_timestamp(path: Path) -> Optional[int]:
     Returns:
         Unix timestamp as int, or None if path doesn't exist
     """
+    ap = AsyncPath(path)
     try:
-        stat_info = path.stat()
-    except OSError, PermissionError:
+        stat_info = await ap.stat()
+    except (OSError, PermissionError):
         return None
 
-    if path.is_dir():
+    if await ap.is_dir():
         return int(stat_info.st_ctime)
 
     now = time.time()
@@ -52,16 +55,17 @@ def get_added_timestamp(path: Path) -> Optional[int]:
     return int(atime)
 
 
-def get_directory_size(path: Path) -> int:
+async def get_directory_size(path: Path) -> int:
     """Calculate total size of a directory recursively."""
+    ap = AsyncPath(path)
     total = 0
     try:
-        if path.is_file():
-            return path.stat().st_size
-        for item in path.rglob("*"):
-            if item.is_file():
-                total += item.stat().st_size
-    except OSError, PermissionError:
+        if await ap.is_file():
+            return (await ap.stat()).st_size
+        for item in ap.rglob("*"):
+            if await AsyncPath(item).is_file():
+                total += (await AsyncPath(item).stat()).st_size
+    except (OSError, PermissionError):
         pass
     return total
 
@@ -75,7 +79,7 @@ def format_size(size_bytes: int) -> str:
     return f"{size_bytes:.2f} PB"
 
 
-def find_common_root(paths: List[Path]) -> Optional[Path]:
+async def find_common_root(paths: List[Path]) -> Optional[Path]:
     """
     Find the common root directory for a list of paths.
 
@@ -95,10 +99,10 @@ def find_common_root(paths: List[Path]) -> Optional[Path]:
         for p in resolved:
             # Find the first existing parent to get device info
             check_path = p
-            while not check_path.exists() and check_path.parent != check_path:
+            while not await AsyncPath(check_path).exists() and check_path.parent != check_path:
                 check_path = check_path.parent
-            if check_path.exists():
-                devices.add(os.stat(check_path).st_dev)
+            if await AsyncPath(check_path).exists():
+                devices.add((await AsyncPath(check_path).stat()).st_dev)
 
         if len(devices) > 1:
             # Paths are on different devices/drives
@@ -109,7 +113,7 @@ def find_common_root(paths: List[Path]) -> Optional[Path]:
     # Find common path prefix
     if len(resolved) == 1:
         # Single path - use its parent as root
-        return resolved[0].parent if resolved[0].is_file() else resolved[0]
+        return resolved[0].parent if await AsyncPath(resolved[0]).is_file() else resolved[0]
 
     # Get parts of each path
     all_parts = [p.parts for p in resolved]
@@ -186,6 +190,7 @@ def sort_by_quality(items: list, reverse: bool = True) -> None:
         key=lambda v: (
             RESOLUTION_PRIORITY.get(_val(v, "resolution", "") or "", 0),
             _val(v, "size", 0) or 0,
+            _val(v, "path", "") or "",
         ),
         reverse=reverse,
     )
