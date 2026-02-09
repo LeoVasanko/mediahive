@@ -1,6 +1,5 @@
 """Utility functions for paths, sizes, and timestamps."""
 
-import os
 import time
 from pathlib import Path
 from typing import Optional, List
@@ -40,7 +39,7 @@ async def get_added_timestamp(path: Path) -> Optional[int]:
     ap = AsyncPath(path)
     try:
         stat_info = await ap.stat()
-    except (OSError, PermissionError):
+    except OSError, PermissionError:
         return None
 
     if await ap.is_dir():
@@ -65,7 +64,7 @@ async def get_directory_size(path: Path) -> int:
         for item in ap.rglob("*"):
             if await AsyncPath(item).is_file():
                 total += (await AsyncPath(item).stat()).st_size
-    except (OSError, PermissionError):
+    except OSError, PermissionError:
         pass
     return total
 
@@ -99,7 +98,10 @@ async def find_common_root(paths: List[Path]) -> Optional[Path]:
         for p in resolved:
             # Find the first existing parent to get device info
             check_path = p
-            while not await AsyncPath(check_path).exists() and check_path.parent != check_path:
+            while (
+                not await AsyncPath(check_path).exists()
+                and check_path.parent != check_path
+            ):
                 check_path = check_path.parent
             if await AsyncPath(check_path).exists():
                 devices.add((await AsyncPath(check_path).stat()).st_dev)
@@ -113,7 +115,11 @@ async def find_common_root(paths: List[Path]) -> Optional[Path]:
     # Find common path prefix
     if len(resolved) == 1:
         # Single path - use its parent as root
-        return resolved[0].parent if await AsyncPath(resolved[0]).is_file() else resolved[0]
+        return (
+            resolved[0].parent
+            if await AsyncPath(resolved[0]).is_file()
+            else resolved[0]
+        )
 
     # Get parts of each path
     all_parts = [p.parts for p in resolved]
@@ -194,4 +200,3 @@ def sort_by_quality(items: list, reverse: bool = True) -> None:
         ),
         reverse=reverse,
     )
-

@@ -3,8 +3,8 @@ Scan orchestration — background tasks for continuous media scanning.
 
 All scanning logic lives here in hivescan.  Communication with the mediahive
 server happens exclusively through an async ``send`` callable that pushes
-:class:`~mediahive.models.protocol.ScanEvent` messages (``EvUpsert`` /
-``EvTask``) onto an :class:`asyncio.Queue` owned by the caller.
+:class:`~mediahive.models.events.ScanEvent` messages (``Upsert`` /
+``Task``) onto an :class:`asyncio.Queue` owned by the caller.
 """
 
 import asyncio
@@ -29,9 +29,13 @@ from mediahive.hivescan.showreel import (
     movie_showreels_exist,
 )
 from mediahive.hivescan.tmdb_client import set_cache_dir
-from mediahive.hivescan.utils import DEFAULT_OUTPUT_FOLDER, find_common_root, make_relative_path
+from mediahive.hivescan.utils import (
+    DEFAULT_OUTPUT_FOLDER,
+    find_common_root,
+    make_relative_path,
+)
 from mediahive.models.data import Movie, Series, TaskInfo
-from mediahive.models.protocol import EvTask, EvUpsert, ScanEvent
+from mediahive.models.events import ScanEvent, Task, Upsert
 
 logger = logging.getLogger("hivescan.scanner")
 
@@ -106,7 +110,8 @@ async def start(send: Send) -> None:
 
     logger.info(
         "Scanner started — %d scan paths, output=%s",
-        len(_scan_paths), _output_dir,
+        len(_scan_paths),
+        _output_dir,
     )
 
     _showreel_worker_task = asyncio.create_task(_showreel_worker())
@@ -192,7 +197,7 @@ async def _run_scan(override_paths: Optional[List[str]] = None):
     Full scan pipeline:
       1. Walk filesystem, parse torrents
       2. Categorise → movies / series
-      3. Iterate async generators, send each item as EvUpsert
+      3. Iterate async generators, send each item as Upsert
       4. Queue showreel tasks
     """
     task_id = f"scan-{uuid.uuid4().hex[:8]}"
@@ -204,9 +209,16 @@ async def _run_scan(override_paths: Optional[List[str]] = None):
 
         if downloads:
             logger.info("Scan started (%s)", task_id)
-            await _send(EvTask(data=TaskInfo(
-                id=task_id, status="running", progress=0, detail="Scanning filesystem...",
-            )))
+            await _send(
+                Task(
+                    data=TaskInfo(
+                        id=task_id,
+                        status="running",
+                        progress=0,
+                        detail="Scanning filesystem...",
+                    )
+                )
+            )
             logger.info("Found %d items to process", len(downloads))
 
         categories = categorize_downloads(downloads)
@@ -214,57 +226,110 @@ async def _run_scan(override_paths: Optional[List[str]] = None):
         processed = 0
 
         # Process movies
-        await _send(EvTask(data=TaskInfo(
-            id=task_id, status="running", progress=0, detail="Processing movies...",
-        )))
+        await _send(
+            Task(
+                data=TaskInfo(
+                    id=task_id,
+                    status="running",
+                    progress=0,
+                    detail="Processing movies...",
+                )
+            )
+        )
         async for movie, showreel_task in _process_movies(
-            categories, _output_dir,
-            fetch_covers=True, generate_showreels=True, media_root=media_root_str,
+            categories,
+            _output_dir,
+            fetch_covers=True,
+            generate_showreels=True,
+            media_root=media_root_str,
         ):
-            await _send(EvUpsert(kind="movie", item=movie))
+            await _send(Upsert(kind="movie", item=movie))
             if showreel_task:
                 await _showreel_queue.put(("movie", showreel_task, movie))
             processed += 1
             progress = round(processed / total, 3) if total else 1
-            await _send(EvTask(data=TaskInfo(
-                id=task_id, status="running", progress=progress, detail=movie.title,
-            )))
+            await _send(
+                Task(
+                    data=TaskInfo(
+                        id=task_id,
+                        status="running",
+                        progress=progress,
+                        detail=movie.title,
+                    )
+                )
+            )
 
         # Process series
-        await _send(EvTask(data=TaskInfo(
-            id=task_id, status="running",
-            progress=processed / total if total else 0.5,
-            detail="Processing series...",
-        )))
+        await _send(
+            Task(
+                data=TaskInfo(
+                    id=task_id,
+                    status="running",
+                    progress=processed / total if total else 0.5,
+                    detail="Processing series...",
+                )
+            )
+        )
         async for series, ep_reel_tasks in _process_series(
-            categories, _output_dir,
-            fetch_covers=True, generate_showreels=True, media_root=media_root_str,
+            categories,
+            _output_dir,
+            fetch_covers=True,
+            generate_showreels=True,
+            media_root=media_root_str,
         ):
-            await _send(EvUpsert(kind="series", item=series))
+            await _send(Upsert(kind="series", item=series))
             for task in ep_reel_tasks:
                 await _showreel_queue.put(("episode", task, series))
             processed += 1
             progress = round(processed / total, 3) if total else 1
-            await _send(EvTask(data=TaskInfo(
-                id=task_id, status="running", progress=progress, detail=series.title,
-            )))
+            await _send(
+                Task(
+                    data=TaskInfo(
+                        id=task_id,
+                        status="running",
+                        progress=progress,
+                        detail=series.title,
+                    )
+                )
+            )
 
-        await _send(EvTask(data=TaskInfo(
-            id=task_id, status="completed", progress=1, detail="Scan complete",
-        )))
+        await _send(
+            Task(
+                data=TaskInfo(
+                    id=task_id,
+                    status="completed",
+                    progress=1,
+                    detail="Scan complete",
+                )
+            )
+        )
         if downloads:
             logger.info("Scan complete (%s)", task_id)
 
     except asyncio.CancelledError:
-        await _send(EvTask(data=TaskInfo(
-            id=task_id, status="cancelled", progress=0, detail="Scan cancelled",
-        )))
+        await _send(
+            Task(
+                data=TaskInfo(
+                    id=task_id,
+                    status="cancelled",
+                    progress=0,
+                    detail="Scan cancelled",
+                )
+            )
+        )
         logger.info("Scan cancelled (%s)", task_id)
     except Exception:
         logger.exception("Scan failed (%s)", task_id)
-        await _send(EvTask(data=TaskInfo(
-            id=task_id, status="error", progress=0, detail="Scan error",
-        )))
+        await _send(
+            Task(
+                data=TaskInfo(
+                    id=task_id,
+                    status="error",
+                    progress=0,
+                    detail="Scan error",
+                )
+            )
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -289,29 +354,57 @@ async def _showreel_worker():
                 if await movie_showreels_exist(media_folder):
                     _showreel_queue.task_done()
                     continue
-                await _send(EvTask(data=TaskInfo(
-                    id=task_id, status="running", progress=0, detail=f"Showreel: {title}",
-                )))
+                await _send(
+                    Task(
+                        data=TaskInfo(
+                            id=task_id,
+                            status="running",
+                            progress=0,
+                            detail=f"Showreel: {title}",
+                        )
+                    )
+                )
                 await generate_showreel_images(video_path, media_folder, title=title)
-                paths = get_expected_showreel_paths(media_folder, media_root=media_root_path)
+                paths = get_expected_showreel_paths(
+                    media_folder, media_root=media_root_path
+                )
                 movie.showreel_images = paths if paths else None
-                await _send(EvUpsert(kind="movie", item=movie))
-                await _send(EvTask(data=TaskInfo(
-                    id=task_id, status="completed", progress=1, detail=f"Showreel: {title}",
-                )))
+                await _send(Upsert(kind="movie", item=movie))
+                await _send(
+                    Task(
+                        data=TaskInfo(
+                            id=task_id,
+                            status="completed",
+                            progress=1,
+                            detail=f"Showreel: {title}",
+                        )
+                    )
+                )
 
             elif kind == "episode":
                 series: Series = item
-                video_path, media_folder, season_num, episode_num, series_title = task_data
+                video_path, media_folder, season_num, episode_num, series_title = (
+                    task_data
+                )
                 if await episode_reel_exists(media_folder, season_num, episode_num):
                     _showreel_queue.task_done()
                     continue
                 ep_code = f"S{season_num:02d}E{episode_num:02d}"
-                await _send(EvTask(data=TaskInfo(
-                    id=task_id, status="running", progress=0, detail=f"Reel: {series_title} {ep_code}",
-                )))
+                await _send(
+                    Task(
+                        data=TaskInfo(
+                            id=task_id,
+                            status="running",
+                            progress=0,
+                            detail=f"Reel: {series_title} {ep_code}",
+                        )
+                    )
+                )
                 reel_path = await generate_episode_reel(
-                    video_path, media_folder, season_num, episode_num,
+                    video_path,
+                    media_folder,
+                    season_num,
+                    episode_num,
                 )
                 if reel_path:
                     for season in series.seasons:
@@ -319,12 +412,20 @@ async def _showreel_worker():
                             for episode in season.episodes:
                                 if episode.episode_number == episode_num:
                                     episode.reel_image = make_relative_path(
-                                        reel_path, media_root_str,
+                                        reel_path,
+                                        media_root_str,
                                     )
-                    await _send(EvUpsert(kind="series", item=series))
-                await _send(EvTask(data=TaskInfo(
-                    id=task_id, status="completed", progress=1, detail=f"Reel: {series_title} {ep_code}",
-                )))
+                    await _send(Upsert(kind="series", item=series))
+                await _send(
+                    Task(
+                        data=TaskInfo(
+                            id=task_id,
+                            status="completed",
+                            progress=1,
+                            detail=f"Reel: {series_title} {ep_code}",
+                        )
+                    )
+                )
 
             _showreel_queue.task_done()
 

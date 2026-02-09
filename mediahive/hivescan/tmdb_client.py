@@ -16,9 +16,11 @@ import httpx
 from aiopathlib import AsyncPath
 
 from mediahive.models.tmdb import (
+    CastMember,
     EpisodeInfo,
     Info,
     SeasonInfo,
+    SimilarMedia,
 )
 
 # TMDb API configuration
@@ -163,7 +165,7 @@ async def fetch_series_details(series_id: int) -> Optional[Dict]:
 
 async def fetch_season_details(
     series_id: int, season_number: int
-) -> Optional[TMDbSeasonInfo]:
+) -> Optional[SeasonInfo]:
     """
     Fetch detailed season info including all episodes.
 
@@ -204,7 +206,7 @@ async def fetch_season_details(
         )
         episodes.append(episode)
 
-    return TMDbSeasonInfo(
+    return SeasonInfo(
         season_number=data.get("season_number", season_number),
         name=data.get("name"),
         overview=data.get("overview"),
@@ -361,9 +363,7 @@ async def _search_movie_with_fallbacks(
     return None
 
 
-async def fetch_movie_info(
-    title: str, year: Optional[int] = None
-) -> Optional[TMDbInfo]:
+async def fetch_movie_info(title: str, year: Optional[int] = None) -> Optional[Info]:
     """Fetch comprehensive movie info from TMDb."""
     data = await _search_movie_with_fallbacks(title, year)
 
@@ -377,7 +377,7 @@ async def fetch_movie_info(
     details = await fetch_movie_details(movie_id)
     if not details:
         # Fall back to basic info from search
-        return TMDbInfo(
+        return Info(
             tmdb_id=movie_id,
             title=result.get("title"),
             original_title=result.get("original_title"),
@@ -434,7 +434,7 @@ async def fetch_movie_info(
         for s in similar_data
     ]
 
-    return TMDbInfo(
+    return Info(
         tmdb_id=movie_id,
         title=details.get("title"),
         original_title=details.get("original_title"),
@@ -479,7 +479,7 @@ async def _search_series_with_fallbacks(title: str) -> Optional[Dict]:
     return None
 
 
-async def fetch_series_info(title: str) -> Optional[TMDbInfo]:
+async def fetch_series_info(title: str) -> Optional[Info]:
     """Fetch comprehensive TV series info from TMDb."""
     data = await _search_series_with_fallbacks(title)
 
@@ -493,7 +493,7 @@ async def fetch_series_info(title: str) -> Optional[TMDbInfo]:
     details = await fetch_series_details(series_id)
     if not details:
         # Fall back to basic info from search
-        return TMDbInfo(
+        return Info(
             tmdb_id=series_id,
             title=result.get("name"),
             original_title=result.get("original_name"),
@@ -539,7 +539,7 @@ async def fetch_series_info(title: str) -> Optional[TMDbInfo]:
     # Get first air date
     first_air_date = details.get("first_air_date")
 
-    return TMDbInfo(
+    return Info(
         tmdb_id=series_id,
         title=details.get("name"),
         original_title=details.get("original_name"),

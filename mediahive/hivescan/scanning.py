@@ -79,7 +79,9 @@ def categorize_downloads(
     return categories
 
 
-async def find_episode_files(path: Path) -> Dict[Tuple[int, int], List[Tuple[str, int]]]:
+async def find_episode_files(
+    path: Path,
+) -> Dict[Tuple[int, int], List[Tuple[str, int]]]:
     """
     Find all episode video files in a directory.
 
@@ -115,7 +117,7 @@ async def find_episode_files(path: Path) -> Dict[Tuple[int, int], List[Tuple[str
                     if ep_info not in episodes:
                         episodes[ep_info] = []
                     episodes[ep_info].append((str(f), (await af.stat()).st_size))
-    except (OSError, PermissionError):
+    except OSError, PermissionError:
         pass
 
     _episode_files_cache[cache_key] = episodes
@@ -159,7 +161,7 @@ async def find_playable_file(path: Path) -> Optional[str]:
                     result = str(nested_bdmv)
                     _playable_file_cache[cache_key] = result
                     return result
-    except (OSError, PermissionError):
+    except OSError, PermissionError:
         pass
 
     # Find largest video file
@@ -171,7 +173,7 @@ async def find_playable_file(path: Path) -> Optional[str]:
                 if "sample" in Path(f).name.lower():
                     continue
                 video_files.append((str(f), (await af.stat()).st_size))
-    except (OSError, PermissionError):
+    except OSError, PermissionError:
         pass
 
     if not video_files:
@@ -205,4 +207,3 @@ async def find_cover_image(
         return str(legacy_path)
 
     return None
-

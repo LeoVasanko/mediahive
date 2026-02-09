@@ -22,16 +22,13 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi_vue import Frontend
 
 from mediahive.index_store import IndexStore
+from mediahive.models.events import ScanEvent, Task, Upsert
 from mediahive.models.protocol import (
-    EvTask,
-    EvUpsert,
     MsgspecResponse,
     PlayMediaRequest,
     OpenFolderRequest,
-    ScanEvent,
     ScanRequest,
     StatusResponse,
-    WsTask,
 )
 
 from mediahive.__main__ import DEVMODE
@@ -65,12 +62,12 @@ async def _consume_scan_events() -> None:
     while True:
         try:
             event = await _scan_events.get()
-            if isinstance(event, EvUpsert):
+            if isinstance(event, Upsert):
                 if event.kind == "movie":
                     store.upsert_movie(event.item)
                 else:
                     store.upsert_series(event.item)
-            elif isinstance(event, EvTask):
+            elif isinstance(event, Task):
                 store.broadcast_task(event.data)
         except asyncio.CancelledError:
             return
@@ -94,12 +91,16 @@ async def lifespan(app: FastAPI):
     await store.load_snapshot()
     logger.info(
         "Index store ready: %d movies, %d series",
-        len(store.movies), len(store.series),
+        len(store.movies),
+        len(store.series),
     )
 
     # If scan paths are configured, start the scanner subsystem
     if os.environ.get("HIVESCAN_PATHS"):
-        from mediahive.hivescan.scanner import start as start_scanner, stop as stop_scanner
+        from mediahive.hivescan.scanner import (
+            start as start_scanner,
+            stop as stop_scanner,
+        )
 
         _consumer_task = asyncio.create_task(_consume_scan_events())
         await start_scanner(_send_event)

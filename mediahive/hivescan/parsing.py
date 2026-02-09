@@ -78,4 +78,3 @@ def parse_episode_from_filename(filename: str) -> Optional[Tuple[int, int]]:
         return int(match.group(1)), int(match.group(2))
 
     return None
-

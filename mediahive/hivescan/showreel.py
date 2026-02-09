@@ -90,9 +90,13 @@ async def movie_showreels_exist(
     return True
 
 
-async def episode_reel_exists(media_folder: Path, season_num: int, episode_num: int) -> bool:
+async def episode_reel_exists(
+    media_folder: Path, season_num: int, episode_num: int
+) -> bool:
     """Check if an episode reel file already exists."""
-    return await AsyncPath(media_folder / f"S{season_num:02d}E{episode_num:02d}.webm").exists()
+    return await AsyncPath(
+        media_folder / f"S{season_num:02d}E{episode_num:02d}.webm"
+    ).exists()
 
 
 def get_bluray_uri(video_path: str) -> Optional[str]:
@@ -811,4 +815,3 @@ async def generate_episode_reel(
         episode_code = f"S{season_num:02d}E{episode_num:02d}"
         logger.error("Error generating episode reel for %s: %s", episode_code, e)
         return None
-

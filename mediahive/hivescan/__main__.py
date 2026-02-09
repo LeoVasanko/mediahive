@@ -5,7 +5,7 @@ import logging
 import os
 from pathlib import Path
 
-from mediahive.hivescan.utils import DEFAULT_OUTPUT_FOLDER, find_common_root
+from mediahive.hivescan.utils import find_common_root
 
 
 def main():
@@ -24,7 +24,7 @@ The server exposes:
   POST /api/scan    Trigger a new scan
   GET  /api/status  Current server status
   GET  /api/index   Full index as JSON (HTTP fallback)
-        """
+        """,
     )
     parser.add_argument(
         "paths",
@@ -51,25 +51,30 @@ The server exposes:
 
     args = parser.parse_args()
 
-    # Derive the media root so we can set MEDIAHIVE_PATH
-    all_paths: list[Path] = []
-    for pattern in args.paths:
-        expanded = glob.glob(pattern)
-        if expanded:
-            all_paths.extend(Path(p) for p in expanded)
-        else:
-            all_paths.append(Path(pattern))
+    # TODO: Take .mediahive root folder from CLI directly.
+    # Future: use gitignore-style system (file in .mediahive folder) for path determination.
 
+    # Derive media_root only if no explicit output-dir is given
     if args.output_dir:
-        media_root = Path(args.output_dir).parent
+        media_root = Path(args.output_dir).parent.resolve()
     else:
+        # Expand globs once to find common root
+        all_paths: list[Path] = []
+        for pattern in args.paths:
+            expanded = glob.glob(pattern)
+            if expanded:
+                all_paths.extend(Path(p) for p in expanded)
+            else:
+                all_paths.append(Path(pattern))
+
         media_root = asyncio.run(find_common_root(all_paths))
         if media_root is None:
             print("Error: Cannot determine common root; use -o to set output directory")
             exit(1)
+        media_root = media_root.resolve()
 
-    # Configure environment for the mediahive server + scanner
-    os.environ["MEDIAHIVE_PATH"] = str(media_root.resolve())
+    # Configure environment - scanner will re-expand patterns from HIVESCAN_PATHS
+    os.environ["MEDIAHIVE_PATH"] = str(media_root)
     os.environ["HIVESCAN_PATHS"] = os.pathsep.join(args.paths)
     if args.output_dir:
         os.environ["HIVESCAN_OUTPUT"] = args.output_dir
@@ -81,7 +86,10 @@ The server exposes:
     )
 
     import uvicorn
-    uvicorn.run("mediahive.server:app", host=args.host, port=args.port, log_level="info")
+
+    uvicorn.run(
+        "mediahive.server:app", host=args.host, port=args.port, log_level="info"
+    )
 
 
 if __name__ == "__main__":

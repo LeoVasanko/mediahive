@@ -17,6 +17,7 @@ from mediahive.models.data import (
     Series,
     Torrent,
 )
+from mediahive.models.tmdb import EpisodeInfo, Info, SeasonInfo
 from mediahive.hivescan.tmdb_client import (
     fetch_movie_info,
     fetch_series_info,
@@ -24,7 +25,11 @@ from mediahive.hivescan.tmdb_client import (
 )
 
 from mediahive.hivescan.models import ContentType, ParsedContent
-from mediahive.hivescan.scanning import find_cover_image, find_episode_files, find_playable_file
+from mediahive.hivescan.scanning import (
+    find_cover_image,
+    find_episode_files,
+    find_playable_file,
+)
 from mediahive.hivescan.images import (
     download_cover_image,
     download_backdrop_image,
@@ -119,7 +124,9 @@ async def _collect_episode_files(
                         )
                         if not already_added:
                             if item.content_hash and item.content_hash.size == 0:
-                                item.content_hash.size = await get_directory_size(item.content_hash.path)
+                                item.content_hash.size = await get_directory_size(
+                                    item.content_hash.path
+                                )
                             size = item.content_hash.size if item.content_hash else 0
                             all_episode_files[key].append(
                                 {
@@ -291,9 +298,9 @@ async def _process_movies(
     Yields (Movie, showreel_task_or_None) for each movie as it is processed.
     """
     # In-memory cache for TMDb lookups
-    movie_tmdb_cache: Dict[str, Optional[TMDbInfo]] = {}
+    movie_tmdb_cache: Dict[str, Optional[Info]] = {}
 
-    async def get_movie_tmdb(title: str, year: Optional[int]) -> Optional[TMDbInfo]:
+    async def get_movie_tmdb(title: str, year: Optional[int]) -> Optional[Info]:
         cache_key = f"{title.lower()}:{year}"
         if cache_key in movie_tmdb_cache:
             return movie_tmdb_cache[cache_key]
@@ -311,7 +318,9 @@ async def _process_movies(
             valid_movies.append(item)
     skipped = len(categories[ContentType.MOVIE]) - len(valid_movies)
     if skipped > 0:
-        logger.debug("  Skipped %d movie torrents with no playable video files", skipped)
+        logger.debug(
+            "  Skipped %d movie torrents with no playable video files", skipped
+        )
 
     # Group by title+year
     movie_groups: Dict[str, List[ParsedContent]] = {}
@@ -402,13 +411,16 @@ async def _process_movies(
         # Queue showreel generation
         showreel_paths = []
         showreel_task = None
-        if generate_showreels and versions:
+        if generate_showreels and torrents:
             # Find the best version for showreel (highest quality)
-            best_relpath = max(versions.keys(), key=lambda k: (
-                RESOLUTION_PRIORITY.get(versions[k].resolution or "", 0),
-                versions[k].size or 0,
-                k
-            ))
+            best_relpath = max(
+                torrents.keys(),
+                key=lambda k: (
+                    RESOLUTION_PRIORITY.get(torrents[k].resolution or "", 0),
+                    torrents[k].size or 0,
+                    k,
+                ),
+            )
             best_version = torrents[best_relpath]
             if best_version.playable_file:
                 abs_playable = (
@@ -455,7 +467,9 @@ async def _process_movies(
         item_id = hashlib.md5(f"movie:{title}:{year}".encode()).hexdigest()[:12]
 
         cover_path = (
-            await find_cover_image(title, year, "movie", cover_dir) if fetch_covers else None
+            await find_cover_image(title, year, "movie", cover_dir)
+            if fetch_covers
+            else None
         )
 
         torrents = {}
@@ -470,21 +484,24 @@ async def _process_movies(
         showreel_task = None
         if generate_showreels and torrents:
             # Find the best version for showreel (highest quality)
-            best_relpath = max(torrents.keys(), key=lambda k: (
-                RESOLUTION_PRIORITY.get(torrents[k].resolution or "", 0),
-                torrents[k].size or 0,
-                k
-            ))
+            best_relpath = max(
+                torrents.keys(),
+                key=lambda k: (
+                    RESOLUTION_PRIORITY.get(torrents[k].resolution or "", 0),
+                    torrents[k].size or 0,
+                    k,
+                ),
+            )
             best_version = torrents[best_relpath]
-            if best_version.playable_file and not best_version.playable_file.endswith(".bdmv"):
+            if best_version.playable_file and not best_version.playable_file.endswith(
+                ".bdmv"
+            ):
                 abs_playable = (
                     str(Path(media_root) / best_version.playable_file)
                     if media_root
                     else best_version.playable_file
                 )
-                media_folder = get_media_folder_path(
-                    title, year, "movie", cover_dir
-                )
+                media_folder = get_media_folder_path(title, year, "movie", cover_dir)
                 showreel_paths = get_expected_showreel_paths(
                     media_folder,
                     media_root=Path(media_root) if media_root else None,
@@ -519,10 +536,10 @@ async def _process_series(
     Yields (Series, episode_reel_tasks) for each series as it is processed.
     """
     # In-memory cache for TMDb lookups
-    series_tmdb_cache: Dict[str, Optional[TMDbInfo]] = {}
-    season_cache: Dict[Tuple[int, int], Optional[TMDbSeasonInfo]] = {}
+    series_tmdb_cache: Dict[str, Optional[Info]] = {}
+    season_cache: Dict[Tuple[int, int], Optional[SeasonInfo]] = {}
 
-    async def get_series_tmdb(title: str) -> Optional[TMDbInfo]:
+    async def get_series_tmdb(title: str) -> Optional[Info]:
         cache_key = title.lower()
         if cache_key in series_tmdb_cache:
             return series_tmdb_cache[cache_key]
@@ -605,7 +622,9 @@ async def _process_series(
         # Find/download cover
         cover_path = None
         if fetch_covers:
-            cover_path = await find_cover_image(display_title, None, "series", cover_dir)
+            cover_path = await find_cover_image(
+                display_title, None, "series", cover_dir
+            )
             if not cover_path:
                 for tt in torrent_titles:
                     cover_path = await find_cover_image(tt, None, "series", cover_dir)
@@ -668,7 +687,9 @@ async def _process_series(
         series_id = hashlib.md5(f"series:{title}".encode()).hexdigest()[:12]
 
         cover_path = (
-            await find_cover_image(title, None, "series", cover_dir) if fetch_covers else None
+            await find_cover_image(title, None, "series", cover_dir)
+            if fetch_covers
+            else None
         )
         series_folder = get_media_folder_path(title, None, "series", cover_dir)
 

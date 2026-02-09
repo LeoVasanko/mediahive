@@ -86,5 +86,4 @@ class Info(msgspec.Struct):
     creators: list[str] | None = None
     number_of_seasons: int | None = None
     number_of_episodes: int | None = None
-    networks: list[str] | None = None</content>
-<parameter name="filePath">c:\mediahive\mediahive\models\tmdb.py
+    networks: list[str] | None = None

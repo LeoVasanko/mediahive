@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import msgspec
 
-from .tmdb import CastMember, EpisodeInfo, Info, SimilarMedia
+from .tmdb import Info
 
 
 # ---------------------------------------------------------------------------

@@ -9,7 +9,11 @@ DEVMODE = bool(os.getenv("MEDIAHIVE_FRONTEND_URL"))
 
 
 def main():
-    parser = argparse.ArgumentParser(description="MediaHive - Media scanning, indexing, and streaming")
+    parser = argparse.ArgumentParser(
+        description="MediaHive - Media scanning, indexing, and streaming"
+    )
+    # TODO: Accept .mediahive root folder directly from CLI.
+    # Future: use gitignore-style system (file in .mediahive folder) for path determination.
     parser.add_argument(
         "media_folder",
         nargs="?",

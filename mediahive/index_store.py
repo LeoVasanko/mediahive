@@ -25,12 +25,10 @@ from mediahive.models.data import (
     Series,
     TaskInfo,
 )
+from mediahive.models.events import Remove, Task, Upsert
 from mediahive.models.protocol import (
     WsInit,
     WsInitData,
-    WsRemove,
-    WsTask,
-    WsUpsert,
 )
 
 logger = logging.getLogger("mediahive.index_store")
@@ -40,7 +38,15 @@ SNAPSHOT_DEBOUNCE = 5.0
 
 
 class IndexStore:
-    """In-memory media index with WS broadcast and disk snapshots."""
+    """In-memory media index with WS broadcast and disk snapshots.
+
+    # TODO: Decouple WS transport from data storage
+    # Consider splitting WS broadcasting into a separate Broadcaster class that:
+    # - Owns per-connection queues instead of direct WebSocket references
+    # - Each WS connection gets its own asyncio.Queue for messages
+    # - Scanner pushes events to all queues; each WS reader drains its own queue
+    # This would make IndexStore testable without FastAPI's WebSocket.
+    """
 
     def __init__(self, snapshot_path: Path, media_root: Optional[str] = None):
         self.snapshot_path = snapshot_path
@@ -68,9 +74,7 @@ class IndexStore:
             logger.info("No snapshot found at %s, starting fresh", self.snapshot_path)
             return
         try:
-            data = msgspec.json.decode(
-                await ap.read_bytes(), type=IndexSnapshot
-            )
+            data = msgspec.json.decode(await ap.read_bytes(), type=IndexSnapshot)
             for m in data.movies:
                 self.movies[m.id] = m
             for s in data.series:
@@ -85,32 +89,13 @@ class IndexStore:
 
     async def _write_snapshot(self) -> None:
         """Write current index to disk (called from debounce task)."""
-        movies_list = sorted(
-            self.movies.values(), key=lambda x: (x.title.lower(), x.year or 0)
-        )
-        series_list = sorted(self.series.values(), key=lambda x: x.title.lower())
-
-        total_movie_versions = sum(len(m.torrents) for m in movies_list)
-        total_series_episodes = sum(
-            sum(len(season.episodes) for season in s.seasons) for s in series_list
-        )
-
-        snapshot = IndexSnapshot(
-            generated_at=datetime.now().isoformat(),
-            media_root=self.media_root,
-            stats=MediaStats(
-                total_movies=len(movies_list),
-                total_movie_versions=total_movie_versions,
-                total_series=len(series_list),
-                total_series_episodes=total_series_episodes,
-            ),
-            movies=movies_list,
-            series=series_list,
-        )
+        snapshot = self._build_snapshot()
 
         await AsyncPath(self.snapshot_path.parent).mkdir(parents=True, exist_ok=True)
         tmp = self.snapshot_path.with_suffix(".tmp")
-        await AsyncPath(tmp).write_bytes(msgspec.json.format(msgspec.json.encode(snapshot), indent=2))
+        await AsyncPath(tmp).write_bytes(
+            msgspec.json.format(msgspec.json.encode(snapshot), indent=2)
+        )
         # os.replace is atomic and overwrites on all platforms (unlike rename on Windows)
         await asyncio.to_thread(os.replace, tmp, self.snapshot_path)
         logger.debug("Snapshot written to %s", self.snapshot_path)
@@ -153,7 +138,7 @@ class IndexStore:
                 return False
         self.movies[item.id] = item
         self._schedule_snapshot()
-        self._broadcast(WsUpsert(kind="movie", item=item))
+        self._broadcast(Upsert(kind="movie", item=item))
         return True
 
     def upsert_series(self, item: Series) -> bool:
@@ -164,20 +149,20 @@ class IndexStore:
                 return False
         self.series[item.id] = item
         self._schedule_snapshot()
-        self._broadcast(WsUpsert(kind="series", item=item))
+        self._broadcast(Upsert(kind="series", item=item))
         return True
 
     def remove_movie(self, item_id: str) -> None:
         """Remove a movie from the index and broadcast."""
         self.movies.pop(item_id, None)
         self._schedule_snapshot()
-        self._broadcast(WsRemove(kind="movie", id=item_id))
+        self._broadcast(Remove(kind="movie", id=item_id))
 
     def remove_series(self, item_id: str) -> None:
         """Remove a series from the index and broadcast."""
         self.series.pop(item_id, None)
         self._schedule_snapshot()
-        self._broadcast(WsRemove(kind="series", id=item_id))
+        self._broadcast(Remove(kind="series", id=item_id))
 
     # ------------------------------------------------------------------
     # WebSocket management
@@ -222,18 +207,14 @@ class IndexStore:
 
     def broadcast_task(self, task_info: TaskInfo) -> None:
         """Broadcast a task progress message to all WS clients."""
-        self._broadcast(WsTask(data=task_info))
-
-    def broadcast(self, msg: object) -> None:
-        """Broadcast an already-encoded message to all WS clients."""
-        self._broadcast(msg)
+        self._broadcast(Task(data=task_info))
 
     # ------------------------------------------------------------------
     # Read helpers
     # ------------------------------------------------------------------
 
-    def get_full_index(self) -> IndexSnapshot:
-        """Return the full index as an IndexSnapshot."""
+    def _build_snapshot(self) -> IndexSnapshot:
+        """Build a sorted IndexSnapshot with computed stats."""
         movies_list = sorted(
             self.movies.values(), key=lambda x: (x.title.lower(), x.year or 0)
         )
@@ -256,3 +237,7 @@ class IndexStore:
             movies=movies_list,
             series=series_list,
         )
+
+    def get_full_index(self) -> IndexSnapshot:
+        """Return the full index as an IndexSnapshot."""
+        return self._build_snapshot()

@@ -9,7 +9,8 @@ from __future__ import annotations
 import msgspec
 from fastapi.responses import Response
 
-from .data import Movie, Series, TaskInfo
+from .data import Movie, Series
+from .events import Remove, ScanEvent, Task, Upsert
 
 
 # ---------------------------------------------------------------------------
@@ -30,49 +31,20 @@ class WsInit(msgspec.Struct, tag="init"):
     data: WsInitData
 
 
-class WsUpsert(msgspec.Struct, tag="upsert"):
-    """Single item inserted or updated."""
-
-    kind: str
-    item: Movie | Series
-
-
-class WsRemove(msgspec.Struct, tag="remove"):
-    """Single item removed."""
-
-    kind: str
-    id: str
-
-
-class WsTask(msgspec.Struct, tag="task"):
-    """Task progress broadcast."""
-
-    data: TaskInfo
-
-
 # Union of all outbound WS messages (for documentation / future decoding)
-WsMessage = WsInit | WsUpsert | WsRemove | WsTask
+WsMessage = WsInit | Upsert | Remove | Task
 
 
-# ---------------------------------------------------------------------------
-# Scan events (scanner → server, via async queue)
-# ---------------------------------------------------------------------------
-
-
-class EvUpsert(msgspec.Struct, tag="upsert"):
-    """Scanner produced or updated a media item."""
-
-    kind: str  # "movie" or "series"
-    item: Movie | Series
-
-
-class EvTask(msgspec.Struct, tag="task"):
-    """Scanner progress update."""
-
-    data: TaskInfo
-
-
-ScanEvent = EvUpsert | EvTask
+# Re-export unified types for backward compatibility
+__all__ = [
+    "Remove",
+    "ScanEvent",
+    "Task",
+    "Upsert",
+    "WsInit",
+    "WsInitData",
+    "WsMessage",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -118,5 +90,4 @@ class MsgspecResponse(Response):
     media_type = "application/json; charset=utf-8"
 
     def render(self, content: object) -> bytes:
-        return msgspec.json.encode(content)</content>
-<parameter name="filePath">c:\mediahive\mediahive\models\protocol.py
+        return msgspec.json.encode(content)
