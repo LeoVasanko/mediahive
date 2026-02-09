@@ -334,3 +334,4 @@ class MsgspecResponse(Response):
 
     def render(self, content: object) -> bytes:
         return msgspec.json.encode(content)
+

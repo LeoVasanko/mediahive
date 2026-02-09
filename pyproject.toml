@@ -18,14 +18,13 @@ dependencies = [
 
 [project.scripts]
 mediahive = "mediahive.__main__:main"
-hivescan = "hivescan.__main__:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build]
-packages = ["mediahive", "hivescan"]
+packages = ["mediahive"]
 artifacts = ["mediahive/frontend-build"]
 only-packages = true
 

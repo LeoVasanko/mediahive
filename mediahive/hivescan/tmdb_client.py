@@ -15,7 +15,7 @@ from typing import Dict, Optional
 import httpx
 from aiopathlib import AsyncPath
 
-from hivescan.structs import (
+from mediahive.hivescan.structs import (
     CastMember,
     SimilarMedia,
     TMDbEpisodeInfo,
@@ -101,7 +101,7 @@ async def _save_to_cache(cache_path: Path, data: Optional[Dict]):
         pass  # Cache write failures are not critical
 
 
-# TMDbEpisodeInfo, TMDbSeasonInfo, TMDbInfo imported from hivescan.structs
+# TMDbEpisodeInfo, TMDbSeasonInfo, TMDbInfo imported from mediahive.hivescan.structs
 
 
 async def tmdb_api_request(
@@ -562,3 +562,4 @@ async def fetch_series_info(title: str) -> Optional[TMDbInfo]:
         number_of_episodes=details.get("number_of_episodes"),
         networks=networks if networks else None,
     )
+

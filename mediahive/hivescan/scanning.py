@@ -7,9 +7,9 @@ from typing import Dict, List, Optional, Tuple
 
 from aiopathlib import AsyncPath
 
-from hivescan.models import ContentType, ParsedContent
-from hivescan.parsing import parse_download, parse_episode_from_filename
-from hivescan.utils import get_media_folder_path, sanitize_filename
+from mediahive.hivescan.models import ContentType, ParsedContent
+from mediahive.hivescan.parsing import parse_download, parse_episode_from_filename
+from mediahive.hivescan.utils import get_media_folder_path, sanitize_filename
 
 
 # Video file extensions
@@ -205,3 +205,4 @@ async def find_cover_image(
         return str(legacy_path)
 
     return None
+

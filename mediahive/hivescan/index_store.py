@@ -18,7 +18,7 @@ import msgspec
 from aiopathlib import AsyncPath
 from fastapi import WebSocket
 
-from hivescan.structs import (
+from mediahive.hivescan.structs import (
     IndexSnapshot,
     MediaStats,
     Movie,
@@ -250,3 +250,4 @@ class IndexStore:
             movies=movies_list,
             series=series_list,
         )
+

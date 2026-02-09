@@ -811,3 +811,4 @@ async def generate_episode_reel(
         episode_code = f"S{season_num:02d}E{episode_num:02d}"
         logger.error("Error generating episode reel for %s: %s", episode_code, e)
         return None
+

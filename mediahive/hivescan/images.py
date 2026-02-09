@@ -6,7 +6,7 @@ from typing import Optional
 
 from aiopathlib import AsyncPath
 
-from hivescan.utils import get_media_folder_path
+from mediahive.hivescan.utils import get_media_folder_path
 
 
 # TMDb image configuration
@@ -113,3 +113,4 @@ async def download_season_poster(
     await AsyncPath(media_folder).mkdir(parents=True, exist_ok=True)
     url = f"{TMDB_IMAGE_BASE}/{DEFAULT_POSTER_SIZE}{poster_path}"
     return await _download_image(url, output_path, f"season {season_num} poster")
+

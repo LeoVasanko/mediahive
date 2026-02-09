@@ -194,3 +194,4 @@ def sort_by_quality(items: list, reverse: bool = True) -> None:
         ),
         reverse=reverse,
     )
+

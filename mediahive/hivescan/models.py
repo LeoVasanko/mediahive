@@ -51,3 +51,4 @@ class ParsedContent:
     is_directory: bool = False
     raw_parsed: dict = field(default_factory=dict)
     content_hash: Optional[ContentHash] = None
+

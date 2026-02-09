@@ -7,7 +7,7 @@ from typing import Optional, Tuple
 import PTN
 from aiopathlib import AsyncPath
 
-from hivescan.models import ContentHash, ContentType, ParsedContent
+from mediahive.hivescan.models import ContentHash, ContentType, ParsedContent
 
 
 def determine_content_type(parsed: dict) -> ContentType:
@@ -78,3 +78,4 @@ def parse_episode_from_filename(filename: str) -> Optional[Tuple[int, int]]:
         return int(match.group(1)), int(match.group(2))
 
     return None
+

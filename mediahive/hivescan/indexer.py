@@ -6,11 +6,11 @@ import logging
 from pathlib import Path
 from typing import AsyncIterator, Dict, List, Optional, Tuple
 
-from hivescan.showreel import (
+from mediahive.hivescan.showreel import (
     get_expected_episode_reel_path,
     get_expected_showreel_paths,
 )
-from hivescan.structs import (
+from mediahive.hivescan.structs import (
     Episode,
     EpisodeRelease,
     Movie,
@@ -21,20 +21,20 @@ from hivescan.structs import (
     TMDbInfo,
     TMDbSeasonInfo,
 )
-from hivescan.tmdb_client import (
+from mediahive.hivescan.tmdb_client import (
     fetch_movie_info,
     fetch_series_info,
     fetch_season_details,
 )
 
-from hivescan.models import ContentType, ParsedContent
-from hivescan.scanning import find_cover_image, find_episode_files, find_playable_file
-from hivescan.images import (
+from mediahive.hivescan.models import ContentType, ParsedContent
+from mediahive.hivescan.scanning import find_cover_image, find_episode_files, find_playable_file
+from mediahive.hivescan.images import (
     download_cover_image,
     download_backdrop_image,
     download_season_poster,
 )
-from hivescan.utils import (
+from mediahive.hivescan.utils import (
     get_added_timestamp,
     get_directory_size,
     get_media_folder_path,
@@ -739,3 +739,4 @@ async def _process_series(
             seasons=seasons_data,
         )
         yield series, ep_reel_tasks
+

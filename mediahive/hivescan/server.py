@@ -24,20 +24,20 @@ from fastapi.middleware.cors import CORSMiddleware
 
 import msgspec
 from aiopathlib import AsyncPath
-from hivescan.index_store import IndexStore
-from hivescan.indexer import _process_movies, _process_series
-from hivescan.structs import MsgspecResponse, ScanRequest, StatusResponse, TaskInfo
-from hivescan.models import ContentType, ParsedContent
-from hivescan.parsing import parse_download
-from hivescan.scanning import categorize_downloads
-from hivescan.showreel import (
+from mediahive.hivescan.index_store import IndexStore
+from mediahive.hivescan.indexer import _process_movies, _process_series
+from mediahive.hivescan.structs import MsgspecResponse, ScanRequest, StatusResponse, TaskInfo
+from mediahive.hivescan.models import ContentType, ParsedContent
+from mediahive.hivescan.parsing import parse_download
+from mediahive.hivescan.scanning import categorize_downloads
+from mediahive.hivescan.showreel import (
     generate_episode_reel,
     generate_showreel_images,
     episode_reel_exists,
     movie_showreels_exist,
 )
-from hivescan.tmdb_client import set_cache_dir
-from hivescan.utils import DEFAULT_OUTPUT_FOLDER, find_common_root, make_relative_path
+from mediahive.hivescan.tmdb_client import set_cache_dir
+from mediahive.hivescan.utils import DEFAULT_OUTPUT_FOLDER, find_common_root, make_relative_path
 
 logger = logging.getLogger("hivescan.server")
 
@@ -45,7 +45,7 @@ logger = logging.getLogger("hivescan.server")
 # Configuration (from environment)
 # ---------------------------------------------------------------------------
 
-SCAN_PATHS: List[str] = []  # set in lifespan from HIVESCAN_PATHS
+SCAN_PATHS: List[str] = []  # set in lifespan from mediahive.hivescan_PATHS
 OUTPUT_DIR: Optional[Path] = None  # .mediahive folder
 MEDIA_ROOT: Optional[Path] = None  # parent of OUTPUT_DIR
 
@@ -409,7 +409,7 @@ async def _showreel_worker():
                 # Update the movie item with generated showreel paths
                 if item_id in store.movies:
                     movie = store.movies[item_id]
-                    from hivescan.showreel import get_expected_showreel_paths
+                    from mediahive.hivescan.showreel import get_expected_showreel_paths
 
                     media_root_path = (
                         Path(store.media_root) if store.media_root else None
@@ -494,3 +494,4 @@ def run(host: str = "0.0.0.0", port: int = 8421):
         datefmt="%H:%M:%S",
     )
     uvicorn.run(app, host=host, port=port, log_level="info")
+
