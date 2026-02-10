@@ -5,6 +5,29 @@
       <component :is="Component" v-show="false" />
     </router-view>
 
+    <!-- Scanning progress debug overlay -->
+    <div v-if="activeTasks.length > 0 || !wsConnected" class="scan-debug-overlay">
+      <div v-if="!wsConnected" class="scan-debug-item scan-debug-disconnected">
+        ⚡ Reconnecting...
+      </div>
+      <div
+        v-for="task in activeTasks"
+        :key="task.id"
+        class="scan-debug-item"
+        :class="{
+          'scan-debug-done': task.status === 'completed',
+          'scan-debug-error': task.status === 'error',
+        }"
+      >
+        <span class="scan-debug-label">{{ task.id }}</span>
+        <span v-if="task.progress > 0" class="scan-debug-progress">
+          {{ Math.round(task.progress * 100) }}%
+        </span>
+        <span v-if="task.detail" class="scan-debug-detail">{{ task.detail }}</span>
+        <span class="scan-debug-status">{{ task.status }}</span>
+      </div>
+    </div>
+
     <!-- Persistent Header overlay - single instance -->
     <Header
       :current-view="currentView"
@@ -32,7 +55,7 @@
         <div class="error-icon">⚠️</div>
         <h2 class="error-title">Failed to load media index</h2>
         <p class="error-message">{{ error }}</p>
-        <button class="btn btn-primary" @click="loadIndex">
+        <button class="btn btn-primary" @click="reloadPage">
           Try Again
         </button>
       </div>
@@ -57,6 +80,7 @@
             <!-- Hero for movies -->
             <CollageHero
               v-if="movieCollageItems.length > 0"
+              :key="`movie-hero-${movieCollageItems.length}-${movieFeaturedItem?.id || 'none'}`"
               :items="movieCollageItems"
               :featured-item="movieFeaturedItem"
               @play="handlePlay"
@@ -83,6 +107,7 @@
             <!-- Hero for series -->
             <CollageHero
               v-if="seriesCollageItems.length > 0"
+              :key="`series-hero-${seriesCollageItems.length}-${seriesFeaturedItem?.id || 'none'}`"
               :items="seriesCollageItems"
               :featured-item="seriesFeaturedItem"
               @play="handlePlay"
@@ -113,6 +138,7 @@
         <template v-if="searchResults.length > 0">
           <!-- Hero with all results ranked by relevance -->
           <CollageHero
+            :key="`search-hero-${searchCollageItems.length}-${searchFeaturedItem?.id || 'none'}`"
             :items="searchCollageItems"
             :featured-item="searchFeaturedItem"
             @play="handlePlay"
@@ -152,9 +178,10 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
-import type { MediaIndex, Movie, Series, MediaItem, EpisodeWithSeries, MatchedPerson, MatchedEpisode } from './types';
-import { loadMediaIndex, playMedia, openFolder } from './api';
+import type { Movie, Series, MediaItem, EpisodeWithSeries, MatchedPerson, MatchedEpisode, TaskInfo } from './types';
+import { playMedia, openFolder } from './api';
 import { useKeyboardNavigation } from './composables/useKeyboardNavigation';
+import { useMediaWebSocket } from './composables/useMediaWebSocket';
 import Header from './components/Header.vue';
 import CollageHero from './components/CollageHero.vue';
 import MediaRow from './components/MediaRow.vue';
@@ -166,9 +193,12 @@ const { getFocusState, restoreFocusState, focusAt } = useKeyboardNavigation();
 const router = useRouter();
 const route = useRoute();
 
-const loading = ref(true);
-const error = ref<string | null>(null);
-const mediaIndex = ref<MediaIndex | null>(null);
+// WebSocket-driven media index
+const { mediaIndex, loading, error, connected: wsConnected, tasks } = useMediaWebSocket();
+
+// Active tasks for the debug overlay
+const activeTasks = computed<TaskInfo[]>(() => Array.from(tasks.value.values()));
+
 const searchResults = ref<MediaItem[]>([]);
 const isSearching = ref(false);
 
@@ -438,10 +468,11 @@ function seriesToMediaItem(series: Series): MediaItem {
 // priority: lower number = higher matching priority (movies assigned to highest priority match)
 // exclude: if item has any of these genres, it won't match this category (negative match)
 const GENRE_CATEGORIES = [
-  { name: 'Action', keywords: ['Action', 'Adventure', 'Crime'], priority: 40, exclude: [] },
+  { name: 'Action', keywords: ['Action', 'Adventure'], priority: 40, exclude: [] },
   { name: 'Comedy', keywords: ['Comedy'], priority: 30, exclude: ['Drama'] },
   { name: 'Romance', keywords: ['Romance'], priority: 20, exclude: [] },
   { name: 'Drama', keywords: ['Drama'], priority: 50, exclude: [] },
+  { name: 'Crime', keywords: ['Crime'], priority: 45, exclude: [] },
   { name: 'Thriller', keywords: ['Thriller', 'Mystery'], priority: 20, exclude: [] },
   { name: 'Horror', keywords: ['Horror'], priority: 10, exclude: [] },
   { name: 'Science Fiction', keywords: ['Science Fiction', 'Sci-Fi'], priority: 15, exclude: [] },
@@ -1049,16 +1080,8 @@ const searchFeaturedItem = computed(() => {
   return withCovers[0] || searchResults.value[0] || null;
 });
 
-async function loadIndex() {
-  loading.value = true;
-  error.value = null;
-  try {
-    mediaIndex.value = await loadMediaIndex();
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    loading.value = false;
-  }
+function reloadPage() {
+  window.location.reload();
 }
 
 async function handlePlay(filePath: string) {
@@ -1077,14 +1100,80 @@ async function handleOpenFolder(folderPath: string) {
   }
 }
 
-onMounted(() => {
-  loadIndex();
-});
+
 </script>
 
 <style scoped>
 .app {
   min-height: 100vh;
+}
+
+/* Scanning progress debug overlay */
+.scan-debug-overlay {
+  position: fixed;
+  bottom: 12px;
+  right: 12px;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  font-size: 11px;
+  max-width: 380px;
+  pointer-events: none;
+}
+
+.scan-debug-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  background: rgba(0, 0, 0, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  color: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(8px);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.scan-debug-disconnected {
+  color: #f59e0b;
+  border-color: rgba(245, 158, 11, 0.3);
+}
+
+.scan-debug-done {
+  color: #34d399;
+  border-color: rgba(52, 211, 153, 0.3);
+}
+
+.scan-debug-error {
+  color: #f87171;
+  border-color: rgba(248, 113, 113, 0.3);
+}
+
+.scan-debug-label {
+  color: rgba(255, 255, 255, 0.5);
+  flex-shrink: 0;
+}
+
+.scan-debug-progress {
+  color: #60a5fa;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.scan-debug-detail {
+  color: rgba(255, 255, 255, 0.55);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.scan-debug-status {
+  color: rgba(255, 255, 255, 0.35);
+  flex-shrink: 0;
+  margin-left: auto;
 }
 
 .empty-hero {

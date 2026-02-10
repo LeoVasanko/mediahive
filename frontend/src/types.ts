@@ -88,6 +88,7 @@ export interface Series {
   id: string;
   title: string | null;
   info: Info | null;
+  alternative_titles: string[] | null;
   newest: number | null;
   cover_path: string | null;
   backdrop_path: string | null;
@@ -153,3 +154,36 @@ export interface EpisodeWithSeries {
   series: Series;
   seasonNumber: number;
 }
+
+// Task progress info from background scanning
+export interface TaskInfo {
+  id: string;
+  status: string;
+  progress: number;
+  detail: string;
+}
+
+// WebSocket message types (matching server msgspec tagged structs)
+export interface WsInitMessage {
+  type: 'init';
+  data: { movies: Movie[]; series: Series[] };
+}
+
+export interface WsUpsertMessage {
+  type: 'upsert';
+  kind: 'movie' | 'series';
+  item: Movie | Series;
+}
+
+export interface WsRemoveMessage {
+  type: 'remove';
+  kind: 'movie' | 'series';
+  id: string;
+}
+
+export interface WsTaskMessage {
+  type: 'task';
+  data: TaskInfo;
+}
+
+export type WsMessage = WsInitMessage | WsUpsertMessage | WsRemoveMessage | WsTaskMessage;

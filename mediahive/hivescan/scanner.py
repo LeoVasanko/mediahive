@@ -5,10 +5,12 @@ All scanning logic lives here in hivescan.  Communication with the mediahive
 server happens exclusively through an async ``send`` callable that pushes
 :class:`~mediahive.models.events.ScanEvent` messages (``Upsert`` /
 ``Task``) onto an :class:`asyncio.Queue` owned by the caller.
+
+The scanner recursively walks the media root, respecting ignore patterns
+defined in ``.mediahive/scanignore`` (gitignore-style syntax).
 """
 
 import asyncio
-import glob
 import logging
 import os
 import uuid
@@ -20,6 +22,7 @@ from aiopathlib import AsyncPath
 from mediahive.hivescan.indexer import _process_movies, _process_series
 from mediahive.hivescan.models import ContentType, ParsedContent
 from mediahive.hivescan.parsing import parse_download
+from mediahive.hivescan.scanignore import ScanIgnore
 from mediahive.hivescan.scanning import categorize_downloads
 from mediahive.hivescan.showreel import (
     episode_reel_exists,
@@ -31,7 +34,6 @@ from mediahive.hivescan.showreel import (
 from mediahive.hivescan.tmdb_client import set_cache_dir
 from mediahive.hivescan.utils import (
     DEFAULT_OUTPUT_FOLDER,
-    find_common_root,
     make_relative_path,
 )
 from mediahive.models.data import Movie, Series, TaskInfo
@@ -47,9 +49,9 @@ Send = Callable[[ScanEvent], Awaitable[None]]
 # Configuration (populated by ``start``)
 # ---------------------------------------------------------------------------
 
-_scan_paths: List[str] = []
 _output_dir: Optional[Path] = None
 _media_root: Optional[Path] = None
+_scanignore: Optional[ScanIgnore] = None
 
 # Runtime state
 _send: Optional[Send] = None
@@ -69,49 +71,31 @@ async def start(send: Send) -> None:
     """
     Initialise and start the scanner.
 
-    Reads ``HIVESCAN_PATHS`` / ``HIVESCAN_OUTPUT`` from the environment,
-    expands globs, sets up the TMDb cache, and starts background workers.
+    Reads ``MEDIAHIVE_PATH`` from the environment, loads the scanignore
+    rules from ``.mediahive/scanignore``, and starts background workers
+    that recursively walk the media root.
     """
-    global _send, _output_dir, _media_root, _scan_paths
+    global _send, _output_dir, _media_root, _scanignore
     global _showreel_worker_task, _rescan_worker_task
 
     _send = send
 
-    raw_paths = os.environ.get("HIVESCAN_PATHS", "")
-    if not raw_paths:
-        logger.error("HIVESCAN_PATHS environment variable must be set")
+    media_path = os.environ.get("MEDIAHIVE_PATH", "")
+    if not media_path:
+        logger.error("MEDIAHIVE_PATH environment variable must be set")
         return
 
-    all_paths: List[Path] = []
-    for pattern in raw_paths.split(os.pathsep):
-        pattern = pattern.strip()
-        if not pattern:
-            continue
-        expanded = await asyncio.to_thread(glob.glob, pattern)
-        if expanded:
-            all_paths.extend(Path(p) for p in expanded)
-        else:
-            all_paths.append(Path(pattern))
-
-    _scan_paths = [str(p) for p in all_paths]
-
-    if os.environ.get("HIVESCAN_OUTPUT"):
-        _output_dir = Path(os.environ["HIVESCAN_OUTPUT"])
-        _media_root = _output_dir.parent
-    else:
-        _media_root = await find_common_root(all_paths)
-        if _media_root is None:
-            logger.error("Cannot determine common root; set HIVESCAN_OUTPUT")
-            return
-        _output_dir = _media_root / DEFAULT_OUTPUT_FOLDER
+    _media_root = Path(media_path).resolve()
+    _output_dir = _media_root / DEFAULT_OUTPUT_FOLDER
+    _scanignore = ScanIgnore(_media_root)
 
     await AsyncPath(_output_dir).mkdir(parents=True, exist_ok=True)
     set_cache_dir(_output_dir / ".tmdb-cache")
 
     logger.info(
-        "Scanner started — %d scan paths, output=%s",
-        len(_scan_paths),
-        _output_dir,
+        "Scanner started — root=%s, scanignore=%s",
+        _media_root,
+        "loaded" if _scanignore.file_path.exists() else "defaults only",
     )
 
     _showreel_worker_task = asyncio.create_task(_showreel_worker())
@@ -133,11 +117,11 @@ def showreel_queue_size() -> int:
     return _showreel_queue.qsize()
 
 
-def trigger_scan(paths: Optional[List[str]] = None) -> bool:
+def trigger_scan() -> bool:
     """Start a scan. Returns False if one is already running."""
     if is_scanning():
         return False
-    _start_scan(paths)
+    _start_scan()
     return True
 
 
@@ -146,9 +130,9 @@ def trigger_scan(paths: Optional[List[str]] = None) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _start_scan(paths: Optional[List[str]] = None):
+def _start_scan():
     global _scan_task
-    _scan_task = asyncio.create_task(_run_scan(paths))
+    _scan_task = asyncio.create_task(_run_scan())
 
 
 async def _rescan_loop():
@@ -157,85 +141,203 @@ async def _rescan_loop():
             _start_scan()
             if _scan_task:
                 await _scan_task
-            await asyncio.sleep(1)
+            await asyncio.sleep(30)
     except asyncio.CancelledError:
         return
     except Exception:
         logger.exception("Rescan loop error")
 
 
-async def _discover_downloads(paths_to_scan: List[str]) -> List[ParsedContent]:
-    """Walk the filesystem and parse all downloads, skipping unchanged torrents."""
+async def _discover_downloads(task_id: str) -> List[ParsedContent]:
+    """Recursively walk the media root, respecting scanignore rules.
+
+    Each non-ignored **leaf directory** (a directory whose children are only
+    files, i.e. a single download/torrent folder) and each non-ignored
+    top-level file is treated as a download to parse.
+
+    Sends live task progress so the user can see which directories are being
+    explored and how many items have been found so far.
+    """
     downloads: List[ParsedContent] = []
     media_root_str = str(_media_root) if _media_root else None
-    for pattern in paths_to_scan:
-        p = Path(pattern)
-        ap = AsyncPath(p)
-        if await ap.is_dir():
-            for item in ap.iterdir():
-                if not Path(item).name.startswith("."):
-                    relpath = make_relative_path(str(item), media_root_str)
-                    stat_info = await AsyncPath(item).stat()
-                    mtime = int(stat_info.st_mtime)
-                    if relpath in _seen_mtimes and _seen_mtimes[relpath] == mtime:
-                        continue
-                    _seen_mtimes[relpath] = mtime
-                    downloads.append(await parse_download(Path(item)))
-        elif await ap.exists():
-            relpath = make_relative_path(str(p), media_root_str)
-            stat_info = await ap.stat()
-            mtime = int(stat_info.st_mtime)
-            if relpath in _seen_mtimes and _seen_mtimes[relpath] == mtime:
-                continue
-            _seen_mtimes[relpath] = mtime
-            downloads.append(await parse_download(p))
-    return downloads
+    dirs_visited = 0
 
-
-async def _run_scan(override_paths: Optional[List[str]] = None):
-    """
-    Full scan pipeline:
-      1. Walk filesystem, parse torrents
-      2. Categorise → movies / series
-      3. Iterate async generators, send each item as Upsert
-      4. Queue showreel tasks
-    """
-    task_id = f"scan-{uuid.uuid4().hex[:8]}"
-    paths_to_scan = override_paths or _scan_paths
-    media_root_str = str(_media_root) if _media_root else None
-
-    try:
-        downloads = await _discover_downloads(paths_to_scan)
-
-        if downloads:
-            logger.info("Scan started (%s)", task_id)
-            await _send(
-                Task(
-                    data=TaskInfo(
-                        id=task_id,
-                        status="running",
-                        progress=0,
-                        detail="Scanning filesystem...",
-                    )
-                )
-            )
-            logger.info("Found %d items to process", len(downloads))
-
-        categories = categorize_downloads(downloads)
-        total = len(categories[ContentType.MOVIE]) + len(categories[ContentType.SERIES])
-        processed = 0
-
-        # Process movies
+    async def _report(detail: str) -> None:
         await _send(
             Task(
                 data=TaskInfo(
                     id=task_id,
                     status="running",
                     progress=0,
-                    detail="Processing movies...",
+                    detail=detail,
                 )
             )
         )
+
+    async def _walk(directory: Path) -> None:
+        nonlocal dirs_visited
+        ap = AsyncPath(directory)
+        if not await ap.is_dir():
+            return
+
+        has_child_dirs = False
+        child_dirs: list[Path] = []
+        child_files: list[Path] = []
+
+        try:
+            for item_async in ap.iterdir():
+                item = Path(item_async)
+                if item.name.startswith("."):
+                    continue
+                if _scanignore and _scanignore.is_excluded(item):
+                    continue
+
+                if await AsyncPath(item).is_dir():
+                    has_child_dirs = True
+                    child_dirs.append(item)
+                else:
+                    child_files.append(item)
+        except OSError, PermissionError:
+            logger.debug("Cannot list directory: %s", directory)
+            return
+
+        if has_child_dirs:
+            # Branch directory — log it and recurse into subdirectories
+            dirs_visited += 1
+            rel = make_relative_path(str(directory), media_root_str) or str(directory)
+            if dirs_visited % 5 == 1:  # throttle progress updates
+                await _report(f"Scanning: {rel} ({len(downloads)} found)")
+                logger.info("Scanning: %s (%d found so far)", rel, len(downloads))
+            for child in child_dirs:
+                await _walk(child)
+                # Yield control periodically so WS messages flush
+                await asyncio.sleep(0)
+        else:
+            # Leaf directory — treat the directory itself as a download
+            relpath = make_relative_path(str(directory), media_root_str)
+            try:
+                stat_info = await ap.stat()
+                mtime = int(stat_info.st_mtime)
+            except OSError:
+                return
+            if relpath in _seen_mtimes and _seen_mtimes[relpath] == mtime:
+                return
+            _seen_mtimes[relpath] = mtime
+            downloads.append(await parse_download(directory))
+
+    # Walk immediate children of the media root (skip root itself)
+    logger.info("Starting filesystem discovery at %s", _media_root)
+    await _report(f"Scanning: {_media_root}")
+
+    root_ap = AsyncPath(_media_root)
+    try:
+        root_children = list(root_ap.iterdir())
+    except OSError, PermissionError:
+        logger.error("Cannot list media root: %s", _media_root)
+        return downloads
+
+    for item_async in root_children:
+        item = Path(item_async)
+        if item.name.startswith("."):
+            continue
+        if _scanignore and _scanignore.is_excluded(item):
+            logger.debug("Excluded: %s", item.name)
+            continue
+        if await AsyncPath(item).is_dir():
+            await _walk(item)
+        else:
+            # Top-level file — parse directly
+            relpath = make_relative_path(str(item), media_root_str)
+            try:
+                stat_info = await AsyncPath(item).stat()
+                mtime = int(stat_info.st_mtime)
+            except OSError:
+                continue
+            if relpath in _seen_mtimes and _seen_mtimes[relpath] == mtime:
+                continue
+            _seen_mtimes[relpath] = mtime
+            downloads.append(await parse_download(item))
+
+    logger.info(
+        "Discovery complete: %d downloads found, %d directories visited",
+        len(downloads),
+        dirs_visited,
+    )
+    return downloads
+
+
+async def _run_scan():
+    """
+    Full scan pipeline:
+      1. Recursively walk media root (respecting scanignore) — with live progress
+      2. Categorise → movies / series
+      3. Iterate async generators, send each item as Upsert
+      4. Queue showreel tasks
+    """
+    task_id = f"scan-{uuid.uuid4().hex[:8]}"
+    media_root_str = str(_media_root) if _media_root else None
+
+    try:
+        logger.info("Scan started (%s)", task_id)
+        await _send(
+            Task(
+                data=TaskInfo(
+                    id=task_id,
+                    status="running",
+                    progress=0,
+                    detail="Starting scan...",
+                )
+            )
+        )
+
+        downloads = await _discover_downloads(task_id)
+
+        if not downloads:
+            logger.info("No new downloads found (%s)", task_id)
+            await _send(
+                Task(
+                    data=TaskInfo(
+                        id=task_id,
+                        status="completed",
+                        progress=1,
+                        detail="No new items",
+                    )
+                )
+            )
+            return
+
+        logger.info("Found %d items to process", len(downloads))
+        await _send(
+            Task(
+                data=TaskInfo(
+                    id=task_id,
+                    status="running",
+                    progress=0,
+                    detail=f"Processing {len(downloads)} items...",
+                )
+            )
+        )
+
+        categories = categorize_downloads(downloads)
+        n_movies = len(categories[ContentType.MOVIE])
+        n_series = len(categories[ContentType.SERIES])
+        total = n_movies + n_series
+        processed = 0
+
+        logger.info("Categorised: %d movies, %d series", n_movies, n_series)
+
+        # Process movies
+        if n_movies:
+            await _send(
+                Task(
+                    data=TaskInfo(
+                        id=task_id,
+                        status="running",
+                        progress=0,
+                        detail=f"Processing {n_movies} movies...",
+                    )
+                )
+            )
         async for movie, showreel_task in _process_movies(
             categories,
             _output_dir,
@@ -246,6 +348,20 @@ async def _run_scan(override_paths: Optional[List[str]] = None):
             await _send(Upsert(kind="movie", item=movie))
             if showreel_task:
                 await _showreel_queue.put(("movie", showreel_task, movie))
+                logger.info(
+                    "[%d/%d] Movie: %s (showreel queued, queue=%d)",
+                    processed + 1,
+                    total,
+                    movie.title,
+                    _showreel_queue.qsize(),
+                )
+            else:
+                logger.info(
+                    "[%d/%d] Movie: %s (no showreel task)",
+                    processed + 1,
+                    total,
+                    movie.title,
+                )
             processed += 1
             progress = round(processed / total, 3) if total else 1
             await _send(
@@ -260,16 +376,17 @@ async def _run_scan(override_paths: Optional[List[str]] = None):
             )
 
         # Process series
-        await _send(
-            Task(
-                data=TaskInfo(
-                    id=task_id,
-                    status="running",
-                    progress=processed / total if total else 0.5,
-                    detail="Processing series...",
+        if n_series:
+            await _send(
+                Task(
+                    data=TaskInfo(
+                        id=task_id,
+                        status="running",
+                        progress=processed / total if total else 0.5,
+                        detail=f"Processing {n_series} series...",
+                    )
                 )
             )
-        )
         async for series, ep_reel_tasks in _process_series(
             categories,
             _output_dir,
@@ -280,6 +397,22 @@ async def _run_scan(override_paths: Optional[List[str]] = None):
             await _send(Upsert(kind="series", item=series))
             for task in ep_reel_tasks:
                 await _showreel_queue.put(("episode", task, series))
+            if ep_reel_tasks:
+                logger.info(
+                    "[%d/%d] Series: %s (%d episode reels queued, queue=%d)",
+                    processed + 1,
+                    total,
+                    series.title,
+                    len(ep_reel_tasks),
+                    _showreel_queue.qsize(),
+                )
+            else:
+                logger.info(
+                    "[%d/%d] Series: %s (no reel tasks)",
+                    processed + 1,
+                    total,
+                    series.title,
+                )
             processed += 1
             progress = round(processed / total, 3) if total else 1
             await _send(
@@ -299,12 +432,17 @@ async def _run_scan(override_paths: Optional[List[str]] = None):
                     id=task_id,
                     status="completed",
                     progress=1,
-                    detail="Scan complete",
+                    detail=f"Done — {n_movies} movies, {n_series} series",
                 )
             )
         )
-        if downloads:
-            logger.info("Scan complete (%s)", task_id)
+        logger.info(
+            "Scan complete (%s): %d movies, %d series, showreel queue=%d",
+            task_id,
+            n_movies,
+            n_series,
+            _showreel_queue.qsize(),
+        )
 
     except asyncio.CancelledError:
         await _send(
@@ -347,11 +485,20 @@ async def _showreel_worker():
         try:
             kind, task_data, item = await _showreel_queue.get()
             task_id = f"showreel-{uuid.uuid4().hex[:8]}"
+            remaining = _showreel_queue.qsize()
 
             if kind == "movie":
                 movie: Movie = item
                 video_path, media_folder, title = task_data
+                logger.info(
+                    "Showreel dequeued: %s (video=%s, folder=%s, %d remaining)",
+                    title,
+                    video_path,
+                    media_folder,
+                    remaining,
+                )
                 if await movie_showreels_exist(media_folder):
+                    logger.info("Showreel skipped (already exists): %s", title)
                     _showreel_queue.task_done()
                     continue
                 await _send(
@@ -364,32 +511,61 @@ async def _showreel_worker():
                         )
                     )
                 )
-                await generate_showreel_images(video_path, media_folder, title=title)
-                paths = get_expected_showreel_paths(
-                    media_folder, media_root=media_root_path
+                generated = await generate_showreel_images(
+                    video_path,
+                    media_folder,
+                    title=title,
                 )
-                movie.showreel_images = paths if paths else None
-                await _send(Upsert(kind="movie", item=movie))
-                await _send(
-                    Task(
-                        data=TaskInfo(
-                            id=task_id,
-                            status="completed",
-                            progress=1,
-                            detail=f"Showreel: {title}",
+                if generated:
+                    paths = get_expected_showreel_paths(
+                        media_folder, media_root=media_root_path
+                    )
+                    movie.showreel_images = paths if paths else None
+                    await _send(Upsert(kind="movie", item=movie))
+                    await _send(
+                        Task(
+                            data=TaskInfo(
+                                id=task_id,
+                                status="completed",
+                                progress=1,
+                                detail=f"Showreel: {title} ({len(generated)} reels)",
+                            )
                         )
                     )
-                )
+                else:
+                    logger.warning("Showreel generation returned nothing: %s", title)
+                    await _send(
+                        Task(
+                            data=TaskInfo(
+                                id=task_id,
+                                status="error",
+                                progress=0,
+                                detail=f"Showreel failed: {title}",
+                            )
+                        )
+                    )
 
             elif kind == "episode":
                 series: Series = item
                 video_path, media_folder, season_num, episode_num, series_title = (
                     task_data
                 )
+                ep_code = f"S{season_num:02d}E{episode_num:02d}"
+                logger.info(
+                    "Episode reel dequeued: %s %s (video=%s, %d remaining)",
+                    series_title,
+                    ep_code,
+                    video_path,
+                    remaining,
+                )
                 if await episode_reel_exists(media_folder, season_num, episode_num):
+                    logger.info(
+                        "Episode reel skipped (already exists): %s %s",
+                        series_title,
+                        ep_code,
+                    )
                     _showreel_queue.task_done()
                     continue
-                ep_code = f"S{season_num:02d}E{episode_num:02d}"
                 await _send(
                     Task(
                         data=TaskInfo(
@@ -416,16 +592,32 @@ async def _showreel_worker():
                                         media_root_str,
                                     )
                     await _send(Upsert(kind="series", item=series))
-                await _send(
-                    Task(
-                        data=TaskInfo(
-                            id=task_id,
-                            status="completed",
-                            progress=1,
-                            detail=f"Reel: {series_title} {ep_code}",
+                    await _send(
+                        Task(
+                            data=TaskInfo(
+                                id=task_id,
+                                status="completed",
+                                progress=1,
+                                detail=f"Reel: {series_title} {ep_code}",
+                            )
                         )
                     )
-                )
+                else:
+                    logger.warning(
+                        "Episode reel generation failed: %s %s",
+                        series_title,
+                        ep_code,
+                    )
+                    await _send(
+                        Task(
+                            data=TaskInfo(
+                                id=task_id,
+                                status="error",
+                                progress=0,
+                                detail=f"Reel failed: {series_title} {ep_code}",
+                            )
+                        )
+                    )
 
             _showreel_queue.task_done()
 
@@ -433,7 +625,9 @@ async def _showreel_worker():
             logger.info("Showreel worker shutting down")
             return
         except Exception:
-            logger.exception("Showreel worker error")
+            logger.exception(
+                "Showreel worker error (queue size=%d)", _showreel_queue.qsize()
+            )
             try:
                 _showreel_queue.task_done()
             except ValueError:

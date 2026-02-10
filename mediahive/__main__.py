@@ -12,8 +12,6 @@ def main():
     parser = argparse.ArgumentParser(
         description="MediaHive - Media scanning, indexing, and streaming"
     )
-    # TODO: Accept .mediahive root folder directly from CLI.
-    # Future: use gitignore-style system (file in .mediahive folder) for path determination.
     parser.add_argument(
         "media_folder",
         nargs="?",
@@ -43,6 +41,7 @@ def main():
         print(f"Error: Folder does not exist: {mediaroot}")
         exit(1)
     os.environ["MEDIAHIVE_PATH"] = mediaroot.as_posix()
+
     dev = {"reload": True, "reload_dirs": ["mediahive"]}
     server.run(
         "mediahive.server:app",

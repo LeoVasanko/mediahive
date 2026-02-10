@@ -77,6 +77,7 @@ class Series(msgspec.Struct):
     id: str
     title: str | None = None
     info: Info | None = None
+    alternative_titles: list[str] | None = None
     newest: int | None = None
     cover_path: str | None = None
     backdrop_path: str | None = None

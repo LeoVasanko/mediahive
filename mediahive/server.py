@@ -1,8 +1,9 @@
 """
 FastAPI server for MediaHive.
 
-Serves media files, the Vue frontend, and — when ``HIVESCAN_PATHS`` is set —
-also runs the continuous scanning pipeline with live WebSocket updates.
+Serves media files, the Vue frontend, and runs the continuous scanning
+pipeline with live WebSocket updates.  Excluded paths are controlled by
+``.mediahive/scanignore`` (gitignore-style syntax).
 """
 
 import asyncio
@@ -27,7 +28,6 @@ from mediahive.models.protocol import (
     MsgspecResponse,
     PlayMediaRequest,
     OpenFolderRequest,
-    ScanRequest,
     StatusResponse,
 )
 
@@ -95,26 +95,22 @@ async def lifespan(app: FastAPI):
         len(store.series),
     )
 
-    # If scan paths are configured, start the scanner subsystem
-    if os.environ.get("HIVESCAN_PATHS"):
-        from mediahive.hivescan.scanner import (
-            start as start_scanner,
-            stop as stop_scanner,
-        )
+    # Start the scanner subsystem
+    from mediahive.hivescan.scanner import (
+        start as start_scanner,
+        stop as stop_scanner,
+    )
 
-        _consumer_task = asyncio.create_task(_consume_scan_events())
-        await start_scanner(_send_event)
-        _scanner_active = True
+    _consumer_task = asyncio.create_task(_consume_scan_events())
+    await start_scanner(_send_event)
+    _scanner_active = True
 
     yield
 
     # Shutdown
-    if _scanner_active:
-        from mediahive.hivescan.scanner import stop as stop_scanner
-
-        await stop_scanner()
-        if _consumer_task:
-            _consumer_task.cancel()
+    await stop_scanner()
+    if _consumer_task:
+        _consumer_task.cancel()
     await store.flush_snapshot()
 
 
@@ -174,19 +170,13 @@ async def ws_endpoint(ws: WebSocket):
 
 
 @app.post("/api/scan")
-async def trigger_scan(request: Request):
+async def trigger_scan():
     """Trigger a new scan. Returns 409 if a scan is already running."""
     if not _scanner_active:
-        raise HTTPException(status_code=503, detail="Scanner not configured")
+        raise HTTPException(status_code=503, detail="Scanner not active yet")
     from mediahive.hivescan.scanner import trigger_scan as _trigger
 
-    body_bytes = await request.body()
-    req = (
-        msgspec.json.decode(body_bytes, type=ScanRequest)
-        if body_bytes
-        else ScanRequest()
-    )
-    started = _trigger(req.paths if req.paths else None)
+    started = _trigger()
     return {"status": "started" if started else "already_running"}
 
 

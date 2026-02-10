@@ -541,6 +541,9 @@ async def generate_showreel_images(
         List of relative paths to generated showreel video clips
     """
     if not video_path:
+        logger.warning(
+            "    Showreel: no video path provided for %s", title or "unknown"
+        )
         return []
 
     # Handle Blu-ray disc structures using bluray: protocol
@@ -549,6 +552,7 @@ async def generate_showreel_images(
         ffmpeg_input = bluray_uri
     else:
         if not await AsyncPath(video_path).exists():
+            logger.warning("    Showreel: video file does not exist: %s", video_path)
             return []
         ffmpeg_input = video_path
 
@@ -582,6 +586,12 @@ async def generate_showreel_images(
         if duration > 60:
             valid_timestamps = [int(duration / 2) - 5]  # Center the 10s clip
         else:
+            logger.warning(
+                "    Showreel: video too short (%.0fs) for %s: %s",
+                duration,
+                title or "unknown",
+                video_path,
+            )
             return []
 
     # Get the best available AV1 encoder
@@ -659,13 +669,26 @@ async def generate_showreel_images(
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            await asyncio.wait_for(proc.communicate(), timeout=120)
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
 
             if proc.returncode == 0 and await AsyncPath(output_path).exists():
                 generated_paths.append(str(output_path))
+                logger.info(
+                    "    Showreel reel%d generated for %s",
+                    reel_num,
+                    title or "unknown",
+                )
                 if on_progress:
                     on_progress(reel_num)
             else:
+                stderr_text = stderr.decode(errors="replace").strip() if stderr else ""
+                logger.error(
+                    "    Showreel reel%d failed (rc=%s) for %s: %s",
+                    reel_num,
+                    proc.returncode,
+                    title or "unknown",
+                    stderr_text[:500] if stderr_text else "(no output)",
+                )
                 await AsyncPath(output_path).unlink(missing_ok=True)
                 # Abort remaining reels - if first one fails, others likely will too
                 break
@@ -681,6 +704,16 @@ async def generate_showreel_images(
             )
             # Abort remaining reels
             break
+
+    if generated_paths:
+        logger.info(
+            "    Showreel complete for %s: %d/%d reels",
+            title or "unknown",
+            len(generated_paths),
+            len(valid_timestamps),
+        )
+    else:
+        logger.warning("    Showreel: no reels generated for %s", title or "unknown")
 
     return generated_paths
 
@@ -707,7 +740,9 @@ async def generate_episode_reel(
     Returns:
         Relative path to generated image, or None if failed
     """
+    ep_code = f"S{season_num:02d}E{episode_num:02d}"
     if not video_path:
+        logger.warning("    Episode reel: no video path for %s", ep_code)
         return None
 
     # Handle Blu-ray disc structures using bluray: protocol
@@ -716,13 +751,16 @@ async def generate_episode_reel(
         ffmpeg_input = bluray_uri
     else:
         if not await AsyncPath(video_path).exists():
+            logger.warning(
+                "    Episode reel: file not found for %s: %s", ep_code, video_path
+            )
             return None
         ffmpeg_input = video_path
 
     await AsyncPath(media_folder).mkdir(parents=True, exist_ok=True)
 
     # Normalize episode code to SxxExx format
-    output_filename = f"S{season_num:02d}E{episode_num:02d}.webm"
+    output_filename = f"{ep_code}.webm"
     output_path = media_folder / output_filename
 
     # Skip if already exists
@@ -732,6 +770,9 @@ async def generate_episode_reel(
     # Check video duration
     duration = await get_video_duration(ffmpeg_input)
     if duration is None:
+        logger.warning(
+            "    Episode reel: could not get duration for %s: %s", ep_code, video_path
+        )
         return None
 
     # Use 40% of total length for the clip start
@@ -801,17 +842,24 @@ async def generate_episode_reel(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        await asyncio.wait_for(proc.communicate(), timeout=120)
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
 
         if proc.returncode == 0 and await AsyncPath(output_path).exists():
+            logger.info("    Episode reel generated: %s", ep_code)
             return str(output_path)
         else:
+            stderr_text = stderr.decode(errors="replace").strip() if stderr else ""
+            logger.error(
+                "    Episode reel %s failed (rc=%s): %s",
+                ep_code,
+                proc.returncode,
+                stderr_text[:500] if stderr_text else "(no output)",
+            )
             await AsyncPath(output_path).unlink(missing_ok=True)
             return None
     except BaseException as e:
         await AsyncPath(output_path).unlink(missing_ok=True)
         if isinstance(e, (KeyboardInterrupt, SystemExit, asyncio.CancelledError)):
             raise
-        episode_code = f"S{season_num:02d}E{episode_num:02d}"
-        logger.error("Error generating episode reel for %s: %s", episode_code, e)
+        logger.error("Error generating episode reel for %s: %s", ep_code, e)
         return None

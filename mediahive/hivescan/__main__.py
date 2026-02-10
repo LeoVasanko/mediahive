@@ -1,11 +1,7 @@
 import argparse
-import asyncio
-import glob
 import logging
 import os
 from pathlib import Path
-
-from mediahive.hivescan.utils import find_common_root
 
 
 def main():
@@ -14,10 +10,11 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python -m mediahive.hivescan /path/to/torrents/*              # Scan paths, auto-detect common root
-  python -m mediahive.hivescan /mnt/disk1/* /mnt/disk2/*        # Scan multiple locations
-  python -m mediahive.hivescan /torrents/* -o /srv/media        # Override output directory
-  python -m mediahive.hivescan /torrents/* --port 9000          # Custom port
+  python -m mediahive.hivescan /srv/media              # Scan a media root
+  python -m mediahive.hivescan Z:\\                     # Windows drive
+  python -m mediahive.hivescan /srv/media --port 9000  # Custom port
+
+Exclude paths by creating .mediahive/scanignore (gitignore syntax).
 
 The server exposes:
   WS   /ws          Live index updates & task progress
@@ -27,15 +24,8 @@ The server exposes:
         """,
     )
     parser.add_argument(
-        "paths",
-        nargs="+",
-        help="Folders or glob patterns to scan for downloads",
-    )
-    parser.add_argument(
-        "-o",
-        "--output-dir",
-        metavar="DIR",
-        help="Output directory for index and covers (default: .mediahive at common root)",
+        "media_folder",
+        help="Root folder to scan recursively",
     )
     parser.add_argument(
         "--host",
@@ -51,33 +41,12 @@ The server exposes:
 
     args = parser.parse_args()
 
-    # TODO: Take .mediahive root folder from CLI directly.
-    # Future: use gitignore-style system (file in .mediahive folder) for path determination.
+    media_root = Path(args.media_folder).resolve()
+    if not media_root.exists() or not media_root.is_dir():
+        print(f"Error: Folder does not exist: {media_root}")
+        exit(1)
 
-    # Derive media_root only if no explicit output-dir is given
-    if args.output_dir:
-        media_root = Path(args.output_dir).parent.resolve()
-    else:
-        # Expand globs once to find common root
-        all_paths: list[Path] = []
-        for pattern in args.paths:
-            expanded = glob.glob(pattern)
-            if expanded:
-                all_paths.extend(Path(p) for p in expanded)
-            else:
-                all_paths.append(Path(pattern))
-
-        media_root = asyncio.run(find_common_root(all_paths))
-        if media_root is None:
-            print("Error: Cannot determine common root; use -o to set output directory")
-            exit(1)
-        media_root = media_root.resolve()
-
-    # Configure environment - scanner will re-expand patterns from HIVESCAN_PATHS
     os.environ["MEDIAHIVE_PATH"] = str(media_root)
-    os.environ["HIVESCAN_PATHS"] = os.pathsep.join(args.paths)
-    if args.output_dir:
-        os.environ["HIVESCAN_OUTPUT"] = args.output_dir
 
     logging.basicConfig(
         level=logging.INFO,
