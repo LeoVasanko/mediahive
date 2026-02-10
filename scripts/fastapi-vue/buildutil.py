@@ -31,7 +31,7 @@ def _check_node_version(node_path: str) -> None:
     """
     try:
         result = subprocess.run(
-            [node_path, "--version"], capture_output=True, encoding="utf-8", check=True
+            [node_path, "--version"], capture_output=True, text=True, check=True
         )
         version_str = result.stdout.strip()
         # Parse version like "v20.10.0" or "v18.17.1"
