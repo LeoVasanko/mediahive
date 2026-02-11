@@ -156,7 +156,7 @@ async def get_index():
 # ---------------------------------------------------------------------------
 
 
-@app.websocket("/ws")
+@app.websocket("/api/ws")
 async def ws_endpoint(ws: WebSocket):
     """Live index updates and task progress."""
     await store.connect(ws)

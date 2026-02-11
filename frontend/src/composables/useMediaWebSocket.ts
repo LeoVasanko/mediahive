@@ -120,7 +120,7 @@ export function useMediaWebSocket() {
 
     // Build WS URL relative to current page
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const url = `${proto}//${location.host}/ws`;
+    const url = `${proto}//${location.host}/api/ws`;
 
     console.log(`[WS] Connecting to ${url}...`);
     ws = new WebSocket(url);
