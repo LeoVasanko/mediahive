@@ -6,7 +6,7 @@ from pathlib import Path
 from fastapi_vue import server
 
 DEFAULT_PORT = 8420
-DEVMODE = bool(os.getenv("MEDIAHIVE_FRONTEND_URL"))
+DEVMODE = os.getenv("MEDIAHIVE_DEV") == "1"
 
 
 def resolve_media_root(path: str | None = None) -> Path:
