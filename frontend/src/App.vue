@@ -764,7 +764,7 @@ function formatMatchedPeople(people: PersonMatch[]): MatchedPerson[] {
 let searchTimeout: ReturnType<typeof setTimeout> | null = null;
 const MAX_RESULTS = 100;
 
-// Watch for detail page entry to focus the first interactive element
+// Watch for detail page entry/exit to manage focus
 watch(selectedItem, (item, oldItem) => {
   if (item && !oldItem) {
     // Skip auto-focus if we have a specific episode to focus on (from search)
@@ -773,6 +773,25 @@ watch(selectedItem, (item, oldItem) => {
     }
     // Entering detail page - focus Play button (row 2, col 0) after transition
     focusAt(2, 0, 150);
+  } else if (!item && oldItem) {
+    // Leaving detail page (browser back, Escape, etc.) - restore focus to the item card
+    const page = currentView.value === 'series' ? 'series' : 'movies';
+    restoreFocusForPage(page);
+  }
+});
+
+// Focus search input by default on initial movies page load
+let initialFocusDone = false;
+watch([mediaIndex, currentView, searchQuery, selectedItem], ([index, view, query, item]) => {
+  if (!initialFocusDone && index && view === 'movies' && !query && !item) {
+    initialFocusDone = true;
+    // Focus search input on first movies page load
+    setTimeout(() => {
+      const searchInput = document.querySelector('.search-input') as HTMLInputElement;
+      if (searchInput) {
+        searchInput.focus();
+      }
+    }, 100);
   }
 });
 

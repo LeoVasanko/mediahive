@@ -174,15 +174,30 @@ async def _discover_downloads(task_id: str) -> List[ParsedContent]:
             )
         )
 
+    # Media container folder names (indicates the parent is a single media item)
+    MEDIA_CONTAINER_DIRS = {"BDMV", "VIDEO_TS", "HVDVD_TS"}
+    VIDEO_EXTENSIONS = {
+        ".mkv",
+        ".mp4",
+        ".avi",
+        ".m4v",
+        ".mov",
+        ".wmv",
+        ".flv",
+        ".webm",
+        ".ts",
+        ".m2ts",
+    }
+
     async def _walk(directory: Path) -> None:
         nonlocal dirs_visited
         ap = AsyncPath(directory)
         if not await ap.is_dir():
             return
 
-        has_child_dirs = False
         child_dirs: list[Path] = []
         child_files: list[Path] = []
+        is_media_container = False
 
         try:
             for item_async in ap.iterdir():
@@ -193,7 +208,9 @@ async def _discover_downloads(task_id: str) -> List[ParsedContent]:
                     continue
 
                 if await AsyncPath(item).is_dir():
-                    has_child_dirs = True
+                    # Check if this is a BluRay/DVD structure
+                    if item.name.upper() in MEDIA_CONTAINER_DIRS:
+                        is_media_container = True
                     child_dirs.append(item)
                 else:
                     child_files.append(item)
@@ -201,7 +218,20 @@ async def _discover_downloads(task_id: str) -> List[ParsedContent]:
             logger.debug("Cannot list directory: %s", directory)
             return
 
-        if has_child_dirs:
+        # If directory contains BDMV/VIDEO_TS, treat entire directory as a single download
+        if is_media_container:
+            relpath = make_relative_path(str(directory), media_root_str)
+            try:
+                stat_info = await ap.stat()
+                mtime = int(stat_info.st_mtime)
+            except OSError:
+                return
+            if relpath not in _seen_mtimes or _seen_mtimes[relpath] != mtime:
+                _seen_mtimes[relpath] = mtime
+                downloads.append(await parse_download(directory))
+            return
+
+        if child_dirs:
             # Branch directory — log it and recurse into subdirectories
             dirs_visited += 1
             rel = make_relative_path(str(directory), media_root_str) or str(directory)
@@ -212,6 +242,19 @@ async def _discover_downloads(task_id: str) -> List[ParsedContent]:
                 await _walk(child)
                 # Yield control periodically so WS messages flush
                 await asyncio.sleep(0)
+            # Also process any video files directly in this directory
+            for child_file in child_files:
+                if child_file.suffix.lower() in VIDEO_EXTENSIONS:
+                    relpath = make_relative_path(str(child_file), media_root_str)
+                    try:
+                        stat_info = await AsyncPath(child_file).stat()
+                        mtime = int(stat_info.st_mtime)
+                    except OSError:
+                        continue
+                    if relpath in _seen_mtimes and _seen_mtimes[relpath] == mtime:
+                        continue
+                    _seen_mtimes[relpath] = mtime
+                    downloads.append(await parse_download(child_file))
         else:
             # Leaf directory — treat the directory itself as a download
             relpath = make_relative_path(str(directory), media_root_str)
