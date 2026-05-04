@@ -134,6 +134,7 @@ function updateVisibility() {
 
 onMounted(() => {
   window.addEventListener('resize', updateVisibility);
+  document.addEventListener('focusin', handleDocumentFocusIn);
   // Initial visibility check after render
   nextTick(() => {
     updateVisibility();
@@ -142,7 +143,19 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.removeEventListener('resize', updateVisibility);
+  document.removeEventListener('focusin', handleDocumentFocusIn);
 });
+
+function clearHeroFocus() {
+  focusedIndex.value = null;
+}
+
+function handleDocumentFocusIn(event: FocusEvent) {
+  const target = event.target as HTMLElement | null;
+  if (!target?.closest('.collage-hero')) {
+    clearHeroFocus();
+  }
+}
 
 // Coordinate system for navigation based on actual CSS positioning:
 // Visual layout (honeycomb stagger, but sequential cols for navigation):
@@ -376,7 +389,11 @@ function handleKeyDown(e: KeyboardEvent) {
     e.stopPropagation();
     focusedIndex.value = next;
     itemRefs.value[next]?.focus({ preventScroll: true });
+    return;
   }
+
+  // Navigation is leaving this section; clear local highlight and let global handler continue.
+  clearHeroFocus();
   // If next is null, let event bubble to global navigation
 }
 
