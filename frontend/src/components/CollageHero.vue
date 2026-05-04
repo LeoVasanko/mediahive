@@ -43,8 +43,12 @@
           </div>
         <div class="collage-item-overlay"></div>
         <!-- SVG focus outline for small hex items -->
-        <svg v-if="index !== 0" class="hex-focus-outline hex-focus-small" viewBox="0 0 86.6 100" preserveAspectRatio="none">
+        <svg v-if="index !== 0 && index !== 2" class="hex-focus-outline hex-focus-small" viewBox="0 0 86.6 100" preserveAspectRatio="none">
           <polygon points="43.3,0 86.6,25 86.6,75 43.3,100 0,75 0,25" />
+        </svg>
+        <!-- Item 2 uses a custom flat-bottom hex outline to match its clip-path -->
+        <svg v-if="index === 2" class="hex-focus-outline hex-focus-small" viewBox="0 0 86.6 100" preserveAspectRatio="none">
+          <polygon points="43.3,0 86.6,33.333 86.6,100 0,100 0,33.333" />
         </svg>
         <div class="collage-item-info" v-if="index === 0">
           <h1 class="collage-title">{{ item.title }}</h1>
@@ -509,7 +513,7 @@ function handleItemClick(item: MediaItem, index: number) {
   height: 70vh;
   min-height: 450px;
   max-height: 600px;
-  overflow: hidden;
+  overflow: visible;
   background: var(--bg-primary);
   --h: clamp(450px, 70vh, 600px);
   --small-w: calc(0.433 * var(--h));  /* Small hex width = 0.866 * 50% of height */
@@ -693,6 +697,19 @@ function handleItemClick(item: MediaItem, index: number) {
 .collage-item-2 {
   top: 62.5%;
   left: 0;
+}
+
+/* Keep top hex shape for left-bottom item, but flatten bottom edge to avoid overflow */
+.collage-item.collage-item-2:not(.collage-featured) {
+  height: 37.5%;
+  width: var(--small-w);
+  clip-path: polygon(
+    50%  0%,
+    100% 33.333%,
+    100% 100%,
+    0%   100%,
+    0%   33.333%
+  );
 }
 
 /* RIGHT SIDE - Column 0 (closest to big image) */
