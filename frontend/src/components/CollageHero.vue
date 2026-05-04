@@ -6,7 +6,7 @@
         <div
           :ref="el => setItemRef(el as HTMLElement, index)"
           class="collage-item"
-          :class="[`collage-item-${index}`, { 'collage-featured': index === 0, 'nav-focused': focusedIndex === index, 'collage-hidden': !isItemVisible(index) }]"
+          :class="[`collage-item-${index}`, { 'collage-featured': index === 0, 'collage-item-top-row': isTopRowItem(index), 'nav-focused': focusedIndex === index, 'collage-hidden': !isItemVisible(index) }]"
           v-bind="getItemAttrs(index)"
           @click="handleItemClick(item, index)"
           @focus="focusedIndex = index"
@@ -43,12 +43,16 @@
           </div>
         <div class="collage-item-overlay"></div>
         <!-- SVG focus outline for small hex items -->
-        <svg v-if="index !== 0 && index !== 2" class="hex-focus-outline hex-focus-small" viewBox="0 0 86.6 100" preserveAspectRatio="none">
+        <svg v-if="index !== 0 && index !== 2 && !isTopRowItem(index)" class="hex-focus-outline hex-focus-small" viewBox="0 0 86.6 100" preserveAspectRatio="none">
           <polygon points="43.3,0 86.6,25 86.6,75 43.3,100 0,75 0,25" />
         </svg>
         <!-- Item 2 uses a custom flat-bottom hex outline to match its clip-path -->
         <svg v-if="index === 2" class="hex-focus-outline hex-focus-small" viewBox="0 0 86.6 100" preserveAspectRatio="none">
           <polygon points="43.3,0 86.6,33.333 86.6,100 0,100 0,33.333" />
+        </svg>
+        <!-- Top-row items use a custom flat-top hex outline to match their clip-path -->
+        <svg v-if="isTopRowItem(index)" class="hex-focus-outline hex-focus-small" viewBox="0 0 86.6 100" preserveAspectRatio="none">
+          <polygon points="86.6,0 86.6,66.667 43.3,100 0,66.667 0,0" />
         </svg>
         <div class="collage-item-info" v-if="index === 0">
           <h1 class="collage-title">{{ item.title }}</h1>
@@ -187,6 +191,11 @@ const coordMap: Record<number, NavCoord> = {
   25: { row: 2, col: 8 },
   26: { row: 1, col: 8 },
 };
+
+function isTopRowItem(index: number): boolean {
+  const coord = coordMap[index];
+  return index !== 0 && coord?.row === 0;
+}
 
 // Reverse lookup: find item index at given coordinates
 function findItemAt(row: number, col: number): number | null {
@@ -715,6 +724,20 @@ function handleItemClick(item: MediaItem, index: number) {
     100% 100%,
     0%   100%,
     0%   33.333%
+  );
+}
+
+/* Top-row items: keep side angles but flatten top edge to avoid top overflow */
+.collage-item.collage-item-top-row:not(.collage-featured) {
+  top: 0;
+  height: 37.5%;
+  width: var(--small-w);
+  clip-path: polygon(
+    100% 0%,
+    100% 66.667%,
+    50%  100%,
+    0%   66.667%,
+    0%   0%
   );
 }
 
