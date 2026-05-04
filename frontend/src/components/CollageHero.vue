@@ -215,7 +215,13 @@ function findNext(currentIdx: number, direction: 'up' | 'down' | 'left' | 'right
       if (leftItem !== null) {
         return leftItem;
       }
-      // Row 1 has no left item - stay put (don't exit)
+      // Row 1 has no left item - fall back to top-left tile so left side stays reachable
+      const topLeftItem = findItemAt(0, -1);
+      if (topLeftItem !== null) {
+        lastRow.value = 0;
+        return topLeftItem;
+      }
+      // No fallback available - stay put
       return 0;
     }
 
