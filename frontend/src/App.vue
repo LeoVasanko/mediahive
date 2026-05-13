@@ -219,6 +219,10 @@ interface ScoredMediaItem {
 
 const searchCategories = ref<SearchCategory[]>([]);
 
+function requestInitialFullscreen() {
+  void document.documentElement.requestFullscreen();
+}
+
 // Focus state per page for Escape navigation
 const focusStateMap = new Map<string, { row: number; col: number }>();
 // Track the last viewed item ID to restore focus to the right card
@@ -308,10 +312,12 @@ function handleEscapeKey(event: KeyboardEvent) {
 
 onMounted(() => {
   document.addEventListener('keydown', handleEscapeKey);
+  window.addEventListener('click', requestInitialFullscreen, { once: true });
 });
 
 onUnmounted(() => {
   document.removeEventListener('keydown', handleEscapeKey);
+  window.removeEventListener('click', requestInitialFullscreen);
 });
 
 // Search query stored in ref (not URL-based)

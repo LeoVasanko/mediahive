@@ -9,4 +9,10 @@ import { installGamepadNavigation } from './composables/useGamepadNavigation'
 installKeyboardNavigation()
 installGamepadNavigation()
 
+if ('serviceWorker' in navigator && !navigator.serviceWorker.controller) {
+	navigator.serviceWorker.addEventListener('controllerchange', () => {
+		window.location.reload()
+	}, { once: true })
+}
+
 createApp(App).use(router).mount('#app')
