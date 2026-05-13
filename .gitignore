@@ -14,6 +14,7 @@ mediahive/frontend-build/
 # Lockfiles (uv.lock, package-lock.json, deno.lock, bun.lockb, etc.)
 *.lock
 *.lockb
+package-lock.json
 
 # Dotfiles
 .*
