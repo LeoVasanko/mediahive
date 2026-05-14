@@ -2,6 +2,8 @@
 
 Media scanning, indexing, and Netflix-style web streaming for your torrent collection.
 
+**[Windows portable ZIP download](https://git.zi.fi/LeoVasanko/mediahive/releases)**
+
 ## Project Structure
 
 ```
