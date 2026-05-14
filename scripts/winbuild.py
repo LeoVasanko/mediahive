@@ -17,10 +17,11 @@ import io
 import shutil
 import subprocess
 import sys
-import tomllib
 import urllib.request
 import zipfile
 from pathlib import Path
+
+import setuptools_scm
 
 # BtbN automated builds always publish a 'latest' tag with this asset.
 _FFMPEG_URL = (
@@ -57,11 +58,9 @@ def fetch_ffmpeg() -> Path:
 
 
 def read_version() -> str:
-    """Read version from pyproject.toml."""
-    pyproject = Path(__file__).parent.parent / "pyproject.toml"
-    with open(pyproject, "rb") as f:
-        data = tomllib.load(f)
-    return data["project"]["version"]
+    """Read version via setuptools_scm (same logic as hatch-vcs)."""
+    repo_root = Path(__file__).parent.parent
+    return setuptools_scm.get_version(root=str(repo_root))
 
 
 def build_wheel() -> None:

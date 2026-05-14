@@ -1,6 +1,6 @@
 [project]
 name = "mediahive"
-version = "0.1.0"
+dynamic = ["version"]
 description = "MediaHive - Media scanning, indexing, and Netflix-style streaming"
 readme = "README.md"
 requires-python = ">=3.14"
@@ -21,8 +21,11 @@ dependencies = [
 mediahive = "mediahive.__main__:main"
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
 
 [tool.hatch.build]
 packages = ["mediahive"]
@@ -48,4 +51,5 @@ gui = [
 [dependency-groups]
 dev = [
     "httpx>=0.28.1",
+    "setuptools-scm>=8",
 ]

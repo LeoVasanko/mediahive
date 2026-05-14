@@ -1,6 +1,6 @@
 {
   "name": "mediahive-frontend",
-  "version": "1.0.0",
+  "version": "0.0.0",
   "description": "Netflix-style media streaming for your collection",
   "type": "module",
   "scripts": {
