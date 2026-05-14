@@ -13,6 +13,7 @@ dependencies = [
     "httpx[http2]>=0.28.1",
     "msgspec>=0.19",
     "parse-torrent-title>=2.8.1",
+    "tomli-w>=1.2.0",
     "uvicorn[standard]>=0.40.0",
 ]
 
@@ -36,6 +37,13 @@ package = true
 
 [tool.uv.sources]
 parse-torrent-title = { git = "https://github.com/platelminto/parse-torrent-title.git" }
+
+[project.optional-dependencies]
+gui = [
+    "pywebview>=6.2.1",
+    "pythonnet>=3.1.0rc0; platform_system == 'Windows' and python_version >= '3.14'",
+    "pyinstaller>=6.0",
+]
 
 [dependency-groups]
 dev = [

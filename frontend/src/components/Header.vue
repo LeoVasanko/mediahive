@@ -56,6 +56,18 @@
         @keydown.escape="handleEscape"
       />
     </div>
+
+    <div v-if="isDesktopApp" class="header-settings">
+      <button
+        class="header-settings-btn"
+        title="Change media folder"
+        @click="changeFolder"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+        </svg>
+      </button>
+    </div>
   </header>
 </template>
 
@@ -64,6 +76,7 @@ import { ref, watch, computed, onMounted, onUnmounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { navAttrs } from '../composables/useKeyboardNavigation';
 import logoUrl from '../assets/mediahive.webp';
+import { pickFolderAndRestart } from '../api';
 
 const props = defineProps<{
   currentView: 'movies' | 'series';
@@ -81,6 +94,18 @@ const emit = defineEmits<{
 const router = useRouter();
 const searchInputRef = ref<HTMLInputElement | null>(null);
 const localSearch = ref(props.searchQuery);
+
+// True only when running inside the packaged pywebview desktop app.
+// pywebview injects window.pywebview asynchronously, so we listen for the
+// 'pywebviewready' event rather than checking at component creation time.
+const isDesktopApp = ref(typeof (window as any).pywebview !== 'undefined');
+function _onPywebviewReady() { isDesktopApp.value = true; }
+window.addEventListener('pywebviewready', _onPywebviewReady, { once: true });
+onUnmounted(() => window.removeEventListener('pywebviewready', _onPywebviewReady));
+
+async function changeFolder() {
+  await pickFolderAndRestart();
+}
 
 // Check if we're on a detail page
 const isDetailPage = computed(() => {

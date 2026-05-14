@@ -21,7 +21,7 @@ def resolve_media_root(path: str | None = None) -> Path:
     mediaroot = Path(*rest).resolve()
     if not mediaroot.exists() or not mediaroot.is_dir():
         sys.stderr.write(f"Error: Folder does not exist: {mediaroot}\n")
-        exit(1)
+        sys.exit(1)
     return mediaroot
 
 

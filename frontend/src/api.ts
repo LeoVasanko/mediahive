@@ -87,3 +87,28 @@ export function getCoverUrl(coverPath: string | null): string {
 
   return `/api/media${encodedPath}`;
 }
+
+/**
+ * Invoke the native OS folder picker via pywebview, then switch the server's
+ * media folder in-place and reload the page. Only works inside the packaged
+ * desktop app.
+ */
+export async function pickFolderAndRestart(): Promise<void> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const api = (window as any).pywebview?.api;
+  if (!api) return;
+  const folder: string | null = await api.pick_folder();
+  if (!folder) return;
+  const res = await fetch('/api/change-folder', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ folder }),
+  });
+  if (res.ok) {
+    // Give the server a moment to complete the background folder switch before reloading
+    setTimeout(() => window.location.reload(), 500);
+  } else {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    alert(`Failed to change folder: ${err.detail || res.statusText}`);
+  }
+}

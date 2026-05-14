@@ -15,16 +15,26 @@ import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+# Suppress console windows when spawning subprocesses on Windows
+_POPEN_KWARGS: dict = (
+    {"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}
+)
+
 import aiofiles
 import msgspec
+import msgspec.structs
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi_vue import Frontend
 
+from mediahive.config import load_config, save_config
+from mediahive.hivescan.scanner import start as start_scanner
+from mediahive.hivescan.scanner import stop as stop_scanner
 from mediahive.index_store import IndexStore
 from mediahive.models.events import ScanEvent, Task, Upsert
 from mediahive.models.protocol import (
+    ChangeFolderRequest,
     MsgspecResponse,
     PlayMediaRequest,
     OpenFolderRequest,
@@ -145,6 +155,76 @@ async def health_check():
     return {"status": "ok"}
 
 
+@app.get("/api/config")
+async def get_config():
+    """Return current server configuration."""
+    return {"media_folder": str(MEDIAROOT) if MEDIAROOT else None}
+
+
+@app.post("/api/change-folder")
+async def change_folder_endpoint(request: Request):
+    """Switch the media root folder without restarting the server.
+
+    Validates and persists the new folder, then returns immediately.
+    The actual in-memory switch runs as a background task so the HTTP
+    response is not held up by the (potentially slow) scanner teardown.
+    The client should poll /api/config or reload after a short delay.
+    """
+    body = msgspec.json.decode(await request.body(), type=ChangeFolderRequest)
+    new_root = Path(body.folder).resolve()
+    if not new_root.exists() or not new_root.is_dir():
+        raise HTTPException(status_code=400, detail=f"Folder does not exist: {new_root}")
+
+    # Persist first — if the background switch crashes, the next launch still uses the new path
+    cfg = load_config()
+    save_config(msgspec.structs.replace(cfg, media_folder=str(new_root)))
+    logger.info("Config saved: media_folder=%s", new_root)
+
+    # Schedule the in-memory switch without blocking this response
+    asyncio.create_task(_switch_folder(new_root))
+    return {"status": "ok"}
+
+
+async def _switch_folder(new_root: Path) -> None:
+    global MEDIAROOT, store, _consumer_task, _scan_events
+
+    try:
+        # Cancel scanner tasks immediately — no need to wait 30 s
+        await stop_scanner()
+
+        # Tear down the old event consumer
+        if _consumer_task and not _consumer_task.done():
+            _consumer_task.cancel()
+            try:
+                await _consumer_task
+            except asyncio.CancelledError:
+                pass
+
+        # Flush the old index snapshot
+        if store:
+            await store.flush_snapshot()
+
+        # Update env and module globals
+        os.environ["MEDIAHIVE_PATH"] = str(new_root)
+        MEDIAROOT = new_root
+
+        # Fresh event queue — discard any stale events from the old folder
+        _scan_events = asyncio.Queue()
+
+        # Re-initialise the index store
+        snapshot_path = MEDIAROOT / ".mediahive" / "index.json"
+        store = IndexStore(snapshot_path, media_root=str(MEDIAROOT))
+        await store.load_snapshot()
+
+        # Restart consumer and scanner
+        _consumer_task = asyncio.create_task(_consume_scan_events())
+        await start_scanner(_send_event)
+
+        logger.info("Switched media folder to %s", MEDIAROOT)
+    except Exception:
+        logger.exception("Error switching media folder to %s", new_root)
+
+
 @app.get("/api/index")
 async def get_index():
     """Return the full media index from the in-memory store."""
@@ -250,10 +330,10 @@ async def open_folder(request: Request):
         if sys.platform == "win32":
             if target_path.is_file():
                 # Open parent folder and select the file
-                subprocess.Popen(["explorer", "/select,", str(target_path)])
+                subprocess.Popen(["explorer", "/select,", str(target_path)], **_POPEN_KWARGS)
             else:
                 # Open the folder directly
-                subprocess.Popen(["explorer", str(target_path)])
+                subprocess.Popen(["explorer", str(target_path)], **_POPEN_KWARGS)
         elif sys.platform == "darwin":
             if target_path.is_file():
                 subprocess.Popen(["open", "-R", str(target_path)])

@@ -79,6 +79,12 @@ class OpenFolderRequest(msgspec.Struct):
     folder_path: str = ""
 
 
+class ChangeFolderRequest(msgspec.Struct):
+    """POST /api/change-folder body."""
+
+    folder: str
+
+
 # ---------------------------------------------------------------------------
 # FastAPI response helper
 # ---------------------------------------------------------------------------

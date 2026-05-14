@@ -11,6 +11,8 @@ import json
 import logging
 import re
 import shlex
+import subprocess
+import sys
 from collections import Counter
 from pathlib import Path
 from typing import Optional
@@ -18,6 +20,13 @@ from typing import Optional
 from aiopathlib import AsyncPath
 
 logger = logging.getLogger("hivescan.showreel")
+
+# Suppress console windows when spawning subprocesses on Windows
+async def _subprocess_exec(*args, **kwargs):
+    """Wrap asyncio.create_subprocess_exec to hide console windows on Windows."""
+    if sys.platform == "win32":
+        kwargs.setdefault("creationflags", subprocess.CREATE_NO_WINDOW)
+    return await asyncio.create_subprocess_exec(*args, **kwargs)
 
 
 # Showreel timestamp positions in seconds (5, 10, 15, 20, 25 minutes)
@@ -142,7 +151,7 @@ async def get_av1_encoder() -> str:
 
     # Check for NVIDIA AV1 encoder
     try:
-        proc = await asyncio.create_subprocess_exec(
+        proc = await _subprocess_exec(
             "ffmpeg",
             "-hide_banner",
             "-encoders",
@@ -152,7 +161,7 @@ async def get_av1_encoder() -> str:
         stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
         if b"av1_nvenc" in stdout:
             # Verify it actually works (driver support)
-            test_proc = await asyncio.create_subprocess_exec(
+            test_proc = await _subprocess_exec(
                 "ffmpeg",
                 "-f",
                 "lavfi",
@@ -220,7 +229,7 @@ async def detect_dovi_profile(video_path: str) -> Optional[int]:
             video_path,
         ]
         logger.debug("    $ %s", shlex.join(cmd))
-        proc = await asyncio.create_subprocess_exec(
+        proc = await _subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -259,7 +268,7 @@ async def detect_dovi_profile(video_path: str) -> Optional[int]:
             "csv=p=0",
             video_path,
         ]
-        codec_proc = await asyncio.create_subprocess_exec(
+        codec_proc = await _subprocess_exec(
             *codec_cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -299,7 +308,7 @@ async def is_hdr_video(video_path: str) -> bool:
     Returns True if the video has HDR metadata (bt2020, SMPTE ST 2084, etc.)
     """
     try:
-        proc = await asyncio.create_subprocess_exec(
+        proc = await _subprocess_exec(
             "ffprobe",
             "-v",
             "quiet",
@@ -368,7 +377,7 @@ async def detect_crop(video_path: str) -> Optional[str]:
             video_path,
         ]
         logger.debug("    $ %s", shlex.join(dim_cmd))
-        dim_proc = await asyncio.create_subprocess_exec(
+        dim_proc = await _subprocess_exec(
             *dim_cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -409,7 +418,7 @@ async def detect_crop(video_path: str) -> Optional[str]:
             "-",
         ]
         logger.debug("    $ %s", shlex.join(cmd))
-        proc = await asyncio.create_subprocess_exec(
+        proc = await _subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -494,7 +503,7 @@ async def get_video_duration(video_path: str) -> Optional[float]:
     Get the duration of a video file in seconds using ffprobe.
     """
     try:
-        proc = await asyncio.create_subprocess_exec(
+        proc = await _subprocess_exec(
             "ffprobe",
             "-v",
             "quiet",
@@ -664,7 +673,7 @@ async def generate_showreel_images(
 
         logger.debug("    $ %s", shlex.join(cmd))
         try:
-            proc = await asyncio.create_subprocess_exec(
+            proc = await _subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -837,7 +846,7 @@ async def generate_episode_reel(
 
     logger.debug("    $ %s", shlex.join(cmd))
     try:
-        proc = await asyncio.create_subprocess_exec(
+        proc = await _subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

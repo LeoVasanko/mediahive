@@ -1,0 +1,98 @@
+# MediaHive.spec  — PyInstaller build for the Windows GUI application
+#
+# Build manually (from repo root):
+#   uv run --no-project --python 3.14 --with ".[gui]" --with pyinstaller ^
+#     pyinstaller --noconfirm --clean scripts/MediaHive.spec
+#
+# Or use the build script (recommended—handles versioning and packaging):
+#   uv run scripts/build_windows_gui.py
+
+import mediahive.winmain
+import mediahive.server
+from pathlib import Path
+
+block_cipher = None
+
+_pkg = Path(mediahive.server.__file__).parent
+_frontend_build = _pkg / "frontend-build"
+_icon = _pkg / "assets" / "mediahive.ico"
+_ffmpeg = Path(SPECPATH).parent / "build" / "ffmpeg" / "ffmpeg.exe"
+
+a = Analysis(
+    [mediahive.winmain.__file__],
+    pathex=[],
+    binaries=[
+        # Bundle ffmpeg so showreel generation works without a system install.
+        # Populated by build_windows_gui.py before PyInstaller runs.
+        (str(_ffmpeg), "."),
+    ],
+    datas=[
+        # Bundled Vue frontend served by the FastAPI backend
+        (str(_frontend_build), "mediahive/frontend-build"),
+        (str(_icon), "mediahive/assets"),
+    ],
+    hiddenimports=[
+        # uvicorn dynamic imports
+        "uvicorn.logging",
+        "uvicorn.loops",
+        "uvicorn.loops.auto",
+        "uvicorn.loops.asyncio",
+        "uvicorn.protocols",
+        "uvicorn.protocols.http",
+        "uvicorn.protocols.http.auto",
+        "uvicorn.protocols.http.h11_impl",
+        "uvicorn.protocols.websockets",
+        "uvicorn.protocols.websockets.auto",
+        "uvicorn.protocols.websockets.websockets_impl",
+        "uvicorn.lifespan",
+        "uvicorn.lifespan.on",
+        # mediahive & hivescan modules imported at runtime
+        "mediahive.server",
+        "mediahive.hivescan.scanner",
+        "mediahive.hivescan.indexer",
+        "mediahive.hivescan.scanning",
+        "mediahive.hivescan.images",
+        "mediahive.hivescan.showreel",
+        "mediahive.hivescan.tmdb_client",
+        # async / ASGI internals
+        "anyio",
+        "anyio._backends._asyncio",
+        "starlette.routing",
+        # msgspec TOML write backend
+        "tomli_w",
+    ],
+    hookspath=[],
+    runtime_hooks=[],
+    excludes=[],
+    cipher=block_cipher,
+    noarchive=False,
+)
+
+pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
+
+exe = EXE(
+    pyz,
+    a.scripts,
+    [],
+    exclude_binaries=True,
+    name="MediaHive",
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=True,
+    icon=str(_icon),
+    # windowed=True hides the console; the backend subprocess inherits this
+    console=False,
+    windowed=True,
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    name="MediaHive",
+)
