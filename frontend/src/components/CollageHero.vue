@@ -375,8 +375,9 @@ function handleKeyDown(e: KeyboardEvent) {
   if (!direction) {
     if (e.key === 'Enter' && focusedIndex.value !== null) {
       const item = collageItems.value[focusedIndex.value];
-      if (item) handleItemClick(item, focusedIndex.value);
       e.preventDefault();
+      e.stopPropagation();
+      if (item) handleItemClick(item, focusedIndex.value);
     }
     return;
   }
@@ -400,10 +401,13 @@ function handleKeyDown(e: KeyboardEvent) {
 // Get attributes for an item - only item 0 participates in global nav as entry point
 function getItemAttrs(index: number) {
   if (index === 0) {
-    // Big image is the entry point at row 0, col 0 in global nav
-    return { ...navAttrs(0, 0) };
+    // The hero always enters through the featured item when moving into row 0.
+    return { ...navAttrs(0, index, 0) };
   }
-  return { tabindex: 0 };
+
+  // All tiles participate in the global focus model so only one visual highlight exists
+  // and Enter/gamepad A targets the currently highlighted tile.
+  return { ...navAttrs(0, index) };
 }
 
 // Check if an item index should be visible based on its column and row
