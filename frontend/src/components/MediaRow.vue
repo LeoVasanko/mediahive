@@ -1,5 +1,9 @@
 <template>
-  <div class="media-row" :class="{ 'media-row-wrap': wrap }">
+  <div
+    class="media-row"
+    :class="{ 'media-row-wrap': wrap }"
+    :data-sync-scroll-row="!wrap && rowIndex !== undefined ? 'true' : undefined"
+  >
     <MediaCard
       v-for="(item, index) in items"
       :key="item.id"

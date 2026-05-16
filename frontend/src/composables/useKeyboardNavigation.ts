@@ -19,6 +19,210 @@ const FOCUSABLE_ATTR = 'data-nav-focusable';
 const ROW_ATTR = 'data-nav-row';
 const COL_ATTR = 'data-nav-col';
 const ENTRY_COL_ATTR = 'data-nav-entry-col';
+const SYNC_SCROLL_ROW_ATTR = 'data-sync-scroll-row';
+
+const SYNC_SCROLL_FIRST_CONTENT_ROW = 2;
+const SYNC_SCROLL_DEADZONE_RATIO = 0.18;
+const SYNC_SCROLL_EASING_MS = 220;
+
+let syncedRowsFrame: number | null = null;
+let syncedRowsCurrentOffset = 0;
+let syncedRowsTargetOffset = 0;
+let lastSyncedAnchorCol: number | null = null;
+let lastSyncedRowsAnimationAt: number | null = null;
+
+function getSyncedRows(): HTMLElement[] {
+  return Array.from(
+    document.querySelectorAll<HTMLElement>(`[${SYNC_SCROLL_ROW_ATTR}="true"]`)
+  );
+}
+
+function getSyncedRowMetrics(rows: HTMLElement[]) {
+  for (const row of rows) {
+    const cards = Array.from(row.querySelectorAll<HTMLElement>(`.media-card[${FOCUSABLE_ATTR}]`));
+    if (cards.length === 0) continue;
+
+    const firstRect = cards[0].getBoundingClientRect();
+    const cardWidth = firstRect.width;
+    if (cardWidth <= 0) continue;
+
+    const rowStyle = window.getComputedStyle(row);
+    const paddingLeft = parseFloat(rowStyle.paddingLeft || '0');
+    let gap = parseFloat(rowStyle.columnGap || rowStyle.gap || '0');
+
+    if (cards.length > 1) {
+      const secondRect = cards[1].getBoundingClientRect();
+      gap = Math.max(0, secondRect.left - firstRect.left - cardWidth);
+    }
+
+    return {
+      cardWidth,
+      stride: cardWidth + gap,
+      paddingLeft,
+      viewportWidth: row.clientWidth,
+    };
+  }
+
+  return null;
+}
+
+function clampRowScrollOffset(row: HTMLElement, offset: number): number {
+  const maxOffset = Math.max(0, row.scrollWidth - row.clientWidth);
+  return Math.min(Math.max(offset, 0), maxOffset);
+}
+
+function applySyncedRowScroll(offset: number, rows: HTMLElement[] = getSyncedRows()) {
+  for (const row of rows) {
+    row.scrollLeft = clampRowScrollOffset(row, offset);
+  }
+}
+
+function resetSyncedRows(immediate: boolean = false) {
+  lastSyncedAnchorCol = null;
+  syncedRowsTargetOffset = 0;
+
+  if (immediate) {
+    syncedRowsCurrentOffset = 0;
+    applySyncedRowScroll(0);
+    lastSyncedRowsAnimationAt = null;
+    stopSyncedRowAnimation();
+    return;
+  }
+
+  if (Math.abs(syncedRowsCurrentOffset) < 0.5) {
+    syncedRowsCurrentOffset = 0;
+    applySyncedRowScroll(0);
+    lastSyncedRowsAnimationAt = null;
+    stopSyncedRowAnimation();
+    return;
+  }
+
+  if (syncedRowsFrame === null) {
+    syncedRowsFrame = window.requestAnimationFrame(animateSyncedRows);
+  }
+}
+
+function stopSyncedRowAnimation() {
+  if (syncedRowsFrame !== null) {
+    window.cancelAnimationFrame(syncedRowsFrame);
+    syncedRowsFrame = null;
+  }
+  lastSyncedRowsAnimationAt = null;
+}
+
+function animateSyncedRows(now: number) {
+  const rows = getSyncedRows();
+  if (rows.length === 0) {
+    stopSyncedRowAnimation();
+    return;
+  }
+
+  const delta = syncedRowsTargetOffset - syncedRowsCurrentOffset;
+  const elapsedMs = lastSyncedRowsAnimationAt === null ? 16 : Math.max(1, now - lastSyncedRowsAnimationAt);
+  lastSyncedRowsAnimationAt = now;
+
+  const alpha = 1 - Math.exp(-elapsedMs / SYNC_SCROLL_EASING_MS);
+  syncedRowsCurrentOffset += delta * alpha;
+  applySyncedRowScroll(syncedRowsCurrentOffset, rows);
+
+  if (Math.abs(delta) < 0.5) {
+    syncedRowsCurrentOffset = syncedRowsTargetOffset;
+    applySyncedRowScroll(syncedRowsCurrentOffset, rows);
+    stopSyncedRowAnimation();
+    return;
+  }
+
+  syncedRowsFrame = window.requestAnimationFrame(animateSyncedRows);
+}
+
+function updateSyncedRowTarget(anchorCol: number) {
+  const rows = getSyncedRows();
+  if (rows.length === 0) return;
+
+  const metrics = getSyncedRowMetrics(rows);
+  if (!metrics) return;
+
+  const currentOffset = rows[0]?.scrollLeft ?? syncedRowsCurrentOffset;
+  const deadzoneInset = Math.max(
+    metrics.paddingLeft,
+    (metrics.viewportWidth - metrics.cardWidth) * SYNC_SCROLL_DEADZONE_RATIO,
+  );
+  const minVisibleLeft = deadzoneInset;
+  const maxVisibleLeft = Math.max(
+    minVisibleLeft,
+    metrics.viewportWidth - metrics.cardWidth - deadzoneInset,
+  );
+  const itemLeft = metrics.paddingLeft + anchorCol * metrics.stride;
+  const viewportLeft = itemLeft - currentOffset;
+
+  lastSyncedAnchorCol = anchorCol;
+  if (viewportLeft < minVisibleLeft) {
+    syncedRowsTargetOffset = Math.max(0, itemLeft - minVisibleLeft);
+  } else if (viewportLeft > maxVisibleLeft) {
+    syncedRowsTargetOffset = Math.max(0, itemLeft - maxVisibleLeft);
+  } else {
+    syncedRowsTargetOffset = currentOffset;
+  }
+
+  if (syncedRowsFrame === null) {
+    syncedRowsCurrentOffset = currentOffset;
+  }
+
+  if (Math.abs(syncedRowsTargetOffset - syncedRowsCurrentOffset) < 0.5) {
+    syncedRowsCurrentOffset = syncedRowsTargetOffset;
+    applySyncedRowScroll(syncedRowsCurrentOffset, rows);
+    stopSyncedRowAnimation();
+    return;
+  }
+
+  if (syncedRowsFrame === null) {
+    syncedRowsFrame = window.requestAnimationFrame(animateSyncedRows);
+  }
+}
+
+function syncRowsToElement(element: HTMLElement) {
+  const row = parseInt(element.getAttribute(ROW_ATTR) || '0', 10);
+  if (row < SYNC_SCROLL_FIRST_CONTENT_ROW) {
+    resetSyncedRows();
+    return;
+  }
+
+  const currentCol = parseInt(element.getAttribute(COL_ATTR) || '0', 10);
+  const anchorCol = desiredCol.value ?? currentCol;
+  updateSyncedRowTarget(anchorCol);
+}
+
+function handleSyncedRowResize() {
+  if (lastSyncedAnchorCol === null) {
+    resetSyncedRows(true);
+    return;
+  }
+  syncedRowsCurrentOffset = getSyncedRows()[0]?.scrollLeft ?? syncedRowsCurrentOffset;
+  updateSyncedRowTarget(lastSyncedAnchorCol);
+}
+
+function ensureElementVisibleVertically(element: HTMLElement) {
+  const rootStyle = window.getComputedStyle(document.documentElement);
+  const headerHeight = parseFloat(rootStyle.getPropertyValue('--header-height') || '0');
+  const topMargin = headerHeight + 24;
+  const bottomMargin = 24;
+  const rect = element.getBoundingClientRect();
+
+  if (rect.top < topMargin) {
+    window.scrollBy({
+      top: rect.top - topMargin,
+      behavior: 'smooth',
+    });
+    return;
+  }
+
+  if (rect.bottom > window.innerHeight - bottomMargin) {
+    window.scrollBy({
+      top: rect.bottom - (window.innerHeight - bottomMargin),
+      behavior: 'smooth',
+    });
+  }
+}
 
 /**
  * Get all focusable elements in the DOM, grouped by row
@@ -179,12 +383,8 @@ function focusElement(element: HTMLElement | null) {
   element.classList.add('nav-focused');
   element.focus({ preventScroll: true });
 
-  // Smooth scroll for vertical (block), instant for horizontal (inline)
-  element.scrollIntoView({
-    behavior: 'smooth',
-    block: 'nearest',
-    inline: 'nearest',
-  });
+  ensureElementVisibleVertically(element);
+  syncRowsToElement(element);
 
   focusedElement.value = element;
 }
@@ -319,8 +519,11 @@ export function installKeyboardNavigation() {
   if (handlersInstalled) return;
   handlersInstalled = true;
 
+  resetSyncedRows(true);
+
   document.addEventListener('keydown', handleKeyDown);
   document.addEventListener('keydown', handleEnterKey);
+  window.addEventListener('resize', handleSyncedRowResize, { passive: true });
 
   // Handle mouse clicks to update focus state
   document.addEventListener('click', (event) => {
@@ -342,6 +545,9 @@ export function installKeyboardNavigation() {
       focusedElement.value = target;
       target.classList.add('nav-focused');
       desiredCol.value = null; // Reset desired col on focus change
+      syncRowsToElement(target);
+    } else {
+      resetSyncedRows();
     }
   });
 }

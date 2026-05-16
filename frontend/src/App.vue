@@ -193,7 +193,7 @@ import MediaRow from './components/MediaRow.vue';
 import MediaDetail from './components/MediaDetail.vue';
 
 // Initialize keyboard navigation
-const { getFocusState, restoreFocusState, focusAt } = useKeyboardNavigation();
+const { getFocusState, restoreFocusState, focusAt, focusElement } = useKeyboardNavigation();
 
 const router = useRouter();
 const route = useRoute();
@@ -315,8 +315,7 @@ function restoreFocusForPage(page: string) {
       // Find the element with matching item id
       const element = document.querySelector(`[data-item-id="${itemId}"]`) as HTMLElement | null;
       if (element) {
-        element.focus();
-        element.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+        focusElement(element);
         lastViewedItemId.value = null;
         return;
       }

@@ -381,7 +381,6 @@ html, body {
   gap: 6px;
   overflow-x: auto;
   overflow-y: hidden;
-  scroll-behavior: smooth;
   padding-bottom: 8px;
   margin: 0 -2px;
   padding: 4px 2px 8px;
