@@ -142,19 +142,19 @@ def make_relative_path(
     path: Optional[str], root: Optional[str] = None
 ) -> Optional[str]:
     """
-    Convert an absolute path to a path relative to the given root.
+    Convert an absolute path to a posix-style path relative to the given root.
 
-    If root is None, returns the path unchanged.
+    If root is None, returns the path as a posix string unchanged.
     """
     if path is None:
         return None
+    p = Path(path)
     if root is None:
-        return path
-    root_str = str(root).rstrip("/")
-    if path.startswith(root_str):
-        rel = path[len(root_str) :]
-        return rel.lstrip("/")
-    return path
+        return p.as_posix()
+    try:
+        return p.relative_to(root).as_posix()
+    except ValueError:
+        return p.as_posix()
 
 
 def sanitize_filename(name: str) -> str:
