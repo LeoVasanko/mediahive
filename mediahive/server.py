@@ -7,11 +7,14 @@ pipeline with live WebSocket updates.  Excluded paths are controlled by
 """
 
 import asyncio
+import json
 import logging
 import mimetypes
 import os
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -146,6 +149,27 @@ def normalize_path(url_path: str) -> Path:
     return MEDIAROOT / clean_path
 
 
+def _load_resume_positions() -> dict[str, int]:
+    if MEDIAROOT is None:
+        return {}
+
+    playback_state_path = MEDIAROOT / ".mediahive" / "playback-state.json"
+    try:
+        raw = json.loads(playback_state_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+    resume_positions = raw.get("resume_positions") if isinstance(raw, dict) else None
+    if not isinstance(resume_positions, dict):
+        return {}
+
+    cleaned: dict[str, int] = {}
+    for key, value in resume_positions.items():
+        if isinstance(key, str) and isinstance(value, (int, float)):
+            cleaned[key] = max(0, int(value))
+    return cleaned
+
+
 # === API Endpoints ===
 
 
@@ -229,6 +253,12 @@ async def _switch_folder(new_root: Path) -> None:
 async def get_index():
     """Return the full media index from the in-memory store."""
     return MsgspecResponse(store.get_full_index())
+
+
+@app.get("/api/playback/resume-positions")
+async def playback_resume_positions():
+    """Return saved per-file resume positions under the current media root."""
+    return {"resume_positions": _load_resume_positions()}
 
 
 # ---------------------------------------------------------------------------
@@ -348,6 +378,23 @@ async def open_folder(request: Request):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to open folder: {e}")
+
+
+def _mpcbe_request(path: str, timeout: float = 0.75) -> bool:
+    """Call MPC-BE's local web interface and return True on HTTP success."""
+    url = f"http://127.0.0.1:13579{path}"
+    req = urllib.request.Request(url=url, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return 200 <= resp.status < 300
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return False
+
+
+@app.get("/api/mpcbe/status")
+async def mpcbe_status():
+    """Check whether MPC-BE web interface is reachable."""
+    return {"reachable": _mpcbe_request("/")}
 
 
 @app.get("/api/media/{file_path:path}")

@@ -65,7 +65,7 @@
           </div>
           <p v-if="getOverview(item)" class="collage-overview">{{ getOverview(item) }}</p>
           <div class="collage-buttons">
-            <button class="btn btn-primary" @click.stop="handlePlay(item)">▶ Play</button>
+            <button class="btn btn-primary" @click.stop="handlePlay(item)">▶ {{ getPlayLabel(item) }}</button>
             <button class="btn btn-secondary" @click.stop="$emit('info', item)">ℹ Info</button>
           </div>
         </div>
@@ -416,6 +416,7 @@ function isItemVisible(index: number): boolean {
 const props = defineProps<{
   items: MediaItem[];
   featuredItem?: MediaItem | null;
+  hasResumePosition: (filePath: string | null) => boolean;
 }>();
 
 const emit = defineEmits<{
@@ -528,6 +529,10 @@ function getPlayableFile(item: MediaItem): string | null {
 function handlePlay(item: MediaItem) {
   const file = getPlayableFile(item);
   if (file) emit('play', file);
+}
+
+function getPlayLabel(item: MediaItem): string {
+  return props.hasResumePosition(getPlayableFile(item)) ? 'Continue' : 'Play';
 }
 
 function handleItemClick(item: MediaItem, index: number) {

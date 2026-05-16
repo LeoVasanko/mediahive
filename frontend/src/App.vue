@@ -32,6 +32,7 @@
     <Header
       :current-view="currentView"
       :search-query="searchQuery"
+      :mpc-be-connected="mpcBeConnected"
       :nav-row="1"
       :position="headerPosition"
       @search="searchQuery = $event"
@@ -66,6 +67,7 @@
       v-else-if="selectedItem"
       :item="selectedItem"
       :focus-episode="focusEpisode"
+      :has-resume-position="hasResumePosition"
       @close="closeDetail"
       @play="handlePlay"
       @open-folder="handleOpenFolder"
@@ -83,6 +85,7 @@
               :key="`movie-hero-${movieCollageItems.length}-${movieFeaturedItem?.id || 'none'}`"
               :items="movieCollageItems"
               :featured-item="movieFeaturedItem"
+              :has-resume-position="hasResumePosition"
               @play="handlePlay"
               @info="showDetail"
               @select="showDetail"
@@ -110,6 +113,7 @@
               :key="`series-hero-${seriesCollageItems.length}-${seriesFeaturedItem?.id || 'none'}`"
               :items="seriesCollageItems"
               :featured-item="seriesFeaturedItem"
+              :has-resume-position="hasResumePosition"
               @play="handlePlay"
               @info="showDetail"
               @select="showDetail"
@@ -141,6 +145,7 @@
             :key="`search-hero-${searchCollageItems.length}-${searchFeaturedItem?.id || 'none'}`"
             :items="searchCollageItems"
             :featured-item="searchFeaturedItem"
+            :has-resume-position="hasResumePosition"
             @play="handlePlay"
             @info="showDetail"
             @select="showDetail"
@@ -179,7 +184,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import type { Movie, Series, MediaItem, EpisodeWithSeries, MatchedPerson, MatchedEpisode, TaskInfo } from './types';
-import { playMedia, openFolder } from './api';
+import { playMedia, openFolder, isMpcBeReachable, fetchResumePositions, normalizeMediaPath } from './api';
 import { useKeyboardNavigation } from './composables/useKeyboardNavigation';
 import { useMediaWebSocket } from './composables/useMediaWebSocket';
 import Header from './components/Header.vue';
@@ -201,6 +206,70 @@ const activeTasks = computed<TaskInfo[]>(() => Array.from(tasks.value.values()))
 
 const searchResults = ref<MediaItem[]>([]);
 const isSearching = ref(false);
+const mpcBeConnected = ref(false);
+const resumePositions = ref<Record<string, number>>({});
+const MPC_BE_OPENING_GRACE_MS = 4000;
+const mpcBeOpeningUntil = ref(0);
+let mpcBePollTimer: number | null = null;
+
+function isMpcBeGamepadCaptured() {
+  return mpcBeConnected.value || Date.now() < mpcBeOpeningUntil.value;
+}
+
+function stopMpcBePolling() {
+  if (mpcBePollTimer !== null) {
+    window.clearInterval(mpcBePollTimer);
+    mpcBePollTimer = null;
+  }
+}
+
+async function refreshResumePositions() {
+  resumePositions.value = await fetchResumePositions();
+}
+
+function hasResumePosition(filePath: string | null) {
+  if (!filePath) return false;
+  const normalizedPath = normalizeMediaPath(filePath);
+  return Number(resumePositions.value[normalizedPath] || 0) > 0;
+}
+
+function startMpcBePolling() {
+  if (mpcBePollTimer !== null) return;
+  mpcBePollTimer = window.setInterval(async () => {
+    const reachable = await isMpcBeReachable();
+    const wasConnected = mpcBeConnected.value;
+    mpcBeConnected.value = reachable;
+    if (!reachable) {
+      stopMpcBePolling();
+      if (wasConnected) {
+        void refreshResumePositions();
+      }
+    }
+  }, 3000);
+}
+
+async function tryConnectMpcBe(attempts = 8, delayMs = 400): Promise<boolean> {
+  for (let i = 0; i < attempts; i++) {
+    const reachable = await isMpcBeReachable();
+    if (reachable) return true;
+    if (i < attempts - 1) {
+      await new Promise(resolve => window.setTimeout(resolve, delayMs));
+    }
+  }
+  return false;
+}
+
+type GamepadAction = 'up' | 'down' | 'left' | 'right' | 'select' | 'back';
+
+function onGamepadAction(event: Event) {
+  const customEvent = event as CustomEvent<{ action?: GamepadAction }>;
+  const action = customEvent.detail?.action;
+  if (!action) return;
+
+  if (isMpcBeGamepadCaptured()) {
+    event.preventDefault();
+  }
+}
 
 // Focus episode info for navigating to series detail from search
 const focusEpisode = ref<{ seasonNumber: number; episodeNumber: number } | null>(null);
@@ -311,13 +380,17 @@ function handleEscapeKey(event: KeyboardEvent) {
 }
 
 onMounted(() => {
+  void refreshResumePositions();
   document.addEventListener('keydown', handleEscapeKey);
+  window.addEventListener('mediahive:gamepad-action', onGamepadAction as EventListener);
   window.addEventListener('click', requestInitialFullscreen, { once: true });
 });
 
 onUnmounted(() => {
   document.removeEventListener('keydown', handleEscapeKey);
+  window.removeEventListener('mediahive:gamepad-action', onGamepadAction as EventListener);
   window.removeEventListener('click', requestInitialFullscreen);
+  stopMpcBePolling();
 });
 
 // Search query stored in ref (not URL-based)
@@ -1110,8 +1183,14 @@ function reloadPage() {
 }
 
 async function handlePlay(filePath: string) {
+  mpcBeOpeningUntil.value = Date.now() + MPC_BE_OPENING_GRACE_MS;
   try {
     await playMedia(filePath);
+    const connected = await tryConnectMpcBe();
+    if (connected) {
+      mpcBeConnected.value = true;
+      startMpcBePolling();
+    }
   } catch (e) {
     console.error('Failed to play media:', e);
   }

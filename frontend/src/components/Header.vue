@@ -57,6 +57,11 @@
       />
     </div>
 
+    <div v-if="mpcBeConnected" class="player-indicator" title="MPC-BE is connected">
+      <span class="player-indicator-dot" aria-hidden="true"></span>
+      <span>Player Open</span>
+    </div>
+
     <div v-if="isDesktopApp" class="header-settings">
       <button
         class="header-settings-btn"
@@ -81,6 +86,7 @@ import { pickFolderAndRestart } from '../api';
 const props = defineProps<{
   currentView: 'movies' | 'series';
   searchQuery: string;
+  mpcBeConnected: boolean;
   navRow: number;
   position: 'top' | 'after-hero' | 'after-movie-header' | 'after-series-hero';
 }>();
@@ -180,3 +186,22 @@ onUnmounted(() => {
   window.removeEventListener('keydown', handleKeydown);
 });
 </script>
+
+<style scoped>
+.player-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: 10px;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+
+.player-indicator-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #22c55e;
+  box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.18);
+}
+</style>

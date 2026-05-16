@@ -138,7 +138,7 @@
                 tabindex="0"
                 @click="handlePlayVersion(torrent.playable_file)"
                 :disabled="!torrent.playable_file"
-              >▶ Play</button>
+              >▶ {{ getPlayLabel(torrent.playable_file) }}</button>
               <button
                 class="ctx-btn ctx-btn-folder"
                 tabindex="0"
@@ -164,6 +164,7 @@ import { navAttrs } from '../composables/useKeyboardNavigation';
 const props = defineProps<{
   series: Series;
   focusEpisode?: { seasonNumber: number; episodeNumber: number } | null;
+  hasResumePosition: (filePath: string | null) => boolean;
 }>();
 
 const emit = defineEmits<{
@@ -300,6 +301,10 @@ function handlePlayVersion(filePath: string | null) {
     emit('play', filePath);
   }
   closeContextMenu();
+}
+
+function getPlayLabel(filePath: string | null): string {
+  return props.hasResumePosition(filePath) ? 'Continue' : 'Play';
 }
 
 // Open folder for a version

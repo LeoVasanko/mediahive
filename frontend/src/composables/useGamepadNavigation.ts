@@ -54,6 +54,13 @@ function applyGamepadAction(action: GamepadAction, isPressed: boolean, now: numb
   if (!canTrigger) return;
 
   gamepadLastTriggerAt[action] = now;
+  const actionEvent = new CustomEvent('mediahive:gamepad-action', {
+    detail: { action },
+    cancelable: true,
+  });
+  const shouldContinueWithKeyboard = window.dispatchEvent(actionEvent);
+  if (!shouldContinueWithKeyboard) return;
+
   dispatchKey(KEY_BY_ACTION[action]);
 }
 

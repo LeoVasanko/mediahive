@@ -1,5 +1,12 @@
 import type { MediaIndex } from './types';
 
+export function normalizeMediaPath(input: string): string {
+  return input
+    .replace(/\\/g, '/')
+    .replace(/^[A-Za-z]:\//, '')
+    .replace(/^\/+/, '');
+}
+
 /**
  * Load the media index from the server
  */
@@ -15,11 +22,12 @@ export async function loadMediaIndex(): Promise<MediaIndex> {
  * Play a media file with the system's default player
  */
 export async function playMedia(filePath: string): Promise<void> {
+  const normalizedPath = normalizeMediaPath(filePath);
   try {
     const response = await fetch('/api/play', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ file_path: filePath }),
+      body: JSON.stringify({ file_path: normalizedPath }),
     });
     if (!response.ok) {
       const error = await response.json();
@@ -27,7 +35,7 @@ export async function playMedia(filePath: string): Promise<void> {
     }
   } catch (e) {
     console.error('Play media error:', e);
-    alert(`Failed to play: ${e}`);
+    alert(`Failed to play media.\n\n${e}`);
   }
 }
 
@@ -35,11 +43,12 @@ export async function playMedia(filePath: string): Promise<void> {
  * Open a folder in Windows Explorer
  */
 export async function openFolder(folderPath: string): Promise<void> {
+  const normalizedPath = normalizeMediaPath(folderPath);
   try {
     const response = await fetch('/api/open-folder', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ folder_path: folderPath }),
+      body: JSON.stringify({ folder_path: normalizedPath }),
     });
     if (!response.ok) {
       const error = await response.json();
@@ -47,7 +56,33 @@ export async function openFolder(folderPath: string): Promise<void> {
     }
   } catch (e) {
     console.error('Open folder error:', e);
-    alert(`Failed to open folder: ${e}`);
+    alert(`Failed to open folder.\n\n${e}`);
+  }
+}
+
+/**
+ * Return whether MPC-BE local web control is currently reachable.
+ */
+export async function isMpcBeReachable(): Promise<boolean> {
+  try {
+    const response = await fetch('/api/mpcbe/status');
+    if (!response.ok) return false;
+    const data = await response.json().catch(() => ({}));
+    return Boolean(data.reachable);
+  } catch {
+    return false;
+  }
+}
+
+export async function fetchResumePositions(): Promise<Record<string, number>> {
+  try {
+    const response = await fetch('/api/playback/resume-positions');
+    if (!response.ok) return {};
+    const data = await response.json().catch(() => ({}));
+    const resumePositions = data?.resume_positions;
+    return resumePositions && typeof resumePositions === 'object' ? resumePositions : {};
+  } catch {
+    return {};
   }
 }
 

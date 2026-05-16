@@ -4,6 +4,7 @@
     v-if="item.type === 'series'"
     :series="item.data as Series"
     :focus-episode="focusEpisode"
+    :has-resume-position="hasResumePosition"
     @close="$emit('close')"
     @play="handlePlay"
     @openFolder="handleOpenFolder"
@@ -95,7 +96,7 @@
                       v-bind="navAttrs(2, index * 2)"
                       @click="handlePlay(version.playable_file)"
                       :disabled="!version.playable_file"
-                    >▶ Play</button>
+                    >▶ {{ getPlayLabel(version.playable_file) }}</button>
                     <button
                       class="btn btn-small btn-secondary"
                       v-bind="navAttrs(2, index * 2 + 1)"
@@ -148,6 +149,7 @@ import { navAttrs } from '../composables/useKeyboardNavigation';
 const props = defineProps<{
   item: MediaItem;
   focusEpisode?: { seasonNumber: number; episodeNumber: number } | null;
+  hasResumePosition: (filePath: string | null) => boolean;
 }>();
 
 const emit = defineEmits<{
@@ -392,6 +394,10 @@ function handlePlay(filePath: string | null) {
   if (filePath) {
     emit('play', filePath);
   }
+}
+
+function getPlayLabel(filePath: string | null): string {
+  return props.hasResumePosition(filePath) ? 'Continue' : 'Play';
 }
 
 function handleOpenFolder(folderPath: string) {

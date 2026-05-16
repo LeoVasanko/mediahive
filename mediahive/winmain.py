@@ -5,11 +5,18 @@ Or from PyInstaller: MediaHive.exe [media_folder]
 """
 
 import argparse
+from concurrent.futures import Future, ThreadPoolExecutor
+import ctypes
+import html
+import json
 import logging
 import os
+import re
 import sys
 import threading
 import time
+import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -24,6 +31,507 @@ BACKEND_HOST = "127.0.0.1"
 BACKEND_PORT = 8420
 BACKEND_URL = f"http://{BACKEND_HOST}:{BACKEND_PORT}"
 HEALTH_TIMEOUT = 2  # seconds
+MPC_BE_URL = "http://127.0.0.1:13579"
+GAMEPAD_REPEAT_SECONDS = 0.008
+GAMEPAD_POLL_SECONDS = 0.008
+MPC_BE_FRAME_REPEAT_SECONDS = 0.016
+MPC_BE_SEEK_BEGIN_HOLD_SECONDS = 1.0
+MPC_BE_REQUEST_TIMEOUT = 0.15
+MPC_BE_MAX_INFLIGHT_REQUESTS = 12
+MPC_BE_REQUEST_WORKERS = 4
+MPC_BE_STATUS_POLL_SECONDS = 0.1
+MPC_BE_STATUS_MISS_THRESHOLD = 5
+MPC_BE_STATE_STOPPED = 0
+MPC_BE_STATE_PAUSED = 1
+MPC_BE_STATE_RUNNING = 2
+MPC_BE_SEEK_BEGIN_COMMAND = 1085
+MPC_BE_RESUME_APPLY_THRESHOLD_MS = 15000
+MPC_BE_RESUME_CLEAR_MARGIN_MS = 15000
+MPC_BE_PLAYBACK_STATE_FLUSH_SECONDS = 1.0
+
+
+class _XINPUT_GAMEPAD(ctypes.Structure):
+        _fields_ = [
+                ("wButtons", ctypes.c_ushort),
+                ("bLeftTrigger", ctypes.c_ubyte),
+                ("bRightTrigger", ctypes.c_ubyte),
+                ("sThumbLX", ctypes.c_short),
+                ("sThumbLY", ctypes.c_short),
+                ("sThumbRX", ctypes.c_short),
+                ("sThumbRY", ctypes.c_short),
+        ]
+
+
+class _XINPUT_STATE(ctypes.Structure):
+        _fields_ = [
+                ("dwPacketNumber", ctypes.c_ulong),
+                ("Gamepad", _XINPUT_GAMEPAD),
+        ]
+
+
+_XINPUT_BUTTONS = {
+        0x0001: "DPAD_UP",
+        0x0002: "DPAD_DOWN",
+        0x0004: "DPAD_LEFT",
+        0x0008: "DPAD_RIGHT",
+        0x0010: "START",
+        0x0020: "BACK",
+        0x0040: "L3",
+        0x0080: "R3",
+        0x0100: "LB",
+        0x0200: "RB",
+        0x1000: "A",
+        0x2000: "B",
+        0x4000: "X",
+        0x8000: "Y",
+}
+
+_MPC_BE_COMMANDS = {
+    0x0001: 907,
+    0x0002: 908,
+    0x1000: 889,
+    0x2000: 816,
+    0x8000: 909,
+}
+
+_MPC_BE_SEEK_MASK_TO_COMMANDS = {
+    0x0004: (892, 901),
+    0x0008: (891, 902),
+}
+
+_MPC_BE_REPEATABLE_MASKS = {
+    0x0001,
+    0x0002,
+    *_MPC_BE_SEEK_MASK_TO_COMMANDS,
+}
+
+_STATE_RE = re.compile(r'<p id="state">(\d+)</p>')
+_FILEPATH_RE = re.compile(r'<p id="filepath">(.*?)</p>', re.DOTALL)
+_POSITION_RE = re.compile(r'<p id="position">(\d+)</p>')
+_DURATION_RE = re.compile(r'<p id="duration">(\d+)</p>')
+
+
+def _default_playback_state() -> dict[str, object]:
+    return {
+        "current": None,
+        "resume_positions": {},
+    }
+
+
+def _load_playback_state(path: Path) -> dict[str, object]:
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return _default_playback_state()
+
+    if not isinstance(raw, dict):
+        return _default_playback_state()
+
+    current = raw.get("current")
+    resume_positions = raw.get("resume_positions")
+    normalized: dict[str, object] = {
+        "current": current if isinstance(current, dict) else None,
+        "resume_positions": {},
+    }
+
+    if isinstance(resume_positions, dict):
+        cleaned_positions: dict[str, int] = {}
+        for key, value in resume_positions.items():
+            if isinstance(key, str) and isinstance(value, (int, float)):
+                cleaned_positions[key] = max(0, int(value))
+        normalized["resume_positions"] = cleaned_positions
+
+    return normalized
+
+
+def _save_playback_state(path: Path, state: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(f"{path.suffix}.tmp")
+    tmp_path.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
+    tmp_path.replace(path)
+
+
+def _media_key_for_filepath(filepath: str, media_root: Path) -> str | None:
+    try:
+        relative = Path(filepath).resolve().relative_to(media_root.resolve())
+    except Exception:
+        return None
+    return relative.as_posix()
+
+
+def _should_clear_resume(position_ms: int, duration_ms: int) -> bool:
+    if position_ms <= MPC_BE_RESUME_CLEAR_MARGIN_MS:
+        return True
+    if duration_ms <= 0:
+        return False
+    return duration_ms - position_ms <= MPC_BE_RESUME_CLEAR_MARGIN_MS
+
+
+def _load_xinput_get_state():
+    """Load XInputGetState from available XInput DLLs (XInput only)."""
+    candidates = ["xinput1_4.dll", "xinput9_1_0.dll", "xinput1_3.dll"]
+    for dll_name in candidates:
+        try:
+            dll = ctypes.WinDLL(dll_name)
+            fn = dll.XInputGetState
+            fn.argtypes = [ctypes.c_uint, ctypes.POINTER(_XINPUT_STATE)]
+            fn.restype = ctypes.c_ulong
+            return fn
+        except Exception:
+            continue
+    raise RuntimeError("XInput DLL not found")
+
+
+def _mpcbe_request(path: str, timeout: float = MPC_BE_REQUEST_TIMEOUT) -> bool:
+    """Call MPC-BE's local web interface and return True on HTTP success."""
+    req = urllib.request.Request(url=f"{MPC_BE_URL}{path}", method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return 200 <= resp.status < 300
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return False
+
+
+def _send_mpcbe_command(command_id: int) -> bool:
+    return _mpcbe_request(f"/command.html?wm_command={command_id}")
+
+
+def _format_mpcbe_position(position_ms: int) -> str:
+    total_seconds = max(0, position_ms // 1000)
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+
+def _seek_mpcbe_to_position(position_ms: int) -> bool:
+    query = urllib.parse.urlencode(
+        {
+            "wm_command": -1,
+            "position": _format_mpcbe_position(position_ms),
+        }
+    )
+    return _mpcbe_request(f"/command.html?{query}")
+
+
+def _mpcbe_fetch_status() -> tuple[str, int, int, int] | None:
+    """Fetch current file path, position, duration, and playback state from MPC-BE."""
+    req = urllib.request.Request(url=f"{MPC_BE_URL}/variables.html", method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=MPC_BE_REQUEST_TIMEOUT) as resp:
+            response_html = resp.read().decode("utf-8", errors="replace")
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return None
+
+    state_match = _STATE_RE.search(response_html)
+    filepath_match = _FILEPATH_RE.search(response_html)
+    position_match = _POSITION_RE.search(response_html)
+    duration_match = _DURATION_RE.search(response_html)
+    if not state_match or not position_match or not duration_match:
+        return None
+
+    filepath = html.unescape(filepath_match.group(1)).strip() if filepath_match else ""
+    return (
+        filepath,
+        int(position_match.group(1)),
+        int(duration_match.group(1)),
+        int(state_match.group(1)),
+    )
+
+
+def _start_gamepad_remote(stop_event: threading.Event, media_root: Path) -> threading.Thread:
+    """Start background XInput polling and send mapped commands to MPC-BE."""
+    get_state = _load_xinput_get_state()
+    last_connected = [False, False, False, False]
+    last_pressed_masks = [0, 0, 0, 0]
+    seek_begin_hold_started_at: list[float | None] = [None, None, None, None]
+    seek_begin_fired = [False, False, False, False]
+    last_repeat_at = [
+        {
+            mask: 0.0
+            for mask in (*_MPC_BE_COMMANDS.keys(), *_MPC_BE_SEEK_MASK_TO_COMMANDS.keys())
+        }
+        for _ in range(4)
+    ]
+    request_pool = ThreadPoolExecutor(
+        max_workers=MPC_BE_REQUEST_WORKERS,
+        thread_name_prefix="mediahive-mpcbe",
+    )
+    pending_requests: list[Future[bool]] = []
+    status_lock = threading.Lock()
+    status_future: Future[tuple[str, int, int, int] | None] | None = None
+    player_filepath = ""
+    player_position_ms: int | None = None
+    player_duration_ms: int | None = None
+    player_state: int | None = None
+    status_updated_at = 0.0
+    status_miss_count = 0
+    playback_state_path = media_root / ".mediahive" / "playback-state.json"
+    playback_state = _load_playback_state(playback_state_path)
+    resume_positions = playback_state["resume_positions"]
+    if not isinstance(resume_positions, dict):
+        resume_positions = {}
+        playback_state["resume_positions"] = resume_positions
+    if playback_state.get("current") is not None:
+        playback_state["current"] = None
+        _save_playback_state(playback_state_path, playback_state)
+    tracked_media_key: str | None = None
+    tracked_filepath = ""
+    resume_applied_for_key: str | None = None
+    last_playback_state_flush_at = 0.0
+
+    def queue_command(command_id: int) -> None:
+        pending_requests.append(request_pool.submit(_send_mpcbe_command, command_id))
+
+    def queue_seek_to_position(position_ms: int) -> None:
+        pending_requests.append(request_pool.submit(_seek_mpcbe_to_position, position_ms))
+
+    def flush_playback_state() -> None:
+        _save_playback_state(playback_state_path, playback_state)
+
+    def clear_tracked_current(*, clear_resume_applied: bool) -> None:
+        nonlocal tracked_media_key, tracked_filepath, last_playback_state_flush_at, resume_applied_for_key
+        if tracked_media_key is None and playback_state.get("current") is None:
+            if clear_resume_applied:
+                resume_applied_for_key = None
+            return
+        tracked_media_key = None
+        tracked_filepath = ""
+        playback_state["current"] = None
+        last_playback_state_flush_at = 0.0
+        if clear_resume_applied:
+            resume_applied_for_key = None
+        flush_playback_state()
+
+    def finalize_tracked_current() -> None:
+        nonlocal tracked_media_key, tracked_filepath, resume_applied_for_key, last_playback_state_flush_at
+        if tracked_media_key is None:
+            if playback_state.get("current") is not None:
+                playback_state["current"] = None
+                flush_playback_state()
+            return
+
+        position_ms = player_position_ms or 0
+        duration_ms = player_duration_ms or 0
+        if _should_clear_resume(position_ms, duration_ms):
+            resume_positions.pop(tracked_media_key, None)
+        else:
+            resume_positions[tracked_media_key] = position_ms
+
+        tracked_media_key = None
+        tracked_filepath = ""
+        playback_state["current"] = None
+        resume_applied_for_key = None
+        last_playback_state_flush_at = 0.0
+        flush_playback_state()
+
+    def persist_tracked_current(now: float, *, force: bool = False) -> None:
+        nonlocal last_playback_state_flush_at
+        if tracked_media_key is None:
+            return
+        if not force and now - last_playback_state_flush_at < MPC_BE_PLAYBACK_STATE_FLUSH_SECONDS:
+            return
+
+        playback_state["current"] = {
+            "file_key": tracked_media_key,
+            "file_path": tracked_filepath,
+            "position_ms": player_position_ms or 0,
+            "duration_ms": player_duration_ms or 0,
+            "updated_at": int(time.time()),
+        }
+        last_playback_state_flush_at = now
+        flush_playback_state()
+
+    def maybe_apply_resume(now: float) -> None:
+        nonlocal player_position_ms, resume_applied_for_key
+        if tracked_media_key is None:
+            return
+        if resume_applied_for_key == tracked_media_key:
+            return
+
+        saved_position = resume_positions.get(tracked_media_key)
+        if not isinstance(saved_position, int):
+            resume_applied_for_key = tracked_media_key
+            return
+        if player_position_ms is None or player_duration_ms is None:
+            return
+        if player_position_ms > MPC_BE_RESUME_APPLY_THRESHOLD_MS:
+            resume_applied_for_key = tracked_media_key
+            return
+        if _should_clear_resume(saved_position, player_duration_ms):
+            resume_positions.pop(tracked_media_key, None)
+            resume_applied_for_key = tracked_media_key
+            flush_playback_state()
+            return
+        if len(pending_requests) >= MPC_BE_MAX_INFLIGHT_REQUESTS:
+            return
+
+        target_ms = min(saved_position, max(player_duration_ms - 1000, 0))
+        queue_seek_to_position(target_ms)
+        player_position_ms = target_ms
+        resume_applied_for_key = tracked_media_key
+        persist_tracked_current(now, force=True)
+
+    def update_status_from_future() -> None:
+        nonlocal status_future, player_filepath, player_position_ms, player_duration_ms, player_state
+        nonlocal status_updated_at, status_miss_count, tracked_media_key, tracked_filepath
+        nonlocal resume_applied_for_key
+        if status_future is None or not status_future.done():
+            return
+
+        try:
+            status = status_future.result()
+        except Exception:
+            status = None
+        status_future = None
+
+        if status is None:
+            status_miss_count += 1
+            if status_miss_count >= MPC_BE_STATUS_MISS_THRESHOLD:
+                finalize_tracked_current()
+                with status_lock:
+                    player_filepath = ""
+                    player_position_ms = None
+                    player_duration_ms = None
+                    player_state = None
+                    status_updated_at = 0.0
+            return
+
+        status_miss_count = 0
+
+        filepath, position_ms, duration_ms, state = status
+        media_key = _media_key_for_filepath(filepath, media_root) if filepath else None
+
+        if tracked_media_key is not None and media_key != tracked_media_key:
+            finalize_tracked_current()
+
+        if media_key is None:
+            clear_tracked_current(clear_resume_applied=True)
+        elif tracked_media_key != media_key:
+            tracked_media_key = media_key
+            tracked_filepath = filepath
+            resume_applied_for_key = None
+
+        player_filepath = filepath
+
+        with status_lock:
+            player_position_ms = position_ms
+            player_duration_ms = duration_ms
+            player_state = state
+            status_updated_at = time.monotonic()
+
+        maybe_apply_resume(status_updated_at)
+        persist_tracked_current(status_updated_at)
+
+    def queue_status_refresh(now: float, *, force: bool = False) -> None:
+        nonlocal status_future
+        if status_future is not None:
+            return
+
+        with status_lock:
+            is_stale = now - status_updated_at >= MPC_BE_STATUS_POLL_SECONDS
+
+        if force or is_stale:
+            status_future = request_pool.submit(_mpcbe_fetch_status)
+
+    def command_for_seek(mask: int) -> int:
+        paused_command, seek_command = _MPC_BE_SEEK_MASK_TO_COMMANDS[mask]
+        with status_lock:
+            is_paused = player_state == MPC_BE_STATE_PAUSED
+        return paused_command if is_paused else seek_command
+
+    def repeat_seconds_for_seek(mask: int) -> float:
+        paused_command, _seek_command = _MPC_BE_SEEK_MASK_TO_COMMANDS[mask]
+        with status_lock:
+            active_command = paused_command if player_state == MPC_BE_STATE_PAUSED else None
+        return MPC_BE_FRAME_REPEAT_SECONDS if active_command == paused_command else GAMEPAD_REPEAT_SECONDS
+
+    def _run() -> None:
+        try:
+            while not stop_event.is_set():
+                now = time.monotonic()
+                pending_requests[:] = [future for future in pending_requests if not future.done()]
+                update_status_from_future()
+                queue_status_refresh(now)
+
+                for slot in range(4):
+                    state = _XINPUT_STATE()
+                    rc = get_state(slot, ctypes.byref(state))
+                    is_connected = rc == 0
+                    current_mask = state.Gamepad.wButtons if is_connected else 0
+
+                    is_seek_begin_pressed = bool(current_mask & 0x4000)
+                    if is_seek_begin_pressed:
+                        if seek_begin_hold_started_at[slot] is None:
+                            seek_begin_hold_started_at[slot] = now
+                            seek_begin_fired[slot] = False
+                        elif (
+                            not seek_begin_fired[slot]
+                            and now - seek_begin_hold_started_at[slot] >= MPC_BE_SEEK_BEGIN_HOLD_SECONDS
+                            and len(pending_requests) < MPC_BE_MAX_INFLIGHT_REQUESTS
+                        ):
+                            queue_command(MPC_BE_SEEK_BEGIN_COMMAND)
+                            seek_begin_fired[slot] = True
+                    else:
+                        seek_begin_hold_started_at[slot] = None
+                        seek_begin_fired[slot] = False
+
+                    if is_connected != last_connected[slot]:
+                        last_connected[slot] = is_connected
+
+                    for mask, command_id in _MPC_BE_COMMANDS.items():
+                        is_pressed = bool(current_mask & mask)
+                        was_pressed = bool(last_pressed_masks[slot] & mask)
+                        should_fire = is_pressed and not was_pressed
+
+                        if (
+                            not should_fire
+                            and is_pressed
+                            and mask in _MPC_BE_REPEATABLE_MASKS
+                            and now - last_repeat_at[slot][mask] >= GAMEPAD_REPEAT_SECONDS
+                        ):
+                            should_fire = True
+
+                        if not should_fire:
+                            continue
+
+                        if len(pending_requests) >= MPC_BE_MAX_INFLIGHT_REQUESTS:
+                            continue
+
+                        queue_command(command_id)
+                        last_repeat_at[slot][mask] = now
+
+                    for mask in _MPC_BE_SEEK_MASK_TO_COMMANDS:
+                        is_pressed = bool(current_mask & mask)
+                        was_pressed = bool(last_pressed_masks[slot] & mask)
+                        should_fire = is_pressed and not was_pressed
+                        repeat_seconds = repeat_seconds_for_seek(mask)
+
+                        if (
+                            not should_fire
+                            and is_pressed
+                            and now - last_repeat_at[slot][mask] >= repeat_seconds
+                        ):
+                            should_fire = True
+
+                        if not should_fire:
+                            continue
+
+                        if len(pending_requests) >= MPC_BE_MAX_INFLIGHT_REQUESTS:
+                            continue
+
+                        queue_command(command_for_seek(mask))
+                        last_repeat_at[slot][mask] = now
+
+                    last_pressed_masks[slot] = current_mask
+
+                stop_event.wait(GAMEPAD_POLL_SECONDS)
+        finally:
+            finalize_tracked_current()
+            request_pool.shutdown(wait=False, cancel_futures=True)
+
+    thread = threading.Thread(target=_run, daemon=True, name="mediahive-gamepad-remote")
+    thread.start()
+    return thread
 
 
 def _setup_logging() -> Path:
@@ -207,10 +715,20 @@ def winmain() -> None:
         js_api=api,
     )
 
+    poll_stop = threading.Event()
+    poll_thread: threading.Thread | None = None
+
     def on_shown() -> None:
         api._window = window
+        nonlocal poll_thread
+        if poll_thread is None:
+            poll_thread = _start_gamepad_remote(poll_stop, mediaroot)
 
     webview.start(func=on_shown, icon=_icon_path())
+
+    poll_stop.set()
+    if poll_thread is not None:
+        poll_thread.join(timeout=1)
 
     server.should_exit = True
     backend_thread.join(timeout=10)
