@@ -1,3 +1,5 @@
+![MediaHive](docs/mediahive.avif)
+
 # MediaHive
 
 Media scanning, indexing, and Netflix-style web streaming for your torrent collection.
