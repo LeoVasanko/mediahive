@@ -170,11 +170,26 @@ function handleEscape() {
   searchInputRef.value?.blur();
 }
 
+function focusSearchInput() {
+  searchInputRef.value?.focus();
+  searchInputRef.value?.select();
+}
+
 function handleKeydown(e: KeyboardEvent) {
-  if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+  const target = e.target as HTMLElement | null;
+  const isTypingTarget = Boolean(
+    target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
+  );
+  const isSearchShortcut = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f';
+  const isSlashShortcut = !e.ctrlKey && !e.metaKey && !e.altKey && e.code === 'Slash';
+
+  if (isTypingTarget && !isSearchShortcut) {
+    return;
+  }
+
+  if (isSearchShortcut || isSlashShortcut) {
     e.preventDefault();
-    searchInputRef.value?.focus();
-    searchInputRef.value?.select();
+    focusSearchInput();
   }
 }
 
