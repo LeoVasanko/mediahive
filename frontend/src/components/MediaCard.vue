@@ -7,17 +7,24 @@
     @keydown.enter.prevent="$emit('click')"
   >
     <div class="media-card-poster">
-      <!-- SVG focus outline -->
       <svg class="card-focus-outline" viewBox="0 0 100 150" preserveAspectRatio="none">
         <rect x="0" y="0" width="100" height="150" />
       </svg>
       <img
-        v-if="coverUrl && !imageError"
-        :src="coverUrl"
+        v-if="posterImageUrl && !imageError"
+        :src="posterImageUrl"
         :alt="item.title || 'Unknown'"
         loading="lazy"
         @error="imageError = true"
       />
+      <video
+        v-else-if="posterVideoUrl"
+        :src="posterVideoUrl"
+        :aria-label="item.title || 'Unknown'"
+        loop
+        muted
+        playsinline
+      ></video>
       <div v-else class="media-card-placeholder">
         {{ item.type === 'movies' ? '🎬' : item.type === 'episode' ? '📺' : '📺' }}
       </div>
@@ -30,7 +37,6 @@
         <span class="media-card-title">{{ displayTitle }}</span>
         <span v-if="item.year" class="media-card-year">{{ item.year }}</span>
       </div>
-      <!-- Search match info (when searching) -->
       <template v-if="item.searchMatchInfo">
         <div v-if="matchedPeople && matchedPeople.length > 0" class="media-card-detail match-reason">
           <template v-for="(person, idx) in matchedPeople" :key="person.name">
@@ -46,7 +52,6 @@
           <div v-if="item.searchMatchInfo.matchedEpisodes.length > 3" class="matched-episode-more">+{{ item.searchMatchInfo.matchedEpisodes.length - 3 }} more</div>
         </div>
       </template>
-      <!-- Default display (browsing) -->
       <template v-else>
         <div v-if="subtitle" class="media-card-detail">{{ subtitle }}</div>
         <div v-if="directorAndCast" class="media-card-detail">
@@ -60,7 +65,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import type { MediaItem, Movie, Series, EpisodeWithSeries } from '../types';
-import { getCoverUrl } from '../api';
+import { getCoverUrl, isVideoPath } from '../api';
 import { navAttrs } from '../composables/useKeyboardNavigation';
 
 const props = defineProps<{
@@ -73,7 +78,6 @@ defineEmits<{
   click: [];
 }>();
 
-// Navigation attributes for keyboard navigation
 const navAttributes = computed(() => {
   if (props.navRow !== undefined && props.navCol !== undefined) {
     return navAttrs(props.navRow, props.navCol);
@@ -83,9 +87,21 @@ const navAttributes = computed(() => {
 
 const imageError = ref(false);
 
-const coverUrl = computed(() => {
+const posterImageUrl = computed(() => {
   if (imageError.value) return null;
+  if (!props.item.cover_path || isVideoPath(props.item.cover_path)) {
+    return null;
+  }
   return getCoverUrl(props.item.cover_path);
+});
+
+const posterVideoUrl = computed(() => {
+  if (props.item.cover_path && isVideoPath(props.item.cover_path)) {
+    return getCoverUrl(props.item.cover_path);
+  }
+
+  const fallbackVideo = props.item.showreel_images?.find(path => isVideoPath(path));
+  return fallbackVideo ? getCoverUrl(fallbackVideo) : null;
 });
 
 const rating = computed(() => {
@@ -119,7 +135,6 @@ const subtitle = computed(() => {
     const epData = props.item.data as EpisodeWithSeries;
     return `${epData.series.title} S${epData.seasonNumber}E${epData.episode.episode_number}`;
   }
-  // For series, show creators
   if (props.item.type === 'series') {
     const creators = (props.item.data as Series).info?.creators;
     return creators && creators.length > 0 ? creators.join(', ') : null;
@@ -127,19 +142,16 @@ const subtitle = computed(() => {
   return null;
 });
 
-// Director for movies
 const director = computed(() => {
   if (props.item.type !== 'movies') return null;
   return (props.item.data as Movie).info?.director;
 });
 
-// Check if we have director and/or cast to display
 const directorAndCast = computed(() => {
   if (props.item.type !== 'movies') return false;
   return director.value || filteredCastNames.value;
 });
 
-// Cast names, excluding director if they appear in cast
 const filteredCastNames = computed(() => {
   if (props.item.type !== 'movies') return null;
   const cast = (props.item.data as Movie).info?.cast;
@@ -152,12 +164,10 @@ const filteredCastNames = computed(() => {
 
   if (filteredCast.length === 0) return null;
 
-  // Show first 3 cast members
   const names = filteredCast.slice(0, 3).map(c => c.name);
   return names.join(', ');
 });
 
-// Matched people from search (from searchMatchInfo)
 const matchedPeople = computed(() => {
   const info = props.item.searchMatchInfo;
   if (!info || !info.matchedPeople) return null;
@@ -166,7 +176,6 @@ const matchedPeople = computed(() => {
 </script>
 
 <style scoped>
-/* Blinking animation for focus outline */
 @keyframes card-outline-blink {
   0%, 100% {
     opacity: 1;
@@ -176,7 +185,6 @@ const matchedPeople = computed(() => {
   }
 }
 
-/* SVG focus outline styles */
 .card-focus-outline {
   position: absolute;
   inset: 0;
@@ -195,14 +203,20 @@ const matchedPeople = computed(() => {
   vector-effect: non-scaling-stroke;
 }
 
-/* Show outline on hover and focus */
+.media-card-poster img,
+.media-card-poster video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 .media-card:hover .card-focus-outline,
 .media-card.nav-focused .card-focus-outline {
   opacity: 1;
   animation: card-outline-blink 1s ease-in-out infinite;
 }
 
-/* Brighter outline for keyboard focus */
 .media-card.nav-focused .card-focus-outline rect {
   stroke: #ffffff;
   stroke-width: 5;
@@ -236,7 +250,6 @@ const matchedPeople = computed(() => {
   font-size: 0.65rem;
   color: var(--text-muted);
   margin-top: 1px;
-  /* Allow up to 2 lines with ellipsis */
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -249,7 +262,6 @@ const matchedPeople = computed(() => {
   color: var(--text-secondary);
 }
 
-/* Search match styles */
 .match-reason {
   color: var(--text-secondary);
 }
@@ -264,7 +276,6 @@ const matchedPeople = computed(() => {
   font-weight: 400;
 }
 
-/* When character name matched - highlight the role, dim the name */
 .match-dim {
   color: var(--text-muted);
   font-weight: 400;

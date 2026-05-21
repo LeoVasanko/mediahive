@@ -184,7 +184,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import type { Movie, Series, MediaItem, EpisodeWithSeries, MatchedPerson, MatchedEpisode, TaskInfo } from './types';
-import { playMedia, openFolder, isMpcBeReachable, fetchResumePositions, normalizeMediaPath } from './api';
+import { playMedia, openFolder, isMpcBeReachable, fetchResumePositions, normalizeMediaPath, getPlayerStatus } from './api';
 import { useKeyboardNavigation } from './composables/useKeyboardNavigation';
 import { useMediaWebSocket } from './composables/useMediaWebSocket';
 import Header from './components/Header.vue';
@@ -225,6 +225,15 @@ function stopMpcBePolling() {
 
 async function refreshResumePositions() {
   resumePositions.value = await fetchResumePositions();
+}
+
+async function refreshPlayerStatus() {
+  try {
+    const status = await getPlayerStatus();
+    mpcBeConnected.value = status.remote;
+  } catch {
+    mpcBeConnected.value = false;
+  }
 }
 
 function hasResumePosition(filePath: string | null) {
@@ -379,6 +388,7 @@ function handleEscapeKey(event: KeyboardEvent) {
 }
 
 onMounted(() => {
+  void refreshPlayerStatus();
   void refreshResumePositions();
   document.addEventListener('keydown', handleEscapeKey);
   window.addEventListener('mediahive:gamepad-action', onGamepadAction as EventListener);
@@ -501,15 +511,11 @@ function movieToMediaItem(movie: Movie): MediaItem {
   const torrents = Object.values(movie.torrents || {});
   const resolution = torrents.length > 0 ? torrents[0].resolution : null;
 
-  // Use first showreel image as fallback if no cover
-  const coverPath = movie.cover_path ||
-    (movie.showreel_images && movie.showreel_images.length > 0 ? movie.showreel_images[0] : null);
-
   return {
     id: movie.id,
     title: movie.title || 'Unknown',
     year: movie.year,
-    cover_path: coverPath,
+    cover_path: movie.cover_path,
     showreel_images: movie.showreel_images,
     type: 'movies',
     resolution: resolution,
@@ -528,14 +534,11 @@ function seriesToMediaItem(series: Series): MediaItem {
     }
   }
 
-  // Use first reel image as fallback if no cover
-  const coverPath = series.cover_path || (reelImages.length > 0 ? reelImages[0] : null);
-
   return {
     id: series.id,
     title: series.title || 'Unknown',
     year: null,
-    cover_path: coverPath,
+    cover_path: series.cover_path,
     showreel_images: reelImages.length > 0 ? reelImages : null,
     type: 'series',
     data: series,
