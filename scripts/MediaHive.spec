@@ -1,12 +1,13 @@
-# MediaHive.spec  — PyInstaller build for the Windows GUI application
+# MediaHive.spec  — PyInstaller build for the MediaHive desktop GUI app
 #
 # Build manually (from repo root):
-#   uv run --no-project --python 3.14 --with ".[gui]" --with pyinstaller ^
+#   uv run --no-project --python 3.14 --with ".[gui]" --with pyinstaller \
 #     pyinstaller --noconfirm --clean scripts/MediaHive.spec
 #
 # Or use the build script (recommended—handles versioning and packaging):
-#   uv run scripts/build_windows_gui.py
+#   uv run scripts/winbuild.py
 
+import sys
 import mediahive.winmain
 import mediahive.server
 from pathlib import Path
@@ -15,22 +16,31 @@ block_cipher = None
 
 _pkg = Path(mediahive.server.__file__).parent
 _frontend_build = _pkg / "frontend-build"
-_icon = _pkg / "assets" / "mediahive.ico"
-_ffmpeg = Path(SPECPATH).parent / "build" / "ffmpeg" / "ffmpeg.exe"
+_icon_win = _pkg / "assets" / "mediahive.ico"
+_icon_mac = _pkg / "assets" / "mediahive.icns"
+_tools_dir = Path(SPECPATH).parent / "build" / "ffmpeg"
+_tool_names = ["ffmpeg.exe"] if sys.platform == "win32" else ["ffmpeg", "ffprobe"]
+
+_binaries = []
+for _tool_name in _tool_names:
+    _tool_path = _tools_dir / _tool_name
+    if _tool_path.exists():
+        _binaries.append((str(_tool_path), "."))
+
+_datas = [
+    # Bundled Vue frontend served by the FastAPI backend
+    (str(_frontend_build), "mediahive/frontend-build"),
+]
+if _icon_win.exists():
+    _datas.append((str(_icon_win), "mediahive/assets"))
+if _icon_mac.exists():
+    _datas.append((str(_icon_mac), "mediahive/assets"))
 
 a = Analysis(
     [mediahive.winmain.__file__],
     pathex=[],
-    binaries=[
-        # Bundle ffmpeg so showreel generation works without a system install.
-        # Populated by build_windows_gui.py before PyInstaller runs.
-        (str(_ffmpeg), "."),
-    ],
-    datas=[
-        # Bundled Vue frontend served by the FastAPI backend
-        (str(_frontend_build), "mediahive/frontend-build"),
-        (str(_icon), "mediahive/assets"),
-    ],
+    binaries=_binaries,
+    datas=_datas,
     hiddenimports=[
         # uvicorn dynamic imports
         "uvicorn.logging",
@@ -80,7 +90,11 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    icon=str(_icon),
+    icon=(
+        str(_icon_mac)
+        if sys.platform == "darwin" and _icon_mac.exists()
+        else str(_icon_win) if _icon_win.exists() else None
+    ),
     # windowed=True hides the console; the backend subprocess inherits this
     console=False,
     windowed=True,
@@ -96,3 +110,11 @@ coll = COLLECT(
     upx_exclude=[],
     name="MediaHive",
 )
+
+if sys.platform == "darwin":
+    app = BUNDLE(
+        coll,
+        name="MediaHive.app",
+        icon=str(_icon_mac) if _icon_mac.exists() else None,
+        bundle_identifier="fi.zi.mediahive",
+    )

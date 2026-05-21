@@ -31,6 +31,7 @@ REPO_ROOT = Path(__file__).parent.parent
 # Config / token helpers
 # ---------------------------------------------------------------------------
 
+
 def load_gitea_config() -> dict:
     pyproject = REPO_ROOT / "pyproject.toml"
     with open(pyproject, "rb") as f:
@@ -41,7 +42,9 @@ def load_gitea_config() -> dict:
     parsed = urlparse(repo_url.rstrip("/"))
     parts = parsed.path.lstrip("/").split("/", 1)
     if len(parts) != 2:
-        raise RuntimeError("[project.urls] Repository must include owner and repo, e.g. https://git.example.com/owner/repo")
+        raise RuntimeError(
+            "[project.urls] Repository must include owner and repo, e.g. https://git.example.com/owner/repo"
+        )
     return {
         "url": f"{parsed.scheme}://{parsed.netloc}",
         "repo": f"{parts[0]}/{parts[1]}",
@@ -59,19 +62,19 @@ def load_token() -> str:
 # ZIP + dist helpers
 # ---------------------------------------------------------------------------
 
-# Matches MediaHive-1.2.3-win64.zip or MediaHive-1.2.3.4-win64.zip
-# Rejects dev/dirty names like MediaHive-1.2.3.dev0+gabcd-win64.zip
-_CLEAN_ZIP_RE = re.compile(r"^MediaHive-(\d+(?:\.\d+)*)-win64\.zip$")
+# Matches MediaHive-1.2.3-win64.zip, MediaHive-1.2.3-macos-arm64.zip, etc.
+# Rejects dev/dirty versions like MediaHive-1.2.3.dev0+gabcd-win64.zip
+_CLEAN_ZIP_RE = re.compile(r"^MediaHive-(\d+(?:\.\d+)*)-([A-Za-z0-9._-]+)\.zip$")
 
 
-def find_releasable_zips() -> list[tuple[Path, str]]:
-    """Return (path, version) pairs for clean-versioned ZIPs in build/."""
+def find_releasable_zips() -> list[tuple[Path, str, str]]:
+    """Return (path, version, platform_tag) for clean-versioned ZIPs in build/."""
     build_dir = REPO_ROOT / "build"
     results = []
-    for p in sorted(build_dir.glob("MediaHive-*-win64.zip")):
+    for p in sorted(build_dir.glob("MediaHive-*.zip")):
         m = _CLEAN_ZIP_RE.match(p.name)
         if m:
-            results.append((p, m.group(1)))
+            results.append((p, m.group(1), m.group(2)))
     return results
 
 
@@ -82,12 +85,13 @@ def find_dist_files(version: str) -> list[Path]:
     """
     dist_dir = REPO_ROOT / "dist"
     ver = re.escape(version)
-    wheel = next(
-        (p for p in dist_dir.glob(f"mediahive-{version}-*.whl")), None
-    )
+    wheel = next((p for p in dist_dir.glob(f"mediahive-{version}-*.whl")), None)
     sdist = next(
-        (p for p in dist_dir.glob(f"mediahive-{version}.*")
-         if p.suffix in (".gz", ".zip") and p.name != f"mediahive-{version}.zip"),
+        (
+            p
+            for p in dist_dir.glob(f"mediahive-{version}.*")
+            if p.suffix in (".gz", ".zip") and p.name != f"mediahive-{version}.zip"
+        ),
         None,
     )
     missing = []
@@ -107,6 +111,7 @@ def find_dist_files(version: str) -> list[Path]:
 # ---------------------------------------------------------------------------
 # Gitea API helpers
 # ---------------------------------------------------------------------------
+
 
 def gitea_headers(token: str) -> dict:
     return {"Authorization": f"token {token}", "Accept": "application/json"}
@@ -132,9 +137,7 @@ def create_release(
     }
     resp = client.post(url, json=payload)
     if resp.status_code == 409:
-        raise RuntimeError(
-            f"A release for tag '{tag}' already exists on Gitea."
-        )
+        raise RuntimeError(f"A release for tag '{tag}' already exists on Gitea.")
     resp.raise_for_status()
     release_id = resp.json()["id"]
     print(f"Created release id={release_id} (draft={draft})")
@@ -169,10 +172,15 @@ def upload_asset(
 # Entrypoint
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Publish a MediaHive release to Gitea")
-    parser.add_argument("--draft", action="store_true", help="Create as a draft release")
-    parser.add_argument("--notes", default="", metavar="TEXT", help="Release notes body")
+    parser.add_argument(
+        "--draft", action="store_true", help="Create as a draft release"
+    )
+    parser.add_argument(
+        "--notes", default="", metavar="TEXT", help="Release notes body"
+    )
     args = parser.parse_args()
 
     try:
@@ -188,29 +196,32 @@ def main() -> None:
 
         # Validate all dist files exist before touching Gitea
         dist_files: dict[str, list[Path]] = {}
-        for _, version in zips:
+        for _, version, _platform_tag in zips:
             dist_files[version] = find_dist_files(version)
 
         base_url = cfg["url"].rstrip("/")
         repo = cfg["repo"]
 
         with httpx.Client(headers=gitea_headers(token)) as client:
-            for zip_path, version in zips:
+            release_ids_by_version: dict[str, int] = {}
+            for zip_path, version, platform_tag in zips:
                 print(f"\nReleasing {version} ...")
                 tag = f"v{version}"
-                release_id = create_release(
-                    client, base_url, repo, tag, version, args.notes, args.draft
-                )
-                for path in [zip_path, *dist_files[version]]:
-                    upload_asset(client, base_url, repo, release_id, path)
+                release_id = release_ids_by_version.get(version)
+                if release_id is None:
+                    release_id = create_release(
+                        client, base_url, repo, tag, version, args.notes, args.draft
+                    )
+                    release_ids_by_version[version] = release_id
+                    for path in dist_files[version]:
+                        upload_asset(client, base_url, repo, release_id, path)
+
+                print(f"Uploading platform artifact: {platform_tag}")
+                upload_asset(client, base_url, repo, release_id, zip_path)
                 print(f"  ✓ {tag} published")
 
         print("\nDone. To publish to PyPI, run:")
         print("  uv publish")
-
-    except Exception as e:
-        print(f"✗ Release failed: {e}", file=sys.stderr)
-        sys.exit(1)
 
     except Exception as e:
         print(f"✗ Release failed: {e}", file=sys.stderr)

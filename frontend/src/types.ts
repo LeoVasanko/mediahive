@@ -61,6 +61,7 @@ export interface Movie {
   cover_path: string | null;
   backdrop_path: string | null;
   showreel_images: string[] | null;
+  showreel_source_sets: string[][] | null;
   torrents: { [key: string]: Torrent };
 }
 
@@ -74,6 +75,7 @@ export interface Episode {
   rating: number | null;
   director: string | null;
   reel_image: string | null;
+  reel_sources: string[] | null;
   torrents: { [key: string]: Torrent };
 }
 
@@ -144,6 +146,7 @@ export interface MediaItem {
   year?: number | null;
   cover_path: string | null;
   showreel_images?: string[] | null;
+  showreel_source_sets?: string[][] | null;
   type: MediaType;
   resolution?: string | null;
   data: Movie | Series | EpisodeWithSeries;

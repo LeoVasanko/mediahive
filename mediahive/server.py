@@ -11,6 +11,7 @@ import json
 import logging
 import mimetypes
 import os
+import re
 import subprocess
 import sys
 import urllib.error
@@ -31,6 +32,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi_vue import Frontend
 
+from mediahive.__main__ import DEVMODE
 from mediahive.config import load_config, save_config
 from mediahive.hivescan.scanner import start as start_scanner
 from mediahive.hivescan.scanner import stop as stop_scanner
@@ -39,14 +41,14 @@ from mediahive.models.events import ScanEvent, Task, Upsert
 from mediahive.models.protocol import (
     ChangeFolderRequest,
     MsgspecResponse,
-    PlayMediaRequest,
     OpenFolderRequest,
+    PlayMediaRequest,
     StatusResponse,
 )
 
-from mediahive.__main__ import DEVMODE
-
 logger = logging.getLogger("mediahive.server")
+
+MPC_BE_BASE_URL = "http://127.0.0.1:13579"
 
 # Vue Frontend static files
 frontend = Frontend(Path(__file__).with_name("frontend-build"), cached=["/assets/"])
@@ -63,11 +65,54 @@ _scanner_active = False
 # Queue for scanner → server events
 _scan_events: asyncio.Queue[ScanEvent] = asyncio.Queue()
 _consumer_task: asyncio.Task | None = None
+_RANGE_RE = re.compile(r"bytes=(\d*)-(\d*)$")
 
 
 async def _send_event(event: ScanEvent) -> None:
     """Push a scan event onto the queue (passed to hivescan as *send*)."""
     await _scan_events.put(event)
+
+
+def _parse_range_header(range_header: str, file_size: int) -> tuple[int, int]:
+    """Parse a single HTTP bytes range header into inclusive start/end offsets."""
+    match = _RANGE_RE.fullmatch(range_header.strip())
+    if not match:
+        raise HTTPException(
+            status_code=416,
+            detail="Invalid Range header",
+            headers={"Content-Range": f"bytes */{file_size}"},
+        )
+
+    start_str, end_str = match.groups()
+    if not start_str and not end_str:
+        raise HTTPException(
+            status_code=416,
+            detail="Invalid Range header",
+            headers={"Content-Range": f"bytes */{file_size}"},
+        )
+
+    if not start_str:
+        suffix_length = int(end_str)
+        if suffix_length <= 0:
+            raise HTTPException(
+                status_code=416,
+                detail="Invalid Range header",
+                headers={"Content-Range": f"bytes */{file_size}"},
+            )
+        start = max(file_size - suffix_length, 0)
+        end = file_size - 1
+    else:
+        start = int(start_str)
+        end = int(end_str) if end_str else file_size - 1
+
+    if file_size <= 0 or start >= file_size or start < 0 or end < start:
+        raise HTTPException(
+            status_code=416,
+            detail="Requested range not satisfiable",
+            headers={"Content-Range": f"bytes */{file_size}"},
+        )
+
+    return start, min(end, file_size - 1)
 
 
 async def _consume_scan_events() -> None:
@@ -111,6 +156,8 @@ async def lifespan(app: FastAPI):
     # Start the scanner subsystem
     from mediahive.hivescan.scanner import (
         start as start_scanner,
+    )
+    from mediahive.hivescan.scanner import (
         stop as stop_scanner,
     )
 
@@ -170,6 +217,15 @@ def _load_resume_positions() -> dict[str, int]:
     return cleaned
 
 
+def _open_with_default_app(path: Path) -> None:
+    if sys.platform == "win32":
+        os.startfile(str(path))
+        return
+
+    opener = "open" if sys.platform == "darwin" else "xdg-open"
+    subprocess.Popen([opener, str(path)], **_POPEN_KWARGS)
+
+
 # === API Endpoints ===
 
 
@@ -197,7 +253,9 @@ async def change_folder_endpoint(request: Request):
     body = msgspec.json.decode(await request.body(), type=ChangeFolderRequest)
     new_root = Path(body.folder).resolve()
     if not new_root.exists() or not new_root.is_dir():
-        raise HTTPException(status_code=400, detail=f"Folder does not exist: {new_root}")
+        raise HTTPException(
+            status_code=400, detail=f"Folder does not exist: {new_root}"
+        )
 
     # Persist first — if the background switch crashes, the next launch still uses the new path
     cfg = load_config()
@@ -326,13 +384,7 @@ async def play_media(request: Request):
         raise HTTPException(status_code=404, detail=f"File not found: {req.file_path}")
 
     try:
-        # Use os.startfile on Windows (non-blocking)
-        if sys.platform == "win32":
-            os.startfile(str(file_path))
-        else:
-            # For other platforms, use xdg-open or open
-            opener = "open" if sys.platform == "darwin" else "xdg-open"
-            subprocess.Popen([opener, str(file_path)])
+        _open_with_default_app(file_path)
 
         return {"status": "ok"}
 
@@ -360,7 +412,9 @@ async def open_folder(request: Request):
         if sys.platform == "win32":
             if target_path.is_file():
                 # Open parent folder and select the file
-                subprocess.Popen(["explorer", "/select,", str(target_path)], **_POPEN_KWARGS)
+                subprocess.Popen(
+                    ["explorer", "/select,", str(target_path)], **_POPEN_KWARGS
+                )
             else:
                 # Open the folder directly
                 subprocess.Popen(["explorer", str(target_path)], **_POPEN_KWARGS)
@@ -382,12 +436,15 @@ async def open_folder(request: Request):
 
 def _mpcbe_request(path: str, timeout: float = 0.75) -> bool:
     """Call MPC-BE's local web interface and return True on HTTP success."""
-    url = f"http://127.0.0.1:13579{path}"
+    if sys.platform != "win32":
+        return False
+
+    url = f"{MPC_BE_BASE_URL}{path}"
     req = urllib.request.Request(url=url, method="GET")
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return 200 <= resp.status < 300
-    except (urllib.error.URLError, TimeoutError, OSError):
+    except urllib.error.URLError, TimeoutError, OSError:
         return False
 
 
@@ -397,8 +454,14 @@ async def mpcbe_status():
     return {"reachable": _mpcbe_request("/")}
 
 
+@app.get("/api/player/status")
+async def player_status():
+    """Return whether remote player control is currently available."""
+    return {"remote": _mpcbe_request("/")}
+
+
 @app.get("/api/media/{file_path:path}")
-async def serve_media_file(file_path: str):
+async def serve_media_file(file_path: str, request: Request):
     """
     Serve a media file asynchronously.
     """
@@ -416,6 +479,8 @@ async def serve_media_file(file_path: str):
     if not full_path.is_file():
         raise HTTPException(status_code=400, detail="Not a file")
 
+    file_size = full_path.stat().st_size
+
     # Guess content type
     content_type, _ = mimetypes.guess_type(str(full_path))
     if content_type is None:
@@ -431,18 +496,40 @@ async def serve_media_file(file_path: str):
             },
         )
 
-    # For larger files, stream them
-    async def stream_file():
+    async def stream_file(start: int, end: int):
         async with aiofiles.open(full_path, "rb") as f:
-            while chunk := await f.read(64 * 1024):
+            await f.seek(start)
+            remaining = end - start + 1
+            while remaining > 0:
+                chunk = await f.read(min(64 * 1024, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
                 yield chunk
 
+    headers = {
+        "Cache-Control": "public, max-age=86400",
+        "Accept-Ranges": "bytes",
+    }
+
+    range_header = request.headers.get("range")
+    if range_header:
+        start, end = _parse_range_header(range_header, file_size)
+        headers["Content-Range"] = f"bytes {start}-{end}/{file_size}"
+        headers["Content-Length"] = str(end - start + 1)
+        return StreamingResponse(
+            stream_file(start, end),
+            status_code=206,
+            media_type=content_type,
+            headers=headers,
+        )
+
+    headers["Content-Length"] = str(file_size)
+
     return StreamingResponse(
-        stream_file(),
+        stream_file(0, file_size - 1),
         media_type=content_type,
-        headers={
-            "Cache-Control": "public, max-age=86400",
-        },
+        headers=headers,
     )
 
 

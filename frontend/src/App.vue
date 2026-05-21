@@ -517,6 +517,7 @@ function movieToMediaItem(movie: Movie): MediaItem {
     year: movie.year,
     cover_path: movie.cover_path,
     showreel_images: movie.showreel_images,
+    showreel_source_sets: movie.showreel_source_sets,
     type: 'movies',
     resolution: resolution,
     data: movie,
@@ -526,10 +527,15 @@ function movieToMediaItem(movie: Movie): MediaItem {
 function seriesToMediaItem(series: Series): MediaItem {
   // For series, collect reel images from all episodes
   const reelImages: string[] = [];
+  const reelSourceSets: string[][] = [];
   for (const season of series.seasons || []) {
     for (const episode of season.episodes || []) {
-      if (episode.reel_image) {
+      if (episode.reel_sources && episode.reel_sources.length > 0) {
+        reelImages.push(episode.reel_sources[0]);
+        reelSourceSets.push(episode.reel_sources);
+      } else if (episode.reel_image) {
         reelImages.push(episode.reel_image);
+        reelSourceSets.push([episode.reel_image]);
       }
     }
   }
@@ -540,6 +546,7 @@ function seriesToMediaItem(series: Series): MediaItem {
     year: null,
     cover_path: series.cover_path,
     showreel_images: reelImages.length > 0 ? reelImages : null,
+    showreel_source_sets: reelSourceSets.length > 0 ? reelSourceSets : null,
     type: 'series',
     data: series,
   };

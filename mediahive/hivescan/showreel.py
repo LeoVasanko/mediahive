@@ -21,6 +21,7 @@ from aiopathlib import AsyncPath
 
 logger = logging.getLogger("hivescan.showreel")
 
+
 # Suppress console windows when spawning subprocesses on Windows
 async def _subprocess_exec(*args, **kwargs):
     """Wrap asyncio.create_subprocess_exec to hide console windows on Windows."""
@@ -31,6 +32,50 @@ async def _subprocess_exec(*args, **kwargs):
 
 # Showreel timestamp positions in seconds (5, 10, 15, 20, 25 minutes)
 SHOWREEL_TIMESTAMPS = [5 * 60, 10 * 60, 15 * 60, 20 * 60, 25 * 60]
+REEL_SOURCE_EXTENSIONS = [".webm", ".mp4"]
+
+
+def get_reel_source_extensions() -> list[str]:
+    """Return reel source extensions in client preference order."""
+    return REEL_SOURCE_EXTENSIONS.copy()
+
+
+def _to_media_path(path: Path, media_root: Optional[Path] = None) -> str:
+    """Convert an absolute reel file path to a media-root-relative path when possible."""
+    if media_root:
+        try:
+            return str(path.relative_to(media_root))
+        except ValueError:
+            return str(path)
+    return str(path)
+
+
+def get_reel_extension() -> str:
+    """Return the platform-native reel file extension."""
+    return ".mp4" if sys.platform == "darwin" else ".webm"
+
+
+async def get_reel_video_encoder() -> str:
+    """Return the platform-native reel video encoder."""
+    if sys.platform == "darwin":
+        return "libx265"
+    return await get_av1_encoder()
+
+
+def get_reel_video_options(encoder: str) -> list[str]:
+    """Return ffmpeg video encoder options for the chosen reel encoder."""
+    if encoder == "libx265":
+        return ["-crf", "28", "-preset", "medium", "-tag:v", "hvc1"]
+    if encoder == "av1_nvenc":
+        return ["-cq", "35", "-preset", "p4"]
+    return ["-crf", "38", "-preset", "6"]
+
+
+def get_reel_audio_options() -> list[str]:
+    """Return ffmpeg audio and container options for the current platform."""
+    if sys.platform == "darwin":
+        return ["-c:a", "aac", "-ac", "2", "-b:a", "128k", "-movflags", "+faststart"]
+    return ["-c:a", "libopus", "-ac", "2", "-b:a", "128k"]
 
 
 def get_expected_showreel_paths(
@@ -47,11 +92,12 @@ def get_expected_showreel_paths(
         media_root: Root path for computing relative paths (optional)
 
     Returns:
-        List of relative paths where showreels will be created
+        List of relative paths where showreels will be created for this platform
     """
     paths = []
+    extension = get_reel_extension()
     for reel_num in range(1, len(timestamps) + 1):
-        output_path = media_folder / f"reel{reel_num}.webm"
+        output_path = media_folder / f"reel{reel_num}{extension}"
         if media_root:
             try:
                 paths.append(str(output_path.relative_to(media_root)))
@@ -78,9 +124,11 @@ def get_expected_episode_reel_path(
         media_root: Root path for computing relative paths (optional)
 
     Returns:
-        Relative path where the reel will be created
+        Relative path where the reel will be created for this platform
     """
-    output_path = media_folder / f"S{season_num:02d}E{episode_num:02d}.webm"
+    output_path = (
+        media_folder / f"S{season_num:02d}E{episode_num:02d}{get_reel_extension()}"
+    )
     if media_root:
         try:
             return str(output_path.relative_to(media_root))
@@ -89,12 +137,76 @@ def get_expected_episode_reel_path(
     return str(output_path)
 
 
+def get_existing_showreel_paths(
+    media_folder: Path,
+    timestamps: list[int] = SHOWREEL_TIMESTAMPS,
+    media_root: Optional[Path] = None,
+) -> list[str]:
+    """Return preferred existing showreel paths, one per reel slot, in AV1-first order."""
+    source_sets = get_existing_showreel_source_sets(
+        media_folder,
+        timestamps=timestamps,
+        media_root=media_root,
+    )
+    return [sources[0] for sources in source_sets if sources]
+
+
+def get_existing_showreel_source_sets(
+    media_folder: Path,
+    timestamps: list[int] = SHOWREEL_TIMESTAMPS,
+    media_root: Optional[Path] = None,
+) -> list[list[str]]:
+    """Return all existing showreel source files for each reel slot in AV1-first order."""
+    source_sets: list[list[str]] = []
+    for reel_num in range(1, len(timestamps) + 1):
+        sources = [
+            _to_media_path(media_folder / f"reel{reel_num}{extension}", media_root)
+            for extension in get_reel_source_extensions()
+            if (media_folder / f"reel{reel_num}{extension}").exists()
+        ]
+        if sources:
+            source_sets.append(sources)
+    return source_sets
+
+
+def get_existing_episode_reel_path(
+    media_folder: Path,
+    season_num: int,
+    episode_num: int,
+    media_root: Optional[Path] = None,
+) -> str | None:
+    """Return the preferred existing episode reel path in AV1-first order."""
+    sources = get_existing_episode_reel_sources(
+        media_folder,
+        season_num,
+        episode_num,
+        media_root=media_root,
+    )
+    return sources[0] if sources else None
+
+
+def get_existing_episode_reel_sources(
+    media_folder: Path,
+    season_num: int,
+    episode_num: int,
+    media_root: Optional[Path] = None,
+) -> list[str]:
+    """Return all existing episode reel source files in AV1-first order."""
+    ep_code = f"S{season_num:02d}E{episode_num:02d}"
+    return [
+        _to_media_path(media_folder / f"{ep_code}{extension}", media_root)
+        for extension in get_reel_source_extensions()
+        if (media_folder / f"{ep_code}{extension}").exists()
+    ]
+
+
 async def movie_showreels_exist(
     media_folder: Path, timestamps: list[int] = SHOWREEL_TIMESTAMPS
 ) -> bool:
-    """Check if all showreel files for a movie already exist."""
+    """Check if all platform-native showreel files for a movie already exist."""
+    extension = get_reel_extension()
     for reel_num in range(1, len(timestamps) + 1):
-        if not await AsyncPath(media_folder / f"reel{reel_num}.webm").exists():
+        if not await AsyncPath(media_folder / f"reel{reel_num}{extension}").exists():
             return False
     return True
 
@@ -102,9 +214,9 @@ async def movie_showreels_exist(
 async def episode_reel_exists(
     media_folder: Path, season_num: int, episode_num: int
 ) -> bool:
-    """Check if an episode reel file already exists."""
+    """Check if a platform-native episode reel file already exists."""
     return await AsyncPath(
-        media_folder / f"S{season_num:02d}E{episode_num:02d}.webm"
+        media_folder / f"S{season_num:02d}E{episode_num:02d}{get_reel_extension()}"
     ).exists()
 
 
@@ -536,8 +648,8 @@ async def generate_showreel_images(
     """
     Generate showreel video clips from a video file at specified timestamps.
 
-    Saves 10-second clips in WebM format (AV1 video + Opus 2.0 audio), downscaled to max 720px width,
-    preserving original color metadata. Files are named reel1.webm, reel2.webm, etc.
+    Saves 10-second clips in a platform-native format, downscaled to max 720px width,
+    preserving original color metadata. macOS emits MP4/H.265; other platforms emit WebM/AV1.
 
     Args:
         video_path: Path to the video file (or index.bdmv for Blu-ray discs)
@@ -568,8 +680,9 @@ async def generate_showreel_images(
     # Fast path: check if all showreel clips already exist before any ffprobe calls
     existing_paths = []
     all_exist = True
+    extension = get_reel_extension()
     for reel_num in range(1, len(timestamps) + 1):
-        output_filename = f"reel{reel_num}.webm"
+        output_filename = f"reel{reel_num}{extension}"
         output_path = media_folder / output_filename
         if await AsyncPath(output_path).exists():
             existing_paths.append(str(output_path))
@@ -603,9 +716,9 @@ async def generate_showreel_images(
             )
             return []
 
-    # Get the best available AV1 encoder
-    encoder = await get_av1_encoder()
-    encoder_opts = get_encoder_options(encoder)
+    encoder = await get_reel_video_encoder()
+    encoder_opts = get_reel_video_options(encoder)
+    audio_opts = get_reel_audio_options()
 
     # Detect Dolby Vision profile for tonemapping (profiles 5/7 need conversion)
     dovi_profile = await detect_dovi_profile(ffmpeg_input)
@@ -619,7 +732,7 @@ async def generate_showreel_images(
     generated_paths = []
 
     for reel_num, timestamp in enumerate(valid_timestamps, 1):
-        output_filename = f"reel{reel_num}.webm"
+        output_filename = f"reel{reel_num}{extension}"
         output_path = media_folder / output_filename
 
         # Skip if already exists
@@ -662,12 +775,7 @@ async def generate_showreel_images(
             "-c:v",
             encoder,
             *encoder_opts,
-            "-c:a",
-            "libopus",
-            "-ac",
-            "2",
-            "-b:a",
-            "128k",
+            *audio_opts,
             str(output_path),
         ]
 
@@ -736,9 +844,8 @@ async def generate_episode_reel(
     """
     Generate a single 10-second reel video clip for a TV episode.
 
-    Saves clip as SxxExx.webm (e.g., S01E05.webm) in the series folder.
-    WebM container with AV1 video + Opus 2.0 audio, downscaled to max 720px width,
-    preserving original color metadata.
+    Saves a platform-native clip such as S01E05.mp4 on macOS or S01E05.webm elsewhere.
+    The clip is downscaled to max 720px width while preserving original color metadata.
 
     Args:
         video_path: Path to the episode video file (or index.bdmv for Blu-ray discs)
@@ -768,8 +875,8 @@ async def generate_episode_reel(
 
     await AsyncPath(media_folder).mkdir(parents=True, exist_ok=True)
 
-    # Normalize episode code to SxxExx format
-    output_filename = f"{ep_code}.webm"
+    extension = get_reel_extension()
+    output_filename = f"{ep_code}{extension}"
     output_path = media_folder / output_filename
 
     # Skip if already exists
@@ -789,9 +896,9 @@ async def generate_episode_reel(
     # Ensure we're at least 10 seconds in and have room for 10s clip
     actual_timestamp = max(10, min(actual_timestamp, duration - 40))
 
-    # Get the best available AV1 encoder
-    encoder = await get_av1_encoder()
-    encoder_opts = get_encoder_options(encoder)
+    encoder = await get_reel_video_encoder()
+    encoder_opts = get_reel_video_options(encoder)
+    audio_opts = get_reel_audio_options()
 
     # Detect Dolby Vision profile for tonemapping (profiles 5/7 need conversion)
     dovi_profile = await detect_dovi_profile(ffmpeg_input)
@@ -835,12 +942,7 @@ async def generate_episode_reel(
         "-c:v",
         encoder,
         *encoder_opts,
-        "-c:a",
-        "libopus",
-        "-ac",
-        "2",
-        "-b:a",
-        "128k",
+        *audio_opts,
         str(output_path),
     ]
 

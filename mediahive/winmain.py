@@ -5,31 +5,31 @@ Or from PyInstaller: MediaHive.exe [media_folder]
 """
 
 import argparse
-from concurrent.futures import Future, ThreadPoolExecutor
 import ctypes
 import html
 import json
 import logging
 import os
 import re
+import socket
 import sys
 import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 
+import msgspec.structs
 import uvicorn
 import webview
-import msgspec.structs
 
-from mediahive.__main__ import DEFAULT_PORT, resolve_media_root
-from mediahive.config import Config, load_config, save_config
+from mediahive.__main__ import resolve_media_root
+from mediahive.config import load_config, save_config
 
 BACKEND_HOST = "127.0.0.1"
 BACKEND_PORT = 8420
-BACKEND_URL = f"http://{BACKEND_HOST}:{BACKEND_PORT}"
 HEALTH_TIMEOUT = 2  # seconds
 MPC_BE_URL = "http://127.0.0.1:13579"
 GAMEPAD_REPEAT_SECONDS = 0.008
@@ -51,39 +51,39 @@ MPC_BE_PLAYBACK_STATE_FLUSH_SECONDS = 1.0
 
 
 class _XINPUT_GAMEPAD(ctypes.Structure):
-        _fields_ = [
-                ("wButtons", ctypes.c_ushort),
-                ("bLeftTrigger", ctypes.c_ubyte),
-                ("bRightTrigger", ctypes.c_ubyte),
-                ("sThumbLX", ctypes.c_short),
-                ("sThumbLY", ctypes.c_short),
-                ("sThumbRX", ctypes.c_short),
-                ("sThumbRY", ctypes.c_short),
-        ]
+    _fields_ = [
+        ("wButtons", ctypes.c_ushort),
+        ("bLeftTrigger", ctypes.c_ubyte),
+        ("bRightTrigger", ctypes.c_ubyte),
+        ("sThumbLX", ctypes.c_short),
+        ("sThumbLY", ctypes.c_short),
+        ("sThumbRX", ctypes.c_short),
+        ("sThumbRY", ctypes.c_short),
+    ]
 
 
 class _XINPUT_STATE(ctypes.Structure):
-        _fields_ = [
-                ("dwPacketNumber", ctypes.c_ulong),
-                ("Gamepad", _XINPUT_GAMEPAD),
-        ]
+    _fields_ = [
+        ("dwPacketNumber", ctypes.c_ulong),
+        ("Gamepad", _XINPUT_GAMEPAD),
+    ]
 
 
 _XINPUT_BUTTONS = {
-        0x0001: "DPAD_UP",
-        0x0002: "DPAD_DOWN",
-        0x0004: "DPAD_LEFT",
-        0x0008: "DPAD_RIGHT",
-        0x0010: "START",
-        0x0020: "BACK",
-        0x0040: "L3",
-        0x0080: "R3",
-        0x0100: "LB",
-        0x0200: "RB",
-        0x1000: "A",
-        0x2000: "B",
-        0x4000: "X",
-        0x8000: "Y",
+    0x0001: "DPAD_UP",
+    0x0002: "DPAD_DOWN",
+    0x0004: "DPAD_LEFT",
+    0x0008: "DPAD_RIGHT",
+    0x0010: "START",
+    0x0020: "BACK",
+    0x0040: "L3",
+    0x0080: "R3",
+    0x0100: "LB",
+    0x0200: "RB",
+    0x1000: "A",
+    0x2000: "B",
+    0x4000: "X",
+    0x8000: "Y",
 }
 
 _MPC_BE_COMMANDS = {
@@ -188,7 +188,7 @@ def _mpcbe_request(path: str, timeout: float = MPC_BE_REQUEST_TIMEOUT) -> bool:
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return 200 <= resp.status < 300
-    except (urllib.error.URLError, TimeoutError, OSError):
+    except urllib.error.URLError, TimeoutError, OSError:
         return False
 
 
@@ -219,7 +219,7 @@ def _mpcbe_fetch_status() -> tuple[str, int, int, int] | None:
     try:
         with urllib.request.urlopen(req, timeout=MPC_BE_REQUEST_TIMEOUT) as resp:
             response_html = resp.read().decode("utf-8", errors="replace")
-    except (urllib.error.URLError, TimeoutError, OSError):
+    except urllib.error.URLError, TimeoutError, OSError:
         return None
 
     state_match = _STATE_RE.search(response_html)
@@ -238,7 +238,9 @@ def _mpcbe_fetch_status() -> tuple[str, int, int, int] | None:
     )
 
 
-def _start_gamepad_remote(stop_event: threading.Event, media_root: Path) -> threading.Thread:
+def _start_gamepad_remote(
+    stop_event: threading.Event, media_root: Path
+) -> threading.Thread:
     """Start background XInput polling and send mapped commands to MPC-BE."""
     get_state = _load_xinput_get_state()
     last_connected = [False, False, False, False]
@@ -248,7 +250,10 @@ def _start_gamepad_remote(stop_event: threading.Event, media_root: Path) -> thre
     last_repeat_at = [
         {
             mask: 0.0
-            for mask in (*_MPC_BE_COMMANDS.keys(), *_MPC_BE_SEEK_MASK_TO_COMMANDS.keys())
+            for mask in (
+                *_MPC_BE_COMMANDS.keys(),
+                *_MPC_BE_SEEK_MASK_TO_COMMANDS.keys(),
+            )
         }
         for _ in range(4)
     ]
@@ -283,13 +288,19 @@ def _start_gamepad_remote(stop_event: threading.Event, media_root: Path) -> thre
         pending_requests.append(request_pool.submit(_send_mpcbe_command, command_id))
 
     def queue_seek_to_position(position_ms: int) -> None:
-        pending_requests.append(request_pool.submit(_seek_mpcbe_to_position, position_ms))
+        pending_requests.append(
+            request_pool.submit(_seek_mpcbe_to_position, position_ms)
+        )
 
     def flush_playback_state() -> None:
         _save_playback_state(playback_state_path, playback_state)
 
     def clear_tracked_current(*, clear_resume_applied: bool) -> None:
-        nonlocal tracked_media_key, tracked_filepath, last_playback_state_flush_at, resume_applied_for_key
+        nonlocal \
+            tracked_media_key, \
+            tracked_filepath, \
+            last_playback_state_flush_at, \
+            resume_applied_for_key
         if tracked_media_key is None and playback_state.get("current") is None:
             if clear_resume_applied:
                 resume_applied_for_key = None
@@ -303,7 +314,11 @@ def _start_gamepad_remote(stop_event: threading.Event, media_root: Path) -> thre
         flush_playback_state()
 
     def finalize_tracked_current() -> None:
-        nonlocal tracked_media_key, tracked_filepath, resume_applied_for_key, last_playback_state_flush_at
+        nonlocal \
+            tracked_media_key, \
+            tracked_filepath, \
+            resume_applied_for_key, \
+            last_playback_state_flush_at
         if tracked_media_key is None:
             if playback_state.get("current") is not None:
                 playback_state["current"] = None
@@ -328,7 +343,10 @@ def _start_gamepad_remote(stop_event: threading.Event, media_root: Path) -> thre
         nonlocal last_playback_state_flush_at
         if tracked_media_key is None:
             return
-        if not force and now - last_playback_state_flush_at < MPC_BE_PLAYBACK_STATE_FLUSH_SECONDS:
+        if (
+            not force
+            and now - last_playback_state_flush_at < MPC_BE_PLAYBACK_STATE_FLUSH_SECONDS
+        ):
             return
 
         playback_state["current"] = {
@@ -372,8 +390,17 @@ def _start_gamepad_remote(stop_event: threading.Event, media_root: Path) -> thre
         persist_tracked_current(now, force=True)
 
     def update_status_from_future() -> None:
-        nonlocal status_future, player_filepath, player_position_ms, player_duration_ms, player_state
-        nonlocal status_updated_at, status_miss_count, tracked_media_key, tracked_filepath
+        nonlocal \
+            status_future, \
+            player_filepath, \
+            player_position_ms, \
+            player_duration_ms, \
+            player_state
+        nonlocal \
+            status_updated_at, \
+            status_miss_count, \
+            tracked_media_key, \
+            tracked_filepath
         nonlocal resume_applied_for_key
         if status_future is None or not status_future.done():
             return
@@ -442,14 +469,22 @@ def _start_gamepad_remote(stop_event: threading.Event, media_root: Path) -> thre
     def repeat_seconds_for_seek(mask: int) -> float:
         paused_command, _seek_command = _MPC_BE_SEEK_MASK_TO_COMMANDS[mask]
         with status_lock:
-            active_command = paused_command if player_state == MPC_BE_STATE_PAUSED else None
-        return MPC_BE_FRAME_REPEAT_SECONDS if active_command == paused_command else GAMEPAD_REPEAT_SECONDS
+            active_command = (
+                paused_command if player_state == MPC_BE_STATE_PAUSED else None
+            )
+        return (
+            MPC_BE_FRAME_REPEAT_SECONDS
+            if active_command == paused_command
+            else GAMEPAD_REPEAT_SECONDS
+        )
 
     def _run() -> None:
         try:
             while not stop_event.is_set():
                 now = time.monotonic()
-                pending_requests[:] = [future for future in pending_requests if not future.done()]
+                pending_requests[:] = [
+                    future for future in pending_requests if not future.done()
+                ]
                 update_status_from_future()
                 queue_status_refresh(now)
 
@@ -466,7 +501,8 @@ def _start_gamepad_remote(stop_event: threading.Event, media_root: Path) -> thre
                             seek_begin_fired[slot] = False
                         elif (
                             not seek_begin_fired[slot]
-                            and now - seek_begin_hold_started_at[slot] >= MPC_BE_SEEK_BEGIN_HOLD_SECONDS
+                            and now - seek_begin_hold_started_at[slot]
+                            >= MPC_BE_SEEK_BEGIN_HOLD_SECONDS
                             and len(pending_requests) < MPC_BE_MAX_INFLIGHT_REQUESTS
                         ):
                             queue_command(MPC_BE_SEEK_BEGIN_COMMAND)
@@ -487,7 +523,8 @@ def _start_gamepad_remote(stop_event: threading.Event, media_root: Path) -> thre
                             not should_fire
                             and is_pressed
                             and mask in _MPC_BE_REPEATABLE_MASKS
-                            and now - last_repeat_at[slot][mask] >= GAMEPAD_REPEAT_SECONDS
+                            and now - last_repeat_at[slot][mask]
+                            >= GAMEPAD_REPEAT_SECONDS
                         ):
                             should_fire = True
 
@@ -573,6 +610,7 @@ def _setup_logging() -> Path:
     logging.getLogger("mediahive.winmain").info("MediaHive started")
     return log_path
 
+
 # Minimal branded setup page shown while the native folder dialog is open.
 _SETUP_HTML = """<!DOCTYPE html>
 <html><head><meta charset="utf-8"><style>
@@ -610,7 +648,7 @@ def _prepend_meipass_to_path() -> None:
 
 
 def _wait_for_backend(timeout: int = HEALTH_TIMEOUT) -> bool:
-    url = BACKEND_URL + "/api/health"
+    url = os.environ["MEDIAHIVE_BACKEND_URL"] + "/api/health"
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
@@ -657,6 +695,18 @@ def _run_initial_setup() -> str | None:
     return chosen[0] if chosen else None
 
 
+def _supports_gamepad_remote() -> bool:
+    return sys.platform == "win32"
+
+
+def _reserve_backend_port() -> int:
+    """Reserve an ephemeral localhost port for the embedded backend."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind((BACKEND_HOST, 0))
+        sock.listen(1)
+        return int(sock.getsockname()[1])
+
+
 def winmain() -> None:
     parser = argparse.ArgumentParser(description="MediaHive")
     parser.add_argument(
@@ -673,7 +723,11 @@ def winmain() -> None:
         _setup_logging()
 
     # Resolution order: CLI arg → MEDIAHIVE_PATH env → saved config → ask user
-    folder = args.media_folder or os.environ.get("MEDIAHIVE_PATH") or load_config().media_folder
+    folder = (
+        args.media_folder
+        or os.environ.get("MEDIAHIVE_PATH")
+        or load_config().media_folder
+    )
 
     if not folder:
         folder = _run_initial_setup()
@@ -682,6 +736,10 @@ def winmain() -> None:
 
     mediaroot = resolve_media_root(folder)
     os.environ["MEDIAHIVE_PATH"] = mediaroot.as_posix()
+
+    backend_port = _reserve_backend_port()
+    backend_url = f"http://{BACKEND_HOST}:{backend_port}"
+    os.environ["MEDIAHIVE_BACKEND_URL"] = backend_url
 
     # Persist the resolved path so subsequent launches remember it.
     cfg = load_config()
@@ -693,7 +751,7 @@ def winmain() -> None:
     config = uvicorn.Config(
         "mediahive.server:app",
         host=BACKEND_HOST,
-        port=DEFAULT_PORT,
+        port=backend_port,
         loop="asyncio",
         log_level="warning",
     )
@@ -710,7 +768,7 @@ def winmain() -> None:
     api = JsApi()
     window = webview.create_window(
         title="MediaHive",
-        url=BACKEND_URL,
+        url=backend_url,
         fullscreen=True,
         js_api=api,
     )
@@ -721,7 +779,7 @@ def winmain() -> None:
     def on_shown() -> None:
         api._window = window
         nonlocal poll_thread
-        if poll_thread is None:
+        if poll_thread is None and _supports_gamepad_remote():
             poll_thread = _start_gamepad_remote(poll_stop, mediaroot)
 
     webview.start(func=on_shown, icon=_icon_path())

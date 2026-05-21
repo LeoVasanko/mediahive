@@ -11,8 +11,8 @@ Netflix style browsing of your local media archive. Supports keyboard, mouse and
 - Scans your chosen media folder for all movies and series that can be found
 - Produces preview video clips and downloads metadata
 - Search on cast and character names, not just titles
-- Hand off playback to your preferred Windows player
-- Implement gamepad controls for MPC-BE which does not otherwise support that
+- Hand off playback to your preferred system player
+- Implement gamepad controls for MPC-BE on Windows (where needed)
 
 Extract the ZIP in some place and run MediaHive.exe to start the app. Currently we have no installer, but you can pin to start/taskbar for easier access. On the first startup the app asks for your media folder, that can later be changed by clicking in-app folder icon.
 
@@ -28,11 +28,13 @@ MediaHive is designed to work with a mouse, keyboard, or gamepad.
 | Keyboard | Arrow keys move focus, `Enter` activates the focused item, `Escape` goes back, and `/` jumps to search. |
 | Gamepad | D-pad or left stick moves focus, `A` selects or plays, and `B` goes back. |
 
-## Recommended Player: MPC-BE
+## Recommended Players
 
-For the best playback quality, install [MPC-BE](https://github.com/Aleksoid1978/MPC-BE/releases) and set it as default player so that MediaHive opens video files with it. The MPC Video Renderer is better than other players, having Dolby Vision and other things you may need supported out of the box.
+- Windows: [MPC-BE](https://github.com/Aleksoid1978/MPC-BE/releases)
+- macOS: [IINA](https://iina.io/)
+- Linux: your distro's preferred default media player
 
-For gamepad control, in MPC-BE Options, enable Web Interface, listen on port 13579. MediaHive automatically connects to that port on localhost.
+MediaHive opens files with the OS default app. On Windows, if MPC-BE is your default player and Web Interface is enabled on port `13579`, MediaHive can send gamepad commands to MPC-BE. On macOS and Linux, MediaHive relies on native player controls.
 
 - `A` toggles play and pause.
 - `B` closes the player.

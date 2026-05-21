@@ -1,10 +1,73 @@
 import type { MediaIndex } from './types';
 
+export interface PlayerStatus {
+  remote: boolean;
+}
+
 export function normalizeMediaPath(input: string): string {
   return input
     .replace(/\\/g, '/')
     .replace(/^[A-Za-z]:\//, '')
     .replace(/^\/+/, '');
+}
+
+export function isVideoPath(path: string | null | undefined): boolean {
+  return Boolean(path && /\.(webm|mp4|mkv|avi|mov)$/i.test(path));
+}
+
+export interface VideoSourceAttributes {
+  type: string;
+  codecs: string;
+}
+
+export function isSafariBrowser(): boolean {
+  if (typeof navigator === 'undefined') {
+    return false;
+  }
+
+  const ua = navigator.userAgent;
+  return /Safari/i.test(ua) && !/Chrome|Chromium|CriOS|Edg|OPR|FxiOS/i.test(ua);
+}
+
+export function getVideoPreviewUrl(url: string): string {
+  if (!url || !isSafariBrowser()) {
+    return url;
+  }
+
+  if (url.includes('#')) {
+    return url;
+  }
+
+  // Safari often needs a tiny time offset to paint the first frame before playback.
+  return `${url}#t=0.001`;
+}
+
+export function getVideoSourceAttributes(path: string | null | undefined): VideoSourceAttributes {
+  if (!path) {
+    return { type: 'video/mp4; codecs="hvc1"', codecs: 'hvc1' };
+  }
+
+  if (/\.webm$/i.test(path)) {
+    return { type: 'video/webm; codecs="av01"', codecs: 'av01' };
+  }
+
+  if (/\.mp4$/i.test(path) || /\.m4v$/i.test(path)) {
+    return { type: 'video/mp4; codecs="hvc1"', codecs: 'hvc1' };
+  }
+
+  if (/\.mov$/i.test(path)) {
+    return { type: 'video/quicktime; codecs="hvc1"', codecs: 'hvc1' };
+  }
+
+  if (/\.avi$/i.test(path)) {
+    return { type: 'video/x-msvideo', codecs: '' };
+  }
+
+  if (/\.mkv$/i.test(path)) {
+    return { type: 'video/x-matroska', codecs: '' };
+  }
+
+  return { type: 'video/mp4; codecs="hvc1"', codecs: 'hvc1' };
 }
 
 /**
@@ -40,7 +103,7 @@ export async function playMedia(filePath: string): Promise<void> {
 }
 
 /**
- * Open a folder in Windows Explorer
+ * Open a folder in the system file manager
  */
 export async function openFolder(folderPath: string): Promise<void> {
   const normalizedPath = normalizeMediaPath(folderPath);
@@ -58,6 +121,17 @@ export async function openFolder(folderPath: string): Promise<void> {
     console.error('Open folder error:', e);
     alert(`Failed to open folder.\n\n${e}`);
   }
+}
+
+/**
+ * Return player integration capabilities for the current OS.
+ */
+export async function getPlayerStatus(): Promise<PlayerStatus> {
+  const response = await fetch('/api/player/status');
+  if (!response.ok) {
+    throw new Error(`Failed to load player status: ${response.statusText}`);
+  }
+  return response.json();
 }
 
 /**

@@ -10,7 +10,6 @@ import msgspec
 
 from .tmdb import Info
 
-
 # ---------------------------------------------------------------------------
 # Index item types (the state stored in IndexStore, sent over WS/API)
 # ---------------------------------------------------------------------------
@@ -42,6 +41,7 @@ class Episode(msgspec.Struct):
     rating: float | None = None
     director: str | None = None
     reel_image: str | None = None
+    reel_sources: list[str] | None = None
     torrents: dict[str, Torrent] = {}
 
 
@@ -68,6 +68,7 @@ class Movie(msgspec.Struct):
     cover_path: str | None = None
     backdrop_path: str | None = None
     showreel_images: list[str] | None = None
+    showreel_source_sets: list[list[str]] | None = None
     torrents: dict[str, Torrent] = {}
 
 
@@ -101,7 +102,7 @@ class MediaStats(msgspec.Struct):
 class IndexSnapshot(msgspec.Struct):
     """On-disk recovery snapshot of the full index."""
 
-    version: int = 6
+    version: int = 7
     generated_at: str = ""
     media_root: str | None = None
     stats: MediaStats = msgspec.UNSET  # type: ignore[assignment]

@@ -28,7 +28,8 @@ from mediahive.hivescan.showreel import (
     episode_reel_exists,
     generate_episode_reel,
     generate_showreel_images,
-    get_expected_showreel_paths,
+    get_existing_episode_reel_sources,
+    get_existing_showreel_source_sets,
     movie_showreels_exist,
 )
 from mediahive.hivescan.tmdb_client import set_cache_dir
@@ -560,10 +561,12 @@ async def _showreel_worker():
                     title=title,
                 )
                 if generated:
-                    paths = get_expected_showreel_paths(
+                    source_sets = get_existing_showreel_source_sets(
                         media_folder, media_root=media_root_path
                     )
+                    paths = [sources[0] for sources in source_sets if sources]
                     movie.showreel_images = paths if paths else None
+                    movie.showreel_source_sets = source_sets if source_sets else None
                     await _send(Upsert(kind="movie", item=movie))
                     await _send(
                         Task(
@@ -626,13 +629,26 @@ async def _showreel_worker():
                     episode_num,
                 )
                 if reel_path:
+                    reel_sources = get_existing_episode_reel_sources(
+                        media_folder,
+                        season_num,
+                        episode_num,
+                        media_root=media_root_path,
+                    )
                     for season in series.seasons:
                         if season.season_number == season_num:
                             for episode in season.episodes:
                                 if episode.episode_number == episode_num:
-                                    episode.reel_image = make_relative_path(
-                                        reel_path,
-                                        media_root_str,
+                                    episode.reel_image = (
+                                        reel_sources[0]
+                                        if reel_sources
+                                        else make_relative_path(
+                                            reel_path,
+                                            media_root_str,
+                                        )
+                                    )
+                                    episode.reel_sources = (
+                                        reel_sources if reel_sources else None
                                     )
                     await _send(Upsert(kind="series", item=series))
                     await _send(

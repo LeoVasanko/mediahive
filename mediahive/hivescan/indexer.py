@@ -6,9 +6,36 @@ import logging
 from pathlib import Path
 from typing import AsyncIterator, Dict, List, Optional, Tuple
 
+from mediahive.hivescan.images import (
+    download_backdrop_image,
+    download_cast_profile,
+    download_cover_image,
+    download_season_poster,
+)
+from mediahive.hivescan.models import ContentType, ParsedContent
+from mediahive.hivescan.scanning import (
+    find_cover_image,
+    find_episode_files,
+    find_playable_file,
+)
 from mediahive.hivescan.showreel import (
-    get_expected_episode_reel_path,
-    get_expected_showreel_paths,
+    get_existing_episode_reel_path,
+    get_existing_episode_reel_sources,
+    get_existing_showreel_paths,
+    get_existing_showreel_source_sets,
+)
+from mediahive.hivescan.tmdb_client import (
+    fetch_movie_info,
+    fetch_season_details,
+    fetch_series_info,
+)
+from mediahive.hivescan.utils import (
+    RESOLUTION_PRIORITY,
+    get_added_timestamp,
+    get_directory_size,
+    get_media_folder_path,
+    make_relative_path,
+    sort_by_quality,
 )
 from mediahive.models.data import (
     Episode,
@@ -18,32 +45,6 @@ from mediahive.models.data import (
     Torrent,
 )
 from mediahive.models.tmdb import CastMember, EpisodeInfo, Info, SeasonInfo
-from mediahive.hivescan.tmdb_client import (
-    fetch_movie_info,
-    fetch_series_info,
-    fetch_season_details,
-)
-
-from mediahive.hivescan.models import ContentType, ParsedContent
-from mediahive.hivescan.scanning import (
-    find_cover_image,
-    find_episode_files,
-    find_playable_file,
-)
-from mediahive.hivescan.images import (
-    download_backdrop_image,
-    download_cast_profile,
-    download_cover_image,
-    download_season_poster,
-)
-from mediahive.hivescan.utils import (
-    get_added_timestamp,
-    get_directory_size,
-    get_media_folder_path,
-    make_relative_path,
-    sort_by_quality,
-    RESOLUTION_PRIORITY,
-)
 
 logger = logging.getLogger("hivescan.indexer")
 
@@ -201,10 +202,17 @@ def _build_episodes_data(
         tmdb_ep = tmdb_episodes.get(episode_num)
 
         reel_path = None
+        reel_sources = None
         if generate_showreels and episode_files:
             best_file = episode_files[0]["path"]
             if best_file and not best_file.endswith(".bdmv"):
-                reel_path = get_expected_episode_reel_path(
+                reel_sources = get_existing_episode_reel_sources(
+                    series_folder,
+                    season_num,
+                    episode_num,
+                    media_root=Path(media_root) if media_root else None,
+                )
+                reel_path = get_existing_episode_reel_path(
                     series_folder,
                     season_num,
                     episode_num,
@@ -238,6 +246,7 @@ def _build_episodes_data(
             rating=tmdb_ep.vote_average if tmdb_ep else None,
             director=tmdb_ep.director if tmdb_ep else None,
             reel_image=reel_path,
+            reel_sources=reel_sources if reel_sources else None,
             torrents=torrents,
         )
         episodes_data.append(episode_data)
@@ -448,6 +457,7 @@ async def _process_movies(
 
         # Queue showreel generation
         showreel_paths = []
+        showreel_source_sets = []
         showreel_task = None
         if generate_showreels and torrents:
             # Find the best version for showreel (highest quality)
@@ -466,7 +476,10 @@ async def _process_movies(
                     if media_root
                     else best_version.playable_file
                 )
-                showreel_paths = get_expected_showreel_paths(
+                showreel_source_sets = get_existing_showreel_source_sets(
+                    media_folder, media_root=Path(media_root) if media_root else None
+                )
+                showreel_paths = get_existing_showreel_paths(
                     media_folder, media_root=Path(media_root) if media_root else None
                 )
                 showreel_task = (abs_playable, media_folder, display_title)
@@ -490,6 +503,7 @@ async def _process_movies(
             cover_path=make_relative_path(cover_path, media_root),
             backdrop_path=make_relative_path(backdrop_path, media_root),
             showreel_images=showreel_paths if showreel_paths else None,
+            showreel_source_sets=showreel_source_sets if showreel_source_sets else None,
             torrents=torrents,
         )
         yield movie, showreel_task
@@ -516,6 +530,7 @@ async def _process_movies(
         sort_by_quality(list(torrents.values()))
 
         showreel_paths = []
+        showreel_source_sets = []
         showreel_task = None
         if generate_showreels and torrents:
             # Find the best version for showreel (highest quality)
@@ -537,7 +552,11 @@ async def _process_movies(
                     else best_version.playable_file
                 )
                 media_folder = get_media_folder_path(title, year, "movie", cover_dir)
-                showreel_paths = get_expected_showreel_paths(
+                showreel_source_sets = get_existing_showreel_source_sets(
+                    media_folder,
+                    media_root=Path(media_root) if media_root else None,
+                )
+                showreel_paths = get_existing_showreel_paths(
                     media_folder,
                     media_root=Path(media_root) if media_root else None,
                 )
@@ -553,6 +572,7 @@ async def _process_movies(
             newest=newest,
             cover_path=make_relative_path(cover_path, media_root),
             showreel_images=showreel_paths if showreel_paths else None,
+            showreel_source_sets=showreel_source_sets if showreel_source_sets else None,
             torrents=torrents,
         )
         yield movie, showreel_task

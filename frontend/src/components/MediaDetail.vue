@@ -18,25 +18,38 @@
       <div class="collage-header">
 
         <!-- Background collage of showreel videos -->
-        <div class="collage-grid" v-if="showreelVideos && showreelVideos.length > 0">
+        <div class="collage-grid">
           <div
-            v-for="(video, index) in collageVideos"
-            :key="index"
+            v-for="slot in collageSlots"
+            :key="slot.index"
             class="collage-item"
-            @mouseenter="handleVideoHover(index, true)"
-            @mouseleave="handleVideoHover(index, false)"
+            @mouseenter="handleVideoHover(slot.index, true)"
+            @mouseleave="handleVideoHover(slot.index, false)"
           >
+            <div
+              class="collage-fallback-tile"
+              :class="`collage-fallback-${slot.index + 1}`"
+            ></div>
             <video
-              :ref="el => setVideoRef(el as HTMLVideoElement, index)"
-              :src="getShowreelUrl(video)"
+              v-if="slot.sourcePaths.length > 0"
+              :ref="el => setVideoRef(el as HTMLVideoElement, slot.index)"
+              :class="{ 'is-ready': isVideoReady(slot.index) }"
+              :autoplay="safariAutoplay"
               loop
               muted
               playsinline
-            ></video>
+              @loadeddata="handleVideoLoaded(slot.index)"
+              @error="handleVideoError(slot.index)"
+            >
+              <source
+                v-for="sourcePath in slot.sourcePaths"
+                :key="sourcePath"
+                :src="getShowreelUrl(sourcePath)"
+                :type="getShowreelSourceAttributes(sourcePath).type"
+                :codecs="getShowreelSourceAttributes(sourcePath).codecs"
+              >
+            </video>
           </div>
-        </div>
-        <div class="collage-grid collage-fallback" v-else>
-          <div class="collage-item" :style="headerStyle"></div>
         </div>
 
         <!-- Diagonal overlay -->
@@ -159,9 +172,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch, onMounted } from 'vue';
+import { computed, ref, watch, onMounted, nextTick } from 'vue';
 import type { CastMember, MediaItem, Movie, Series, Torrent } from '../types';
-import { getCoverUrl } from '../api';
+import { getCoverUrl, getVideoPreviewUrl, getVideoSourceAttributes, isSafariBrowser, type VideoSourceAttributes } from '../api';
 import castPlaceholderFemaleUrl from '../assets/cast-placeholder-female.svg';
 import castPlaceholderMaleUrl from '../assets/cast-placeholder-male.svg';
 import SeriesFullView from './SeriesFullView.vue';
@@ -181,9 +194,25 @@ const emit = defineEmits<{
 // Track expanded episode for showing multiple releases
 
 const videoRefs = ref<(HTMLVideoElement | null)[]>([]);
+const videoStates = ref<string[]>([]);
+const COLLAGE_SLOT_COUNT = 5;
+const safariAutoplay = isSafariBrowser();
+const COLLAGE_START_OFFSETS_SECONDS = [0, 8, 6, 4, 2];
 
 function setVideoRef(el: HTMLVideoElement | null, index: number) {
   videoRefs.value[index] = el;
+}
+
+function handleVideoLoaded(index: number) {
+  videoStates.value[index] = 'ready';
+}
+
+function handleVideoError(index: number) {
+  videoStates.value[index] = 'error';
+}
+
+function isVideoReady(index: number): boolean {
+  return videoStates.value[index] === 'ready';
 }
 
 // Start staggered video playback
@@ -191,13 +220,33 @@ function startStaggeredPlayback() {
   const videos = videoRefs.value.filter(v => v !== null) as HTMLVideoElement[];
   if (videos.length === 0) return;
 
+  if (safariAutoplay) {
+    videos.forEach((video, index) => {
+      const offset = COLLAGE_START_OFFSETS_SECONDS[index] ?? 0;
+      const startVideo = () => {
+        video.currentTime = offset;
+        video.play().catch(() => {});
+      };
+
+      if (video.readyState >= 1) {
+        startVideo();
+      } else {
+        video.addEventListener('loadedmetadata', startVideo, { once: true });
+      }
+    });
+    return;
+  }
+
   // Start first video immediately
-  videos[0].play();
+  // Non-Safari keeps legacy behavior: start without explicit seek offset.
+  videos[0].play().catch(() => {});
 
   // Set up staggered start for remaining videos
   for (let i = 1; i < videos.length; i++) {
     setTimeout(() => {
-      videos[i]?.play();
+      const video = videos[i];
+      if (!video) return;
+      video.play().catch(() => {});
     }, i * 2000);
   }
 }
@@ -261,51 +310,62 @@ onMounted(() => {
   }, 100);
 });
 
-// Showreel videos - for movies it's the showreel_images array (now .webm), for series it's reel_image from each episode
-const showreelVideos = computed((): string[] | null => {
+const showreelSourceSets = computed((): string[][] | null => {
   if (props.item.type === 'movies') {
     const movie = props.item.data as Movie;
-    return movie.showreel_images;
+    if (movie.showreel_source_sets && movie.showreel_source_sets.length > 0) {
+      return movie.showreel_source_sets;
+    }
+    return movie.showreel_images?.map((path) => [path]) ?? null;
   } else {
-    // For series, collect reel images from all episodes in selected season
     const series = props.item.data as Series;
-    const videos: string[] = [];
+    const sourceSets: string[][] = [];
     for (const season of series.seasons || []) {
       for (const episode of season.episodes || []) {
-        if (episode.reel_image) {
-          videos.push(episode.reel_image);
+        if (episode.reel_sources && episode.reel_sources.length > 0) {
+          sourceSets.push(episode.reel_sources);
+        } else if (episode.reel_image) {
+          sourceSets.push([episode.reel_image]);
         }
       }
     }
-    return videos.length > 0 ? videos : null;
+    return sourceSets.length > 0 ? sourceSets : null;
   }
 });
 
-// Select videos for collage display (up to 5 for visual balance)
-const collageVideos = computed((): string[] => {
-  if (!showreelVideos.value || showreelVideos.value.length === 0) return [];
-  // Take up to 5 videos for the collage
-  return showreelVideos.value.slice(0, 5);
+const collageSourceSets = computed((): string[][] => {
+  if (!showreelSourceSets.value || showreelSourceSets.value.length === 0) return [];
+  return showreelSourceSets.value.slice(0, 5);
 });
 
+const collageSlots = computed(() => {
+  return Array.from({ length: COLLAGE_SLOT_COUNT }, (_, index) => ({
+    index,
+    sourcePaths: collageSourceSets.value[index] ?? [],
+  }));
+});
+
+watch(collageSlots, async (slots) => {
+  videoRefs.value = Array.from({ length: COLLAGE_SLOT_COUNT }, (_, index) => videoRefs.value[index] ?? null);
+  videoStates.value = slots.map((slot) => slot.sourcePaths.length > 0 ? 'loading' : 'missing');
+  await nextTick();
+  setTimeout(() => {
+    startStaggeredPlayback();
+  }, 100);
+}, { immediate: true });
+
 function getShowreelUrl(path: string): string {
-  return getCoverUrl(path);
+  return getVideoPreviewUrl(getCoverUrl(path));
+}
+
+function getShowreelSourceAttributes(path: string): VideoSourceAttributes {
+  return getVideoSourceAttributes(path);
 }
 // Movie versions
 const movieVersions = computed((): Torrent[] => {
   if (props.item.type !== 'movies') return [];
   const movie = props.item.data as Movie;
   return Object.values(movie.torrents || {});
-});
-
-const headerStyle = computed(() => {
-  const movie = props.item.data as Movie;
-  const imagePath = movie.backdrop_path || props.item.cover_path;
-  const imageUrl = getCoverUrl(imagePath);
-  if (imageUrl) {
-    return { backgroundImage: `url("${imageUrl}")` };
-  }
-  return { background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)' };
 });
 
 // Page backdrop background
@@ -1199,9 +1259,17 @@ function handleOpenFolder(folderPath: string) {
 }
 
 .collage-header .collage-item video {
+  position: relative;
+  z-index: 1;
   width: 100%;
   height: 100%;
   object-fit: cover;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+
+.collage-header .collage-item video.is-ready {
+  opacity: 1;
 }
 
 /* First item - no slant, straight left edge */
@@ -1232,19 +1300,33 @@ function handleOpenFolder(folderPath: string) {
     rgba(0, 0, 0, 0.3) 100%
   );
   pointer-events: none;
+  z-index: 2;
 }
 
-.collage-header .collage-fallback {
-  display: flex;
-  width: 100%;
-  margin-left: 0;
+.collage-fallback-tile {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
 }
 
-.collage-header .collage-fallback .collage-item {
-  margin-left: 0;
-  clip-path: none;
-  background-size: cover;
-  background-position: center;
+.collage-fallback-1 {
+  background: linear-gradient(135deg, #1b2738 0%, #0f1724 100%);
+}
+
+.collage-fallback-2 {
+  background: linear-gradient(135deg, #1b2738 0%, #0f1724 100%);
+}
+
+.collage-fallback-3 {
+  background: linear-gradient(135deg, #1b2738 0%, #0f1724 100%);
+}
+
+.collage-fallback-4 {
+  background: linear-gradient(135deg, #1b2738 0%, #0f1724 100%);
+}
+
+.collage-fallback-5 {
+  background: linear-gradient(135deg, #1b2738 0%, #0f1724 100%);
 }
 
 .collage-overlay {

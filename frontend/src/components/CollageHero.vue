@@ -32,13 +32,21 @@
             class="collage-media"
           />
           <video
-            v-if="index !== 0 && !getImageUrl(item) && getVideoUrl(item)"
-            :src="getVideoUrl(item)!"
+            v-if="index !== 0 && !getImageUrl(item) && getVideoSources(item).length > 0"
             class="collage-media"
+            loop
             muted
             playsinline
-          />
-          <div v-if="index !== 0 && !getImageUrl(item) && !getVideoUrl(item)" class="collage-placeholder">
+          >
+            <source
+              v-for="source in getVideoSources(item)"
+              :key="source.src"
+              :src="source.src"
+              :type="source.type"
+              :codecs="source.codecs"
+            >
+          </video>
+          <div v-if="index !== 0 && !getImageUrl(item) && getVideoSources(item).length === 0" class="collage-placeholder">
             <span class="placeholder-title">{{ item.title }}</span>
           </div>
         <div class="collage-item-overlay"></div>
@@ -82,7 +90,7 @@
 <script setup lang="ts">
 import { computed, ref, onMounted, onUnmounted, nextTick, watch } from 'vue';
 import type { MediaItem, Movie, Series } from '../types';
-import { getCoverUrl } from '../api';
+import { getCoverUrl, getVideoPreviewUrl, getVideoSourceAttributes, isVideoPath } from '../api';
 import { navAttrs } from '../composables/useKeyboardNavigation';
 
 const focusedIndex = ref<number | null>(null);
@@ -467,20 +475,26 @@ function getImageUrl(item: MediaItem): string | undefined {
   return getCoverUrl(imagePath);
 }
 
-function getVideoUrl(item: MediaItem): string | undefined {
-  // Check showreel_images for video files
-  if (item.type === 'movies') {
-    const movie = item.data as Movie;
-    const showreel = movie.showreel_images;
-    if (showreel && showreel.length > 0) {
-      // Find first video file in showreel
-      const video = showreel.find(path => /\.(webm|mp4)$/i.test(path));
-      if (video) {
-        return getCoverUrl(video);
-      }
-    }
+function getVideoSources(item: MediaItem): Array<{ src: string; type: string; codecs: string }> {
+  if (isVideoPath(item.cover_path)) {
+    return [{ src: getVideoPreviewUrl(getCoverUrl(item.cover_path)), ...getVideoSourceAttributes(item.cover_path) }];
   }
-  return undefined;
+
+  const showreelSourceSets = item.showreel_source_sets;
+  if (showreelSourceSets && showreelSourceSets.length > 0) {
+    return showreelSourceSets[0]
+      .filter(path => isVideoPath(path))
+      .map(path => ({ src: getVideoPreviewUrl(getCoverUrl(path)), ...getVideoSourceAttributes(path) }));
+  }
+
+  const showreel = item.showreel_images;
+  if (showreel && showreel.length > 0) {
+    return showreel
+      .filter(path => isVideoPath(path))
+      .map(path => ({ src: getVideoPreviewUrl(getCoverUrl(path)), ...getVideoSourceAttributes(path) }));
+  }
+
+  return [];
 }
 
 function getRating(item: MediaItem): number | null {
@@ -687,7 +701,7 @@ function handleItemClick(item: MediaItem, index: number) {
   justify-content: center;
 }
 
-.hex-showcase img.hex-clip {
+.hex-showcase .hex-clip {
   height: 100%;
   aspect-ratio: 1.3 / 1;
   object-fit: cover;
@@ -1071,7 +1085,7 @@ function handleItemClick(item: MediaItem, index: number) {
     transform: translateX(-50%);
   }
 
-  .hex-showcase img.hex-clip {
+  .hex-showcase .hex-clip {
     clip-path: none;
     aspect-ratio: auto;
     height: 100%;

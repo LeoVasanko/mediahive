@@ -79,14 +79,21 @@
             <!-- Episode background video -->
             <div class="tile-bg">
               <video
-                v-if="getEpisodeImage(episode)"
+                v-if="getEpisodeVideoSources(episode).length > 0"
                 :ref="el => setVideoRef(el as HTMLVideoElement, `${sIndex}-${eIndex}`)"
-                :src="getEpisodeImage(episode)"
-                :alt="`Episode ${episode.episode_number}`"
+                :autoplay="safariAutoplay"
                 loop
                 muted
                 playsinline
-              ></video>
+              >
+                <source
+                  v-for="source in getEpisodeVideoSources(episode)"
+                  :key="source.src"
+                  :src="source.src"
+                  :type="source.type"
+                  :codecs="source.codecs"
+                >
+              </video>
               <div v-else class="tile-placeholder"></div>
             </div>
 
@@ -158,7 +165,7 @@
 <script setup lang="ts">
 import { computed, ref, nextTick, watch } from 'vue';
 import type { Series, Season, Episode, Torrent } from '../types';
-import { getCoverUrl } from '../api';
+import { getCoverUrl, getVideoPreviewUrl, getVideoSourceAttributes, isSafariBrowser } from '../api';
 import { navAttrs } from '../composables/useKeyboardNavigation';
 
 const props = defineProps<{
@@ -326,6 +333,7 @@ function getVersionLabel(torrent: Torrent): string {
 // Video refs for hover effects
 const videoRefs = ref<Map<string, HTMLVideoElement>>(new Map());
 let videoIndex = 0;
+const safariAutoplay = isSafariBrowser();
 
 // Set video ref with staggered playback
 function setVideoRef(el: HTMLVideoElement | null, key: string) {
@@ -334,8 +342,11 @@ function setVideoRef(el: HTMLVideoElement | null, key: string) {
     // Staggered start times with 0.2 second offset
     const index = videoIndex++;
     setTimeout(() => {
+      if (safariAutoplay && el.readyState >= 1) {
+        el.currentTime = 0.001 + ((index % 6) * 0.03);
+      }
       el.play().catch(() => {}); // Ignore autoplay policy errors
-    }, index * 200);
+    }, safariAutoplay ? 0 : index * 200);
   } else {
     videoRefs.value.delete(key);
   }
@@ -422,15 +433,17 @@ function getSeasonPoster(season: Season): string | undefined {
   return undefined;
 }
 
-// Get episode image
-function getEpisodeImage(episode: Episode): string | undefined {
-  if (episode.reel_image) {
-    return getCoverUrl(episode.reel_image);
-  }
-  if (episode.still_path && !episode.still_path.startsWith('/')) {
-    return getCoverUrl(episode.still_path);
-  }
-  return undefined;
+function getEpisodeVideoSources(episode: Episode): Array<{ src: string; type: string; codecs: string }> {
+  const sources = episode.reel_sources && episode.reel_sources.length > 0
+    ? episode.reel_sources
+    : episode.reel_image
+      ? [episode.reel_image]
+      : [];
+
+  return sources.map((path) => ({
+    src: getVideoPreviewUrl(getCoverUrl(path)),
+    ...getVideoSourceAttributes(path),
+  }));
 }
 
 // Collage slice style for season posters
