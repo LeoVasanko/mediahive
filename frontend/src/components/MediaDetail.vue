@@ -65,16 +65,15 @@
         <div class="modal-body-inner">
           <div class="content-layout">
             <!-- Left sidebar - Synopsis -->
-            <div v-if="overview" class="content-sidebar sidebar-left">
+            <div v-if="synopsisPosterUrl" class="content-sidebar sidebar-left">
               <div class="synopsis-box">
-                <h3 class="sidebar-title">Synopsis</h3>
-                <p class="synopsis-text">{{ overview }}</p>
+                <img
+                  :src="synopsisPosterUrl"
+                  :alt="`${item.title} poster`"
+                  class="synopsis-poster"
+                >
               </div>
-            </div>
-
-            <!-- Main content - Formats/Versions -->
-            <div class="content-main">
-              <div v-if="movieVersions.length > 0" class="versions-list">
+              <div v-if="movieVersions.length > 0" class="versions-list versions-list-sidebar">
                 <div
                   v-for="(version, index) in movieVersions"
                   :key="index"
@@ -107,27 +106,47 @@
               </div>
             </div>
 
+            <div v-if="movieCast && movieCast.length > 0" class="cast-gallery cast-gallery-wide">
+              <div class="cast-list">
+                <div
+                  v-for="castMember in movieCast"
+                  :key="`${castMember.name}-${castMember.character || ''}`"
+                  class="cast-card"
+                >
+                  <img
+                    v-if="castMember.profile_path && !castMember.profile_path.startsWith('/')"
+                    :src="getCoverUrl(castMember.profile_path)"
+                    :alt="castMember.name"
+                    class="cast-photo"
+                  >
+                  <img v-else :src="getCastPlaceholderUrl(castMember.gender)" :alt="`${castMember.name} placeholder portrait`" class="cast-photo cast-photo-fallback">
+                  <div class="cast-copy">
+                    <span class="cast-name">{{ castMember.name }}</span>
+                    <span v-if="castMember.character" class="cast-character">{{ castMember.character }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Main content -->
+            <div class="content-main">
+            </div>
+
             <!-- Right sidebar - Metadata -->
             <div v-if="item.type === 'movies'" class="content-sidebar sidebar-right">
               <div class="movie-metadata">
+                <div v-if="overview" class="meta-row">
+                  <span class="meta-value meta-synopsis">{{ overview }}</span>
+                </div>
                 <div v-if="movieDirector" class="meta-row">
                   <span class="meta-label">Director</span>
                   <span class="meta-value">{{ movieDirector }}</span>
                 </div>
-                <div v-if="movieCast && movieCast.length > 0" class="meta-row">
-                  <span class="meta-label">Cast</span>
-                  <span class="meta-value">{{ movieCast.map(c => c.name).join(', ') }}</span>
+                <div v-if="movieStatus || movieReleaseDate" class="meta-summary">
+                  <span v-if="movieStatus" class="meta-summary-item">{{ movieStatus }}</span>
+                  <span v-if="movieReleaseDate" class="meta-summary-item">{{ movieReleaseDate }}</span>
                 </div>
-                <div v-if="movieReleaseDate" class="meta-row">
-                  <span class="meta-label">Release</span>
-                  <span class="meta-value">{{ movieReleaseDate }}</span>
-                </div>
-                <div v-if="movieStatus" class="meta-row">
-                  <span class="meta-label">Status</span>
-                  <span class="meta-value">{{ movieStatus }}</span>
-                </div>
-                <div v-if="movieKeywords && movieKeywords.length > 0" class="meta-row">
-                  <span class="meta-label">Keywords</span>
+                <div v-if="movieKeywords && movieKeywords.length > 0" class="meta-keywords-section">
                   <span class="meta-value keywords">{{ movieKeywords.join(', ') }}</span>
                 </div>
               </div>
@@ -141,8 +160,10 @@
 
 <script setup lang="ts">
 import { computed, ref, watch, onMounted } from 'vue';
-import type { MediaItem, Movie, Series, Torrent } from '../types';
+import type { CastMember, MediaItem, Movie, Series, Torrent } from '../types';
 import { getCoverUrl } from '../api';
+import castPlaceholderFemaleUrl from '../assets/cast-placeholder-female.svg';
+import castPlaceholderMaleUrl from '../assets/cast-placeholder-male.svg';
 import SeriesFullView from './SeriesFullView.vue';
 import { navAttrs } from '../composables/useKeyboardNavigation';
 
@@ -151,7 +172,6 @@ const props = defineProps<{
   focusEpisode?: { seasonNumber: number; episodeNumber: number } | null;
   hasResumePosition: (filePath: string | null) => boolean;
 }>();
-
 const emit = defineEmits<{
   close: [];
   play: [string];
@@ -300,6 +320,11 @@ const backdropStyle = computed(() => {
   return {};
 });
 
+const synopsisPosterUrl = computed(() => {
+  if (props.item.type !== 'movies') return null;
+  return getCoverUrl(props.item.cover_path);
+});
+
 // Check if a specific version is a disc format (Blu-ray disc has index.bdmv)
 function isVersionDisc(version: Torrent): boolean {
   if (!version.playable_file) return false;
@@ -324,7 +349,7 @@ const movieDirector = computed(() => {
 
 const movieCast = computed(() => {
   if (props.item.type !== 'movies') return null;
-  return (props.item.data as Movie).info?.cast;
+  return (props.item.data as Movie).info?.cast as CastMember[] | null;
 });
 
 const movieRuntime = computed(() => {
@@ -346,6 +371,10 @@ const movieKeywords = computed(() => {
   if (props.item.type !== 'movies') return null;
   return (props.item.data as Movie).info?.keywords;
 });
+
+function getCastPlaceholderUrl(gender?: CastMember['gender']): string {
+  return gender === 'female' ? castPlaceholderFemaleUrl : castPlaceholderMaleUrl;
+}
 
 function formatRuntime(minutes: number): string {
   const hours = Math.floor(minutes / 60);
@@ -447,29 +476,34 @@ function handleOpenFolder(folderPath: string) {
 
 /* Three-column layout */
 .content-layout {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(260px, 360px) minmax(0, 1fr) minmax(240px, 320px);
+  grid-template-areas:
+    'left cast cast'
+    'left main right';
   gap: 32px;
-  justify-content: space-between;
+  align-items: start;
 }
 
 .content-main {
-  flex: 0 0 500px;
-  width: 500px;
-  order: 0;
+  grid-area: main;
+  min-width: 0;
 }
 
 .content-sidebar {
-  flex: 0 1 400px;
-  min-width: 200px;
-  max-width: 400px;
+  min-width: 0;
 }
 
 .sidebar-left {
-  order: -1;
+  grid-area: left;
+  align-self: start;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .sidebar-right {
-  order: 1;
+  grid-area: right;
 }
 
 /* Synopsis box */
@@ -478,15 +512,14 @@ function handleOpenFolder(folderPath: string) {
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   border-radius: 12px;
-  padding: 20px;
+  overflow: hidden;
 }
 
-.sidebar-title {
-  font-size: 0.75rem;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--text-muted);
-  margin-bottom: 12px;
+.synopsis-poster {
+  display: block;
+  width: 100%;
+  height: auto;
+  object-fit: contain;
 }
 
 .synopsis-text {
@@ -613,7 +646,7 @@ function handleOpenFolder(folderPath: string) {
 }
 
 .meta-label {
-  color: var(--text-muted);
+  color: #77d38a;
   font-size: 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -625,9 +658,122 @@ function handleOpenFolder(folderPath: string) {
   line-height: 1.4;
 }
 
+.meta-synopsis {
+  font-size: 0.84rem;
+  line-height: 1.55;
+}
+
+.meta-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  color: #8ee59b;
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.meta-summary-item {
+  white-space: nowrap;
+}
+
+.meta-keywords-section {
+  padding-top: 2px;
+}
+
 .meta-value.keywords {
-  color: var(--text-muted);
-  font-size: 0.8rem;
+  color: var(--text-primary);
+  font-size: 0.72rem;
+  line-height: 1.6;
+}
+
+.cast-gallery {
+  margin-bottom: 12px;
+}
+
+.cast-gallery-wide {
+  grid-area: cast;
+  margin-bottom: 0;
+}
+
+.cast-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(94px, 1fr));
+  gap: 6px;
+}
+
+.cast-card {
+  position: relative;
+  overflow: hidden;
+  border-radius: 12px;
+  aspect-ratio: 2 / 3;
+}
+
+.cast-photo {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.cast-photo-fallback {
+  filter: saturate(0.9) contrast(1.05);
+}
+
+.cast-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  position: absolute;
+  inset: auto 0 0 0;
+  padding: 28px 8px 8px;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.78) 45%, rgba(0, 0, 0, 0.95) 100%);
+}
+
+.cast-name {
+  color: var(--text-primary);
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1.2;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+}
+
+.cast-character {
+  color: #8ee59b;
+  font-size: 0.64rem;
+  line-height: 1.25;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.65);
+}
+
+@media (max-width: 1200px) {
+  .content-layout {
+    grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
+    grid-template-areas:
+      'left cast'
+      'left main'
+      'left right';
+    gap: 24px;
+  }
+}
+
+@media (max-width: 900px) {
+  .content-layout {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      'left'
+      'cast'
+      'main'
+      'right';
+    gap: 20px;
+  }
+
+  .sidebar-left {
+    align-self: auto;
+  }
 }
 
 /* Showreel gallery */
@@ -1169,6 +1315,10 @@ function handleOpenFolder(folderPath: string) {
   gap: 8px;
 }
 
+.versions-list-sidebar .version-row {
+  padding: 10px 12px;
+}
+
 .version-row {
   display: flex;
   align-items: center;
@@ -1238,13 +1388,23 @@ function handleOpenFolder(folderPath: string) {
 }
 
 .v-badge.res {
-  background: rgba(66, 133, 244, 0.2);
-  color: #4285f4;
+  background: #1d4ed8;
+  color: #eff6ff;
 }
 
 .v-badge.qual {
-  background: rgba(156, 39, 176, 0.2);
-  color: #ce93d8;
+  background: #7c3aed;
+  color: #f5f3ff;
+}
+
+.v-badge.codec {
+  background: #0f766e;
+  color: #ecfeff;
+}
+
+.v-badge.audio {
+  background: #b45309;
+  color: #fffbeb;
 }
 
 .version-sub {

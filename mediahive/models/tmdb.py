@@ -20,6 +20,7 @@ class CastMember(msgspec.Struct):
     name: str
     character: str | None = None
     profile_path: str | None = None
+    gender: str | None = None
 
 
 class SimilarMedia(msgspec.Struct):

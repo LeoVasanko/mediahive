@@ -17,7 +17,7 @@ from mediahive.models.data import (
     Series,
     Torrent,
 )
-from mediahive.models.tmdb import EpisodeInfo, Info, SeasonInfo
+from mediahive.models.tmdb import CastMember, EpisodeInfo, Info, SeasonInfo
 from mediahive.hivescan.tmdb_client import (
     fetch_movie_info,
     fetch_series_info,
@@ -31,8 +31,9 @@ from mediahive.hivescan.scanning import (
     find_playable_file,
 )
 from mediahive.hivescan.images import (
-    download_cover_image,
     download_backdrop_image,
+    download_cast_profile,
+    download_cover_image,
     download_season_poster,
 )
 from mediahive.hivescan.utils import (
@@ -68,6 +69,41 @@ async def _build_torrent_info(
         size=size,
         added_at=added_at,
     )
+
+
+async def _cache_cast_profiles(
+    info: Optional[Info],
+    media_folder: Path,
+    media_root: Optional[str] = None,
+) -> Optional[Info]:
+    """Replace TMDb cast profile paths with cached local image paths."""
+    if not info or not info.cast:
+        return info
+
+    cached_cast = []
+    for index, member in enumerate(info.cast):
+        local_profile_path = None
+        if member.profile_path:
+            downloaded_path = await download_cast_profile(
+                member.profile_path,
+                media_folder,
+                member.name,
+                index,
+            )
+            if downloaded_path:
+                local_profile_path = make_relative_path(downloaded_path, media_root)
+
+        cached_cast.append(
+            CastMember(
+                name=member.name,
+                character=member.character or None,
+                profile_path=local_profile_path,
+                gender=member.gender,
+            )
+        )
+
+    info.cast = cached_cast
+    return info
 
 
 async def _collect_episode_files(
@@ -385,6 +421,7 @@ async def _process_movies(
 
         display_title = tmdb_info.title
         item_id = hashlib.md5(f"movie:{tmdb_id}".encode()).hexdigest()[:12]
+        media_folder = get_media_folder_path(display_title, year, "movie", cover_dir)
 
         # Find/download cover
         cover_path = None
@@ -399,6 +436,7 @@ async def _process_movies(
                 cover_path = await download_cover_image(
                     tmdb_info.poster_path, display_title, year, "movie", cover_dir
                 )
+            tmdb_info = await _cache_cast_profiles(tmdb_info, media_folder, media_root)
 
         torrents = {}
         for item in items:
@@ -427,9 +465,6 @@ async def _process_movies(
                     str(Path(media_root) / best_version.playable_file)
                     if media_root
                     else best_version.playable_file
-                )
-                media_folder = get_media_folder_path(
-                    display_title, year, "movie", cover_dir
                 )
                 showreel_paths = get_expected_showreel_paths(
                     media_folder, media_root=Path(media_root) if media_root else None
@@ -634,6 +669,7 @@ async def _process_series(
                 cover_path = await download_cover_image(
                     tmdb_info.poster_path, display_title, None, "series", cover_dir
                 )
+            tmdb_info = await _cache_cast_profiles(tmdb_info, series_folder, media_root)
 
         # Download backdrop
         backdrop_path = None

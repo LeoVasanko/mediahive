@@ -217,6 +217,19 @@ async def fetch_season_details(
     )
 
 
+def _map_person_gender(value: object) -> str | None:
+    """Map TMDb person gender codes to stable string values."""
+    if value == 1:
+        return "female"
+    if value == 2:
+        return "male"
+    if value == 3:
+        return "non_binary"
+    if value == 0:
+        return "unknown"
+    return None
+
+
 def _generate_title_variants(words: list[str], min_words: int = 2) -> list[str]:
     """
     Generate title variants by progressively removing words from both ends.
@@ -410,14 +423,15 @@ async def fetch_movie_info(title: str, year: Optional[int] = None) -> Optional[I
     alt_titles_set.discard(orig_title)
     alternative_titles = sorted(alt_titles_set) if alt_titles_set else None
 
-    # Extract top cast (limit to 10)
+    # Extract full cast
     credits = details.get("credits", {})
-    cast_data = credits.get("cast", [])[:10]
+    cast_data = credits.get("cast", [])
     cast = [
         CastMember(
             name=c["name"],
             character=c.get("character", ""),
             profile_path=c.get("profile_path"),
+            gender=_map_person_gender(c.get("gender")),
         )
         for c in cast_data
     ]
@@ -511,14 +525,15 @@ async def fetch_series_info(title: str) -> Optional[Info]:
     keywords_data = details.get("keywords", {}).get("results", [])
     keywords = [k["name"] for k in keywords_data]
 
-    # Extract top cast (limit to 10)
+    # Extract full cast
     credits = details.get("credits", {})
-    cast_data = credits.get("cast", [])[:10]
+    cast_data = credits.get("cast", [])
     cast = [
         CastMember(
             name=c["name"],
             character=c.get("character", ""),
             profile_path=c.get("profile_path"),
+            gender=_map_person_gender(c.get("gender")),
         )
         for c in cast_data
     ]

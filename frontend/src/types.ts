@@ -1,9 +1,12 @@
 // Type definitions for the media browser
 
+export type CastGender = 'female' | 'male' | 'non_binary' | 'unknown';
+
 export interface CastMember {
   name: string;
   character?: string | null;
   profile_path: string | null;
+  gender?: CastGender | null;
 }
 
 export interface SimilarMedia {
