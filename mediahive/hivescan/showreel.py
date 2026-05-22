@@ -334,6 +334,8 @@ class MediaProbeInfo:
     height: int | None = None
     is_hdr: bool = False
     dovi_profile: int | None = None
+    has_dolby_vision: bool = False
+    has_dolby_atmos: bool = False
     resolution: str | None = None
     audio_languages: list[str] | None = None
     subtitle_languages: list[str] | None = None
@@ -405,12 +407,20 @@ async def probe_media_info(video_path: str) -> MediaProbeInfo:
             info.dovi_profile = int(dovi_match.group(1))
         elif "dvhe" in lower_text or "dvh1" in lower_text or "dav1" in lower_text:
             info.dovi_profile = 7
+        info.has_dolby_vision = info.dovi_profile is not None
 
         audio_languages: list[str] = []
-        for match in _audio_stream_re.finditer(text):
+        for line in text.splitlines():
+            if "Stream #" not in line or "Audio:" not in line:
+                continue
+            match = _audio_stream_re.search(line)
+            if not match:
+                continue
             lang = _lang_code(match.group(1))
             if lang and lang not in audio_languages:
                 audio_languages.append(lang)
+            if "atmos" in line.lower():
+                info.has_dolby_atmos = True
         info.audio_languages = audio_languages or None
 
         subtitle_languages: list[str] = []

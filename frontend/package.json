@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "country-flag-icons": "^1.6.17",
     "vue": "^3.4.0",
     "vue-router": "^4.6.4"
   },

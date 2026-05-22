@@ -49,6 +49,9 @@ export interface Torrent {
   audio: string | null;
   audio_languages: string[] | null;
   subtitle_languages: string[] | null;
+  is_hdr: boolean;
+  has_dolby_vision: boolean;
+  has_dolby_atmos: boolean;
   encoder: string | null;
   size: number | null;
   added_at: number | null;

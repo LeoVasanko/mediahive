@@ -138,7 +138,25 @@
             :key="index"
             class="context-menu-version"
           >
-            <div class="version-label">{{ getVersionLabel(torrent) }}</div>
+            <div class="version-main">
+              <div class="version-label">{{ getVersionLabel(torrent) }}</div>
+              <div class="version-language-flags">
+                <LanguageFlags class="language-flags-audio" :codes="torrent.audio_languages" compact />
+                <span
+                  v-if="hasLanguageDisplay(torrent.audio_languages) && hasLanguageDisplay(torrent.subtitle_languages)"
+                  class="language-separator"
+                >•</span>
+                <LanguageFlags class="language-flags-subs" :codes="torrent.subtitle_languages" compact />
+              </div>
+            </div>
+            <div class="version-dolby-cell">
+              <DolbyBadges
+                class="version-dolby"
+                :has-dolby-vision="getHasDolbyVision(torrent)"
+                :has-dolby-atmos="getHasDolbyAtmos(torrent)"
+                :is-hdr="getHasHdr(torrent)"
+              />
+            </div>
             <div class="version-actions">
               <button
                 class="ctx-btn ctx-btn-play"
@@ -167,6 +185,9 @@ import { computed, ref, nextTick, watch } from 'vue';
 import type { Series, Season, Episode, Torrent } from '../types';
 import { getCoverUrl, getVideoPreviewUrl, getVideoSourceAttributes, isSafariBrowser } from '../api';
 import { navAttrs } from '../composables/useKeyboardNavigation';
+import LanguageFlags from './LanguageFlags.vue';
+import DolbyBadges from './DolbyBadges.vue';
+import { buildLanguageFlags } from '../utils/languageFlags';
 
 const props = defineProps<{
   series: Series;
@@ -320,13 +341,59 @@ function handleOpenFolder(folderPath: string) {
   closeContextMenu();
 }
 
+const dolbyTagPattern = /\b(dolby|atmos|vision|dovi|dv)\b/i;
+const dolbyVisionPattern = /\b(dolby\s*vision|dovi|\bdv\b)\b/i;
+const dolbyAtmosPattern = /\b(dolby\s*atmos|atmos)\b/i;
+const hdrPattern = /\bhdr\b|smpte\s*2084|bt\s*2020|hlg/i;
+
+function hasDolbyTag(value: string | null | undefined): boolean {
+  return Boolean(value && dolbyTagPattern.test(value));
+}
+
+function hasAnyTag(
+  pattern: RegExp,
+  ...values: Array<string | null | undefined>
+): boolean {
+  return values.some((value) => Boolean(value && pattern.test(value)));
+}
+
+function getHasDolbyVision(torrent: Torrent): boolean {
+  return (
+    torrent.has_dolby_vision === true
+    || hasAnyTag(dolbyVisionPattern, torrent.quality, torrent.codec, torrent.audio, torrent.title)
+  );
+}
+
+function getHasDolbyAtmos(torrent: Torrent): boolean {
+  return (
+    torrent.has_dolby_atmos === true
+    || hasAnyTag(dolbyAtmosPattern, torrent.quality, torrent.codec, torrent.audio, torrent.title)
+  );
+}
+
+function getHasHdr(torrent: Torrent): boolean {
+  return (
+    torrent.is_hdr === true
+    || hasAnyTag(hdrPattern, torrent.quality, torrent.codec, torrent.audio, torrent.title)
+  );
+}
+
+function hasLanguageDisplay(codes: string[] | null | undefined): boolean {
+  const mapped = buildLanguageFlags(codes);
+  return mapped.flags.length > 0 || mapped.unmappedCodes.length > 0;
+}
+
 // Get version display label
 function getVersionLabel(torrent: Torrent): string {
   const parts: string[] = [];
   if (torrent.resolution) parts.push(torrent.resolution);
-  if (torrent.quality) parts.push(torrent.quality);
-  if (torrent.codec) parts.push(torrent.codec);
-  if (torrent.audio) parts.push(torrent.audio);
+  if (torrent.quality && !hasDolbyTag(torrent.quality)) parts.push(torrent.quality);
+  if (torrent.codec && !hasDolbyTag(torrent.codec)) parts.push(torrent.codec);
+  if (torrent.audio && !hasDolbyTag(torrent.audio)) parts.push(torrent.audio);
+  const hasExistingHdr = [torrent.quality, torrent.codec, torrent.audio].some(
+    (value) => Boolean(value && hdrPattern.test(value))
+  );
+  if (getHasHdr(torrent) && !hasExistingHdr) parts.push('HDR');
   return parts.length > 0 ? parts.join(' • ') : 'Unknown';
 }
 
@@ -931,11 +998,12 @@ function handlePlay(episode: Episode) {
 }
 
 .context-menu-version {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content max-content;
+  align-items: stretch;
   padding: 10px 16px;
-  gap: 12px;
+  column-gap: 8px;
+  row-gap: 6px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
   transition: background-color 0.15s ease;
 }
@@ -947,15 +1015,79 @@ function handlePlay(episode: Episode) {
 .version-label {
   font-size: 0.8rem;
   color: rgba(255, 255, 255, 0.8);
-  flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  flex: 1;
+}
+
+.version-main {
+  grid-column: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.version-dolby-cell {
+  grid-column: 2;
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.version-dolby {
+  align-self: stretch;
+}
+
+.version-language-flags {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.version-language-flags > .language-flags-audio {
+  flex: 0 0 auto;
+}
+
+.version-language-flags > .language-flags-subs {
+  flex: 1 1 auto;
+  min-width: 0;
+  -webkit-mask-image: linear-gradient(to right, black calc(100% - 14px), transparent);
+  mask-image: linear-gradient(to right, black calc(100% - 14px), transparent);
+}
+
+.version-language-flags > .language-flags-subs :deep(.language-flags) {
+  display: inline-flex;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.version-language-flags > .language-flags-subs :deep(.language-flag-list) {
+  width: max-content;
+  max-width: none;
+  overflow: hidden;
+}
+
+.language-separator {
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 0.9rem;
+  font-weight: 700;
+  line-height: 1;
+  margin: 0;
 }
 
 .version-actions {
+  grid-column: 3;
   display: flex;
+  align-items: center;
   gap: 8px;
   flex-shrink: 0;
 }

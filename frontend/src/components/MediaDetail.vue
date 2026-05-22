@@ -91,29 +91,43 @@
                   v-for="(version, index) in movieVersions"
                   :key="index"
                   class="version-row"
-                  :class="{ 'version-best': index === 0 }"
+                  :class="{
+                    'version-best': index === 0,
+                    'version-selectable': !!version.playable_file,
+                    'version-disabled': !version.playable_file,
+                  }"
+                  tabindex="0"
+                  v-bind="navAttrs(2, index)"
+                  @click="handleVersionActivate(version, $event)"
+                  @keydown.enter.prevent="handleVersionActivate(version, $event)"
+                  @keydown.space.prevent="handleVersionActivate(version, $event)"
+                  :title="version.playable_file ? 'Click to play/continue. Alt+Click to open folder.' : 'No playable file'"
                 >
-                  <div class="version-info">
+                  <div class="version-main">
                     <div class="version-badges">
                       <span v-if="version.resolution" class="v-badge res">{{ version.resolution }}</span>
-                      <span v-if="version.quality" class="v-badge qual">{{ version.quality }}</span>
-                      <span v-if="version.codec" class="v-badge codec">{{ version.codec }}</span>
-                      <span v-if="version.audio" class="v-badge audio">{{ version.audio }}</span>
+                      <span v-if="getDisplayQualityBadge(version)" class="v-badge qual">{{ getDisplayQualityBadge(version) }}</span>
+                      <span v-if="getDisplayCodecBadge(version)" class="v-badge codec">{{ getDisplayCodecBadge(version) }}</span>
+                      <span v-if="getShowHdrBadge(version)" class="v-badge hdr">HDR</span>
+                      <span v-if="getDisplayAudioBadge(version)" class="v-badge audio">{{ getDisplayAudioBadge(version) }}</span>
                       <span v-if="isVersionDisc(version)" class="v-disc">💿</span>
                     </div>
+                    <div class="version-language-flags">
+                      <LanguageFlags class="language-flags-audio" :codes="version.audio_languages" />
+                      <span
+                        v-if="hasLanguageDisplay(version.audio_languages) && hasLanguageDisplay(version.subtitle_languages)"
+                        class="language-separator"
+                      >•</span>
+                      <LanguageFlags class="language-flags-subs" :codes="version.subtitle_languages" />
+                    </div>
                   </div>
-                  <div class="version-actions">
-                    <button
-                      class="btn btn-small btn-primary"
-                      v-bind="navAttrs(2, index * 2)"
-                      @click="handlePlay(version.playable_file)"
-                      :disabled="!version.playable_file"
-                    >▶ {{ getPlayLabel(version.playable_file) }}</button>
-                    <button
-                      class="btn btn-small btn-secondary"
-                      v-bind="navAttrs(2, index * 2 + 1)"
-                      @click="handleOpenFolder(version.playable_file || '')"
-                    >📁</button>
+                  <div class="version-dolby-cell">
+                    <DolbyBadges
+                      class="version-dolby"
+                      :has-dolby-vision="getHasDolbyVision(version)"
+                      :has-dolby-atmos="getHasDolbyAtmos(version)"
+                      :is-hdr="getHasHdr(version)"
+                    />
                   </div>
                 </div>
               </div>
@@ -178,7 +192,10 @@ import { getCoverUrl, getVideoPreviewUrl, getVideoSourceAttributes, isSafariBrow
 import castPlaceholderFemaleUrl from '../assets/cast-placeholder-female.svg';
 import castPlaceholderMaleUrl from '../assets/cast-placeholder-male.svg';
 import SeriesFullView from './SeriesFullView.vue';
+import LanguageFlags from './LanguageFlags.vue';
+import DolbyBadges from './DolbyBadges.vue';
 import { navAttrs } from '../composables/useKeyboardNavigation';
+import { buildLanguageFlags } from '../utils/languageFlags';
 
 const props = defineProps<{
   item: MediaItem;
@@ -385,6 +402,74 @@ const synopsisPosterUrl = computed(() => {
   return getCoverUrl(props.item.cover_path);
 });
 
+const dolbyTagPattern = /\b(dolby|atmos|vision|dovi|dv)\b/i;
+const dolbyVisionPattern = /\b(dolby\s*vision|dovi|\bdv\b)\b/i;
+const dolbyAtmosPattern = /\b(dolby\s*atmos|atmos)\b/i;
+const hdrPattern = /\bhdr\b|smpte\s*2084|bt\s*2020|hlg/i;
+const blurayTagPattern = /\bblu[\s.-]*ray\b/i;
+
+function hasDolbyTag(value: string | null | undefined): boolean {
+  return Boolean(value && dolbyTagPattern.test(value));
+}
+
+function hasAnyTag(
+  pattern: RegExp,
+  ...values: Array<string | null | undefined>
+): boolean {
+  return values.some((value) => Boolean(value && pattern.test(value)));
+}
+
+function getHasDolbyVision(version: Torrent): boolean {
+  return (
+    version.has_dolby_vision === true
+    || hasAnyTag(dolbyVisionPattern, version.quality, version.codec, version.audio, version.title)
+  );
+}
+
+function getHasDolbyAtmos(version: Torrent): boolean {
+  return (
+    version.has_dolby_atmos === true
+    || hasAnyTag(dolbyAtmosPattern, version.quality, version.codec, version.audio, version.title)
+  );
+}
+
+function getHasHdr(version: Torrent): boolean {
+  return (
+    version.is_hdr === true
+    || hasAnyTag(hdrPattern, version.quality, version.codec, version.audio, version.title)
+  );
+}
+
+function getDisplayQualityBadge(version: Torrent): string | null {
+  if (!version.quality || hasDolbyTag(version.quality)) return null;
+  if (blurayTagPattern.test(version.quality) && !isVersionDisc(version)) return null;
+  return version.quality;
+}
+
+function getDisplayCodecBadge(version: Torrent): string | null {
+  if (!version.codec || hasDolbyTag(version.codec)) return null;
+  return version.codec;
+}
+
+function getDisplayAudioBadge(version: Torrent): string | null {
+  if (!version.audio || hasDolbyTag(version.audio)) return null;
+  return version.audio;
+}
+
+function hasLanguageDisplay(codes: string[] | null | undefined): boolean {
+  const mapped = buildLanguageFlags(codes);
+  return mapped.flags.length > 0 || mapped.unmappedCodes.length > 0;
+}
+
+function hasHdrTag(value: string | null | undefined): boolean {
+  return Boolean(value && hdrPattern.test(value));
+}
+
+function getShowHdrBadge(version: Torrent): boolean {
+  if (!getHasHdr(version)) return false;
+  return !hasHdrTag(version.quality) && !hasHdrTag(version.codec) && !hasHdrTag(version.audio);
+}
+
 // Check if a specific version is a disc format (Blu-ray disc has index.bdmv)
 function isVersionDisc(version: Torrent): boolean {
   if (!version.playable_file) return false;
@@ -485,8 +570,13 @@ function handlePlay(filePath: string | null) {
   }
 }
 
-function getPlayLabel(filePath: string | null): string {
-  return props.hasResumePosition(filePath) ? 'Continue' : 'Play';
+function handleVersionActivate(version: Torrent, event: MouseEvent | KeyboardEvent) {
+  if (!version.playable_file) return;
+  if (event.altKey) {
+    handleOpenFolder(version.playable_file);
+    return;
+  }
+  handlePlay(version.playable_file);
 }
 
 function handleOpenFolder(folderPath: string) {
@@ -938,6 +1028,75 @@ function handleOpenFolder(folderPath: string) {
   gap: 6px;
 }
 
+.version-language-flags {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.version-language-flags > .language-flags-audio {
+  flex: 0 0 auto;
+}
+
+.version-language-flags > .language-flags-subs {
+  flex: 1 1 auto;
+  min-width: 0;
+  -webkit-mask-image: linear-gradient(to right, black calc(100% - 18px), transparent);
+  mask-image: linear-gradient(to right, black calc(100% - 18px), transparent);
+}
+
+.version-language-flags > .language-flags-subs :deep(.language-flags) {
+  display: inline-flex;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.version-language-flags > .language-flags-subs :deep(.language-flag-list) {
+  width: max-content;
+  max-width: none;
+  overflow: hidden;
+}
+
+.language-separator {
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 0.98rem;
+  font-weight: 700;
+  line-height: 1;
+  margin: 0;
+}
+
+.version-meta-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  grid-template-rows: auto auto;
+  column-gap: 8px;
+  row-gap: 6px;
+  align-items: stretch;
+}
+
+.version-meta-grid .version-badges {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.version-meta-grid .version-language-flags {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.version-dolby {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: stretch;
+  justify-self: end;
+  display: flex;
+  min-width: 0;
+}
+
 .version-badge {
   font-size: 0.75rem;
   padding: 2px 8px;
@@ -983,7 +1142,7 @@ function handleOpenFolder(folderPath: string) {
   display: flex;
   gap: 8px;
   flex-shrink: 0;
-  margin-left: 16px;
+  margin-left: 0;
 }
 
 /* Season header styling */
@@ -1402,12 +1561,13 @@ function handleOpenFolder(folderPath: string) {
 }
 
 .version-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: stretch;
+  column-gap: 8px;
+  row-gap: 6px;
   padding: 12px 16px;
-  background: rgba(0, 0, 0, 0.4);
+  background: rgba(10, 14, 22, 0.2);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   border-radius: 8px;
@@ -1416,28 +1576,53 @@ function handleOpenFolder(folderPath: string) {
 }
 
 .version-row:hover {
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(10, 14, 22, 0.28);
   border-color: rgba(255, 255, 255, 0.2);
 }
 
 .version-row.version-best {
-  border-color: rgba(70, 211, 105, 0.5);
-  background: rgba(70, 211, 105, 0.15);
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(10, 14, 22, 0.2);
 }
 
 .version-row.version-best:hover {
-  background: rgba(70, 211, 105, 0.25);
+  background: rgba(10, 14, 22, 0.28);
+  border-color: rgba(255, 255, 255, 0.2);
 }
 
-.version-info {
-  flex: 1;
+.version-row.version-selectable {
+  cursor: pointer;
+}
+
+.version-row.version-selectable:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.85);
+  outline-offset: 2px;
+}
+
+.version-row.version-disabled {
+  cursor: not-allowed;
+  opacity: 0.75;
+}
+
+.version-main {
+  grid-column: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
   min-width: 0;
 }
 
-.version-actions {
+.version-dolby-cell {
+  grid-column: 2;
   display: flex;
-  gap: 8px;
-  flex-shrink: 0;
+  align-items: stretch;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.version-dolby {
+  align-self: stretch;
 }
 
 .btn-small {
@@ -1489,17 +1674,9 @@ function handleOpenFolder(folderPath: string) {
   color: #fffbeb;
 }
 
-.version-sub {
-  font-size: 0.65rem;
-  color: var(--text-muted, rgba(255, 255, 255, 0.5));
+.v-badge.hdr {
+  background: #166534;
+  color: #dcfce7;
 }
 
-/* Collage images for header */
-.collage-images {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 2px;
-}
 </style>
