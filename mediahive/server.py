@@ -14,15 +14,11 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.request
 from contextlib import asynccontextmanager
 from pathlib import Path
-
-# Suppress console windows when spawning subprocesses on Windows
-_POPEN_KWARGS: dict = (
-    {"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}
-)
 
 import aiofiles
 import msgspec
@@ -50,22 +46,38 @@ logger = logging.getLogger("mediahive.server")
 
 MPC_BE_BASE_URL = "http://127.0.0.1:13579"
 
+# Suppress console windows when spawning subprocesses on Windows
+_POPEN_KWARGS: dict = (
+    {"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}
+)
+
 # Vue Frontend static files
 frontend = Frontend(Path(__file__).with_name("frontend-build"), cached=["/assets/"])
 
 # Media root path (initialized in lifespan)
 MEDIAROOT = None
 
-# In-memory index store (initialized in lifespan)
-store: IndexStore | None = None
+# In-memory index store (available immediately, switched to real root later)
+_BOOTSTRAP_SNAPSHOT = Path(tempfile.gettempdir()) / "mediahive" / "index.json"
+store: IndexStore = IndexStore(_BOOTSTRAP_SNAPSHOT, media_root=None)
 
 # Whether the scanner subsystem is active
 _scanner_active = False
+
+# Background folder switch task and lock so startup/change-folder cannot race
+_folder_switch_task: asyncio.Task | None = None
+_folder_switch_lock = asyncio.Lock()
 
 # Queue for scanner → server events
 _scan_events: asyncio.Queue[ScanEvent] = asyncio.Queue()
 _consumer_task: asyncio.Task | None = None
 _RANGE_RE = re.compile(r"bytes=(\d*)-(\d*)$")
+
+
+def _require_media_root() -> Path:
+    if MEDIAROOT is None:
+        raise HTTPException(status_code=503, detail="Media root not initialized yet")
+    return MEDIAROOT
 
 
 async def _send_event(event: ScanEvent) -> None:
@@ -135,42 +147,39 @@ async def _consume_scan_events() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global MEDIAROOT, store, _scanner_active, _consumer_task
+    global MEDIAROOT, store, _scanner_active, _consumer_task, _folder_switch_task
 
-    if not os.environ.get("MEDIAHIVE_PATH"):
-        raise RuntimeError("MEDIAHIVE_PATH environment variable must be set")
-
-    MEDIAROOT = Path(os.environ["MEDIAHIVE_PATH"])
     await frontend.load()
 
-    # Initialise the in-memory index store
-    snapshot_path = MEDIAROOT / ".mediahive" / "index.json"
-    store = IndexStore(snapshot_path, media_root=str(MEDIAROOT))
+    # Bring up the API immediately with an empty in-memory store.
+    # Media-root initialization/scanner startup are deferred to a background task
+    # so macOS permission prompts cannot block server readiness.
+    store = IndexStore(_BOOTSTRAP_SNAPSHOT, media_root=None)
     await store.load_snapshot()
+    _scanner_active = False
+
     logger.info(
-        "Index store ready: %d movies, %d series",
-        len(store.movies),
-        len(store.series),
+        "Server started without active media root; waiting for folder activation"
     )
-
-    # Start the scanner subsystem
-    from mediahive.hivescan.scanner import (
-        start as start_scanner,
-    )
-    from mediahive.hivescan.scanner import (
-        stop as stop_scanner,
-    )
-
-    _consumer_task = asyncio.create_task(_consume_scan_events())
-    await start_scanner(_send_event)
-    _scanner_active = True
 
     yield
 
     # Shutdown
+    if _folder_switch_task and not _folder_switch_task.done():
+        _folder_switch_task.cancel()
+        try:
+            await _folder_switch_task
+        except asyncio.CancelledError:
+            pass
+
     await stop_scanner()
+    _scanner_active = False
     if _consumer_task:
         _consumer_task.cancel()
+        try:
+            await _consumer_task
+        except asyncio.CancelledError:
+            pass
     await store.flush_snapshot()
 
 
@@ -193,14 +202,11 @@ def normalize_path(url_path: str) -> Path:
     Returns: MEDIAROOT/.mediahive/Movies/...
     """
     clean_path = url_path.lstrip("/")
-    return MEDIAROOT / clean_path
+    return _require_media_root() / clean_path
 
 
 def _load_resume_positions() -> dict[str, int]:
-    if MEDIAROOT is None:
-        return {}
-
-    playback_state_path = MEDIAROOT / ".mediahive" / "playback-state.json"
+    playback_state_path = _require_media_root() / ".mediahive" / "playback-state.json"
     try:
         raw = json.loads(playback_state_path.read_text(encoding="utf-8"))
     except Exception:
@@ -268,43 +274,50 @@ async def change_folder_endpoint(request: Request):
 
 
 async def _switch_folder(new_root: Path) -> None:
-    global MEDIAROOT, store, _consumer_task, _scan_events
+    global MEDIAROOT, store, _consumer_task, _scan_events, _scanner_active
 
-    try:
-        # Cancel scanner tasks immediately — no need to wait 30 s
-        await stop_scanner()
+    async with _folder_switch_lock:
+        try:
+            # Cancel scanner tasks immediately — no need to wait 30 s
+            await stop_scanner()
+            _scanner_active = False
 
-        # Tear down the old event consumer
-        if _consumer_task and not _consumer_task.done():
-            _consumer_task.cancel()
-            try:
-                await _consumer_task
-            except asyncio.CancelledError:
-                pass
+            # Tear down the old event consumer
+            if _consumer_task and not _consumer_task.done():
+                _consumer_task.cancel()
+                try:
+                    await _consumer_task
+                except asyncio.CancelledError:
+                    pass
 
-        # Flush the old index snapshot
-        if store:
+            # Flush the old index snapshot
             await store.flush_snapshot()
 
-        # Update env and module globals
-        os.environ["MEDIAHIVE_PATH"] = str(new_root)
-        MEDIAROOT = new_root
+            # Update env and module globals
+            os.environ["MEDIAHIVE_PATH"] = str(new_root)
+            MEDIAROOT = new_root
 
-        # Fresh event queue — discard any stale events from the old folder
-        _scan_events = asyncio.Queue()
+            # Fresh event queue — discard any stale events from the old folder
+            _scan_events = asyncio.Queue()
 
-        # Re-initialise the index store
-        snapshot_path = MEDIAROOT / ".mediahive" / "index.json"
-        store = IndexStore(snapshot_path, media_root=str(MEDIAROOT))
-        await store.load_snapshot()
+            # Re-initialise the index store
+            snapshot_path = MEDIAROOT / ".mediahive" / "index.json"
+            store = IndexStore(snapshot_path, media_root=str(MEDIAROOT))
+            await store.load_snapshot()
+            logger.info(
+                "Index store ready: %d movies, %d series",
+                len(store.movies),
+                len(store.series),
+            )
 
-        # Restart consumer and scanner
-        _consumer_task = asyncio.create_task(_consume_scan_events())
-        await start_scanner(_send_event)
+            # Restart consumer and scanner
+            _consumer_task = asyncio.create_task(_consume_scan_events())
+            await start_scanner(_send_event)
+            _scanner_active = True
 
-        logger.info("Switched media folder to %s", MEDIAROOT)
-    except Exception:
-        logger.exception("Error switching media folder to %s", new_root)
+            logger.info("Switched media folder to %s", MEDIAROOT)
+        except Exception:
+            logger.exception("Error switching media folder to %s", new_root)
 
 
 @app.get("/api/index")
@@ -377,7 +390,7 @@ async def play_media(request: Request):
     """
     req = msgspec.json.decode(await request.body(), type=PlayMediaRequest)
     print(f"[play] Received path: {req.file_path}")
-    file_path = MEDIAROOT / req.file_path
+    file_path = _require_media_root() / req.file_path
 
     if not file_path.exists():
         print(f"[play] File not found: {file_path}")
@@ -400,7 +413,7 @@ async def open_folder(request: Request):
     """
     req = msgspec.json.decode(await request.body(), type=OpenFolderRequest)
     print(f"[open-folder] Received path: {req.folder_path}")
-    target_path = MEDIAROOT / req.folder_path
+    target_path = _require_media_root() / req.folder_path
 
     if not target_path.exists():
         print(f"[open-folder] Path not found: {target_path}")
@@ -466,10 +479,11 @@ async def serve_media_file(file_path: str, request: Request):
     Serve a media file asynchronously.
     """
     full_path = normalize_path(file_path)
+    media_root = _require_media_root()
 
     # Security: ensure path doesn't escape base
     try:
-        full_path.resolve().relative_to(MEDIAROOT.resolve())
+        full_path.resolve().relative_to(media_root.resolve())
     except ValueError:
         raise HTTPException(status_code=403, detail="Access denied")
 
