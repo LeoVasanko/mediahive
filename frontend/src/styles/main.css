@@ -75,7 +75,26 @@ html, body {
   display: flex;
   align-items: center;
   padding: 0 12px;
+  isolation: isolate;
   transition: top 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.header::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 0;
+  border-radius: 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transition-fast);
+}
+
+.header > * {
+  position: relative;
+  z-index: 1;
 }
 
 .header-top {
@@ -88,13 +107,26 @@ html, body {
 }
 
 .header-after-movie-header {
-  /* Position after movie detail collage-header (300px) */
-  top: 320px;
+  /* Place header below movie detail collage-header (300px). */
+  top: 300px;
 }
 
 .header-after-series-hero {
   /* Position after series detail hero (70vh, 450-600px) */
   top: clamp(450px, 70vh, 600px);
+}
+
+.header-after-series-hero::before {
+  width: 30em;
+  max-width: calc(100vw - 24px);
+  opacity: 1;
+  background: linear-gradient(
+    to bottom,
+    rgba(5, 7, 10, 0.72) 0%,
+    rgba(5, 7, 10, 0.5) 100%
+  );
+  backdrop-filter: blur(10px) saturate(115%);
+  -webkit-backdrop-filter: blur(10px) saturate(115%);
 }
 
 /* Spacer to reserve space for header in layout */
@@ -131,6 +163,11 @@ html, body {
   background: none;
   border: none;
   padding: 0;
+}
+
+.header-after-movie-header .header-nav-item,
+.header-after-series-hero .header-nav-item {
+  color: rgba(255, 255, 255, 0.78);
 }
 
 .header-nav-item:hover,

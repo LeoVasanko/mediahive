@@ -485,6 +485,29 @@ function handleOpenFolder(folderPath: string) {
   position: relative;
 }
 
+.movie-page-content::before {
+  content: '';
+  position: absolute;
+  top: 300px;
+  /* Start clipped edge at reel 2/3 split bottom (y=300): 40vw - 0.8rem. */
+  left: calc(-50vw + 50% - 1.6rem);
+  width: calc(40vw + 0.8rem);
+  max-width: calc(100vw - 24px);
+  height: var(--header-height);
+  background: linear-gradient(
+    to bottom,
+    rgba(5, 7, 10, 0.72) 0%,
+    rgba(5, 7, 10, 0.5) 100%
+  );
+  -webkit-backdrop-filter: blur(10px) saturate(115%);
+  backdrop-filter: blur(10px) saturate(115%);
+  /* Match reel slant angle: 2rem horizontal shift over 300px reel height. */
+  -webkit-clip-path: polygon(0 0, 100% 0, calc(100% - (var(--header-height) * 0.1067)) 100%, 0 100%);
+  clip-path: polygon(0 0, 100% 0, calc(100% - (var(--header-height) * 0.1067)) 100%, 0 100%);
+  pointer-events: none;
+  z-index: 30;
+}
+
 /* Modal body with backdrop - full viewport width, fits backdrop height */
 .modal-body {
   position: relative;
