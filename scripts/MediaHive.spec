@@ -36,41 +36,57 @@ if _icon_win.exists():
 if _icon_mac.exists():
     _datas.append((str(_icon_mac), "mediahive/assets"))
 
+_hiddenimports = [
+    # uvicorn dynamic imports
+    "uvicorn.logging",
+    "uvicorn.loops",
+    "uvicorn.loops.auto",
+    "uvicorn.loops.asyncio",
+    "uvicorn.protocols",
+    "uvicorn.protocols.http",
+    "uvicorn.protocols.http.auto",
+    "uvicorn.protocols.http.h11_impl",
+    "uvicorn.protocols.websockets",
+    "uvicorn.protocols.websockets.auto",
+    "uvicorn.protocols.websockets.websockets_impl",
+    "uvicorn.lifespan",
+    "uvicorn.lifespan.on",
+    # mediahive & hivescan modules imported at runtime
+    "mediahive.server",
+    "mediahive.hivescan.scanner",
+    "mediahive.hivescan.indexer",
+    "mediahive.hivescan.scanning",
+    "mediahive.hivescan.images",
+    "mediahive.hivescan.showreel",
+    "mediahive.hivescan.tmdb_client",
+    # async / ASGI internals
+    "anyio",
+    "anyio._backends._asyncio",
+    "starlette.routing",
+    # msgspec TOML write backend
+    "tomli_w",
+]
+
+if sys.platform == "darwin":
+    _hiddenimports.extend(
+        [
+            # pywebview Qt backend selected dynamically via webview.start(gui="qt")
+            "webview.platforms.qt",
+            "qtpy",
+            "PyQt5",
+            "PyQt5.QtCore",
+            "PyQt5.QtGui",
+            "PyQt5.QtWidgets",
+            "PyQt5.QtWebEngineWidgets",
+        ]
+    )
+
 a = Analysis(
     [mediahive.winmain.__file__],
     pathex=[],
     binaries=_binaries,
     datas=_datas,
-    hiddenimports=[
-        # uvicorn dynamic imports
-        "uvicorn.logging",
-        "uvicorn.loops",
-        "uvicorn.loops.auto",
-        "uvicorn.loops.asyncio",
-        "uvicorn.protocols",
-        "uvicorn.protocols.http",
-        "uvicorn.protocols.http.auto",
-        "uvicorn.protocols.http.h11_impl",
-        "uvicorn.protocols.websockets",
-        "uvicorn.protocols.websockets.auto",
-        "uvicorn.protocols.websockets.websockets_impl",
-        "uvicorn.lifespan",
-        "uvicorn.lifespan.on",
-        # mediahive & hivescan modules imported at runtime
-        "mediahive.server",
-        "mediahive.hivescan.scanner",
-        "mediahive.hivescan.indexer",
-        "mediahive.hivescan.scanning",
-        "mediahive.hivescan.images",
-        "mediahive.hivescan.showreel",
-        "mediahive.hivescan.tmdb_client",
-        # async / ASGI internals
-        "anyio",
-        "anyio._backends._asyncio",
-        "starlette.routing",
-        # msgspec TOML write backend
-        "tomli_w",
-    ],
+    hiddenimports=_hiddenimports,
     hookspath=[],
     runtime_hooks=[],
     excludes=[],

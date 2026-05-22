@@ -44,19 +44,19 @@ export function getVideoPreviewUrl(url: string): string {
 
 export function getVideoSourceAttributes(path: string | null | undefined): VideoSourceAttributes {
   if (!path) {
-    return { type: 'video/mp4; codecs="hvc1"', codecs: 'hvc1' };
+    return { type: 'video/mp4', codecs: 'hvc1' };
   }
 
   if (/\.webm$/i.test(path)) {
-    return { type: 'video/webm; codecs="av01"', codecs: 'av01' };
+    return { type: 'video/webm', codecs: 'av1' };
   }
 
   if (/\.mp4$/i.test(path) || /\.m4v$/i.test(path)) {
-    return { type: 'video/mp4; codecs="hvc1"', codecs: 'hvc1' };
+    return { type: 'video/mp4', codecs: 'hvc1' };
   }
 
   if (/\.mov$/i.test(path)) {
-    return { type: 'video/quicktime; codecs="hvc1"', codecs: 'hvc1' };
+    return { type: 'video/quicktime', codecs: 'hvc1' };
   }
 
   if (/\.avi$/i.test(path)) {
@@ -67,7 +67,7 @@ export function getVideoSourceAttributes(path: string | null | undefined): Video
     return { type: 'video/x-matroska', codecs: '' };
   }
 
-  return { type: 'video/mp4; codecs="hvc1"', codecs: 'hvc1' };
+  return { type: 'video/mp4', codecs: 'hvc1' };
 }
 
 /**

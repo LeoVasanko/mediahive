@@ -33,6 +33,8 @@ async def _subprocess_exec(*args, **kwargs):
 # Showreel timestamp positions in seconds (5, 10, 15, 20, 25 minutes)
 SHOWREEL_TIMESTAMPS = [5 * 60, 10 * 60, 15 * 60, 20 * 60, 25 * 60]
 REEL_SOURCE_EXTENSIONS = [".webm", ".mp4"]
+# Temporary rollout switch: keep platform-native MP4/H.265 path available but disabled.
+ENABLE_PLATFORM_NATIVE_REELS = False
 
 
 def get_reel_source_extensions() -> list[str]:
@@ -52,11 +54,15 @@ def _to_media_path(path: Path, media_root: Optional[Path] = None) -> str:
 
 def get_reel_extension() -> str:
     """Return the platform-native reel file extension."""
+    if not ENABLE_PLATFORM_NATIVE_REELS:
+        return ".webm"
     return ".mp4" if sys.platform == "darwin" else ".webm"
 
 
 async def get_reel_video_encoder() -> str:
     """Return the platform-native reel video encoder."""
+    if not ENABLE_PLATFORM_NATIVE_REELS:
+        return await get_av1_encoder()
     if sys.platform == "darwin":
         return "libx265"
     return await get_av1_encoder()
@@ -73,6 +79,8 @@ def get_reel_video_options(encoder: str) -> list[str]:
 
 def get_reel_audio_options() -> list[str]:
     """Return ffmpeg audio and container options for the current platform."""
+    if not ENABLE_PLATFORM_NATIVE_REELS:
+        return ["-c:a", "libopus", "-ac", "2", "-b:a", "128k"]
     if sys.platform == "darwin":
         return ["-c:a", "aac", "-ac", "2", "-b:a", "128k", "-movflags", "+faststart"]
     return ["-c:a", "libopus", "-ac", "2", "-b:a", "128k"]

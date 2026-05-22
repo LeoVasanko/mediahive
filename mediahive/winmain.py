@@ -28,6 +28,8 @@ import webview
 from mediahive.__main__ import resolve_media_root
 from mediahive.config import load_config, save_config
 
+logger = logging.getLogger("mediahive.winmain")
+
 BACKEND_HOST = "127.0.0.1"
 BACKEND_PORT = 8420
 HEALTH_TIMEOUT = 2  # seconds
@@ -669,6 +671,19 @@ def _icon_path() -> str | None:
     return str(ico) if ico.exists() else None
 
 
+def _webview_start_kwargs() -> dict[str, str]:
+    """Return platform-specific pywebview startup kwargs."""
+    # On macOS, force Qt backend so pywebview uses Chromium/WebEngine instead of WKWebView.
+    if sys.platform == "darwin":
+        return {"gui": "qt"}
+    return {}
+
+
+def _selected_webview_backend() -> str:
+    """Return the configured pywebview GUI backend name for logging."""
+    return _webview_start_kwargs().get("gui", "default")
+
+
 def _run_initial_setup() -> str | None:
     """Show a setup window, prompt for a folder, then close and return the path.
 
@@ -691,7 +706,7 @@ def _run_initial_setup() -> str | None:
             chosen.append(result[0])
         window.destroy()
 
-    webview.start(func=on_shown, icon=_icon_path())
+    webview.start(func=on_shown, icon=_icon_path(), **_webview_start_kwargs())
     return chosen[0] if chosen else None
 
 
@@ -766,6 +781,7 @@ def winmain() -> None:
         raise RuntimeError(f"Backend did not become ready within {HEALTH_TIMEOUT}s")
 
     api = JsApi()
+    logger.info("Configured pywebview backend: %s", _selected_webview_backend())
     window = webview.create_window(
         title="MediaHive",
         url=backend_url,
@@ -778,11 +794,18 @@ def winmain() -> None:
 
     def on_shown() -> None:
         api._window = window
+        try:
+            user_agent = window.evaluate_js("navigator.userAgent")
+            if isinstance(user_agent, str):
+                logger.info("Embedded webview user agent: %s", user_agent)
+        except Exception as exc:
+            logger.warning("Could not read embedded user agent: %s", exc)
+
         nonlocal poll_thread
         if poll_thread is None and _supports_gamepad_remote():
             poll_thread = _start_gamepad_remote(poll_stop, mediaroot)
 
-    webview.start(func=on_shown, icon=_icon_path())
+    webview.start(func=on_shown, icon=_icon_path(), **_webview_start_kwargs())
 
     poll_stop.set()
     if poll_thread is not None:
