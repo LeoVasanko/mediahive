@@ -9,7 +9,7 @@ This script:
     1. Reads the version from pyproject.toml
     2. Runs `uv build` to produce the wheel/sdist
     3. On Windows, downloads the latest ffmpeg.exe for bundling
-    4. On macOS arm64, downloads prebuilt ffmpeg/ffprobe binaries for bundling
+    4. On macOS arm64, downloads a prebuilt ffmpeg binary for bundling
     4. Builds MediaHive using PyInstaller
     5. Creates a ZIP file with the version number
 """
@@ -33,7 +33,6 @@ _FFMPEG_URL = (
 )
 _MACOS_ARM64_TOOL_URLS = {
     "ffmpeg": "https://www.osxexperts.net/ffmpeg81arm.zip",
-    "ffprobe": "https://www.osxexperts.net/ffprobe81arm.zip",
 }
 _FFMPEG_STAGING = Path(__file__).parent.parent / "build" / "ffmpeg"
 _REPO_ROOT = Path(__file__).parent.parent
@@ -82,7 +81,7 @@ def fetch_ffmpeg() -> Path:
 
 
 def fetch_macos_arm64_binaries() -> dict[str, Path]:
-    """Download prebuilt macOS arm64 ffmpeg/ffprobe binaries into build/ffmpeg/."""
+    """Download prebuilt macOS arm64 ffmpeg binary into build/ffmpeg/."""
     if sys.platform != "darwin" or platform.machine().lower() not in {
         "arm64",
         "aarch64",

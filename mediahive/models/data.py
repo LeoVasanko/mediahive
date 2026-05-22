@@ -24,6 +24,8 @@ class Torrent(msgspec.Struct):
     quality: str | None = None
     codec: str | None = None
     audio: str | None = None
+    audio_languages: list[str] | None = None
+    subtitle_languages: list[str] | None = None
     encoder: str | None = None
     size: int | None = None
     added_at: int | None = None

@@ -19,7 +19,7 @@ _frontend_build = _pkg / "frontend-build"
 _icon_win = _pkg / "assets" / "mediahive.ico"
 _icon_mac = _pkg / "assets" / "mediahive.icns"
 _tools_dir = Path(SPECPATH).parent / "build" / "ffmpeg"
-_tool_names = ["ffmpeg.exe"] if sys.platform == "win32" else ["ffmpeg", "ffprobe"]
+_tool_names = ["ffmpeg.exe"] if sys.platform == "win32" else ["ffmpeg"]
 
 _binaries = []
 for _tool_name in _tool_names:

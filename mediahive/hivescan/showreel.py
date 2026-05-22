@@ -7,13 +7,13 @@ and HDR passthrough.
 """
 
 import asyncio
-import json
 import logging
 import re
 import shlex
 import subprocess
 import sys
 from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -325,6 +325,103 @@ def get_encoder_options(encoder: str) -> list[str]:
         return ["-crf", "38", "-preset", "6"]
 
 
+@dataclass
+class MediaProbeInfo:
+    duration: float | None = None
+    width: int | None = None
+    height: int | None = None
+    is_hdr: bool = False
+    dovi_profile: int | None = None
+    resolution: str | None = None
+    audio_languages: list[str] | None = None
+    subtitle_languages: list[str] | None = None
+
+
+_media_probe_cache: dict[str, MediaProbeInfo] = {}
+_duration_re = re.compile(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)")
+_dimension_re = re.compile(r"(\d{2,5})x(\d{2,5})")
+_dovi_profile_re = re.compile(r"DOVI configuration record:.*?profile:\s*(\d+)", re.I)
+_audio_stream_re = re.compile(r"Stream #\d+:\d+(?:\(([^)]+)\))?:\s+Audio:")
+_subtitle_stream_re = re.compile(r"Stream #\d+:\d+(?:\(([^)]+)\))?:\s+Subtitle:")
+
+
+def _lang_code(raw: str | None) -> str | None:
+    if not raw:
+        return None
+    code = raw.strip().split(",", 1)[0].lower()
+    return code if code and code != "und" else None
+
+
+async def probe_media_info(video_path: str) -> MediaProbeInfo:
+    """Parse key media metadata from `ffmpeg -i` output."""
+    cached = _media_probe_cache.get(video_path)
+    if cached is not None:
+        return cached
+
+    info = MediaProbeInfo()
+    try:
+        cmd = ["ffmpeg", "-hide_banner", "-i", video_path]
+        logger.debug("    $ %s", shlex.join(cmd))
+        proc = await _subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+        text = (stderr + stdout).decode("utf-8", errors="replace")
+        lower_text = text.lower()
+
+        duration_match = _duration_re.search(text)
+        if duration_match:
+            hours = int(duration_match.group(1))
+            minutes = int(duration_match.group(2))
+            seconds = float(duration_match.group(3))
+            info.duration = hours * 3600 + minutes * 60 + seconds
+
+        video_line = None
+        for line in text.splitlines():
+            if "Stream #" in line and "Video:" in line:
+                video_line = line
+                break
+        if video_line:
+            dim_match = _dimension_re.search(video_line)
+            if dim_match:
+                info.width = int(dim_match.group(1))
+                info.height = int(dim_match.group(2))
+                info.resolution = f"{info.width}x{info.height}"
+
+        info.is_hdr = (
+            "smpte2084" in lower_text
+            or "arib-std-b67" in lower_text
+            or "bt2020" in lower_text
+        )
+
+        dovi_match = _dovi_profile_re.search(text)
+        if dovi_match:
+            info.dovi_profile = int(dovi_match.group(1))
+        elif "dvhe" in lower_text or "dvh1" in lower_text or "dav1" in lower_text:
+            info.dovi_profile = 7
+
+        audio_languages: list[str] = []
+        for match in _audio_stream_re.finditer(text):
+            lang = _lang_code(match.group(1))
+            if lang and lang not in audio_languages:
+                audio_languages.append(lang)
+        info.audio_languages = audio_languages or None
+
+        subtitle_languages: list[str] = []
+        for match in _subtitle_stream_re.finditer(text):
+            lang = _lang_code(match.group(1))
+            if lang and lang not in subtitle_languages:
+                subtitle_languages.append(lang)
+        info.subtitle_languages = subtitle_languages or None
+    except Exception as e:
+        logger.warning("    ffmpeg probe error: %s", e)
+
+    _media_probe_cache[video_path] = info
+    return info
+
+
 async def detect_dovi_profile(video_path: str) -> Optional[int]:
     """
     Detect Dolby Vision profile from a video file.
@@ -335,72 +432,7 @@ async def detect_dovi_profile(video_path: str) -> Optional[int]:
     Profile 8: Single-layer HDR10 compatible (usually OK)
     """
     try:
-        # Check for Dolby Vision configuration record in video stream
-        cmd = [
-            "ffprobe",
-            "-v",
-            "error",
-            "-select_streams",
-            "v:0",
-            "-show_entries",
-            "stream_side_data_list",
-            "-of",
-            "json",
-            video_path,
-        ]
-        logger.debug("    $ %s", shlex.join(cmd))
-        proc = await _subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
-
-        if proc.returncode != 0:
-            return None
-
-        data = json.loads(stdout)
-        streams = data.get("streams", [])
-        if not streams:
-            return None
-
-        # Look for DOVI configuration in side data
-        side_data_list = streams[0].get("side_data_list", [])
-        for side_data in side_data_list:
-            side_data_type = side_data.get("side_data_type", "")
-            if "DOVI" in side_data_type or "Dolby Vision" in side_data_type:
-                # Try to extract profile from dv_profile field
-                dv_profile = side_data.get("dv_profile")
-                if dv_profile is not None:
-                    return int(dv_profile)
-
-        # Alternative: check using mediainfo-style detection via codec tag
-        # Some DoVi content has "dvhe" or "dvh1" codec tags
-        codec_cmd = [
-            "ffprobe",
-            "-v",
-            "error",
-            "-select_streams",
-            "v:0",
-            "-show_entries",
-            "stream=codec_tag_string,codec_name",
-            "-of",
-            "csv=p=0",
-            video_path,
-        ]
-        codec_proc = await _subprocess_exec(
-            *codec_cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        codec_stdout, _ = await asyncio.wait_for(codec_proc.communicate(), timeout=30)
-        if codec_proc.returncode == 0:
-            codec_info = codec_stdout.decode("utf-8").lower()
-            if "dvhe" in codec_info or "dvh1" in codec_info or "dav1" in codec_info:
-                # DoVi detected but profile unknown, assume needs conversion
-                return 7  # Conservative: treat as dual-layer
-
-        return None
+        return (await probe_media_info(video_path)).dovi_profile
     except Exception as e:
         logger.warning("    DoVi detection error: %s", e)
         return None
@@ -423,43 +455,12 @@ def get_dovi_to_hdr10_filter() -> str:
 
 async def is_hdr_video(video_path: str) -> bool:
     """
-    Check if a video file is HDR using ffprobe.
+    Check if a video file is HDR using ffmpeg probe output.
 
     Returns True if the video has HDR metadata (bt2020, SMPTE ST 2084, etc.)
     """
     try:
-        proc = await _subprocess_exec(
-            "ffprobe",
-            "-v",
-            "quiet",
-            "-select_streams",
-            "v:0",
-            "-show_entries",
-            "stream=color_transfer,color_primaries,color_space",
-            "-of",
-            "json",
-            video_path,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
-        if proc.returncode != 0:
-            return False
-
-        data = json.loads(stdout)
-        streams = data.get("streams", [])
-        if not streams:
-            return False
-
-        stream = streams[0]
-        color_transfer = stream.get("color_transfer", "")
-        color_primaries = stream.get("color_primaries", "")
-
-        # HDR indicators
-        hdr_transfers = ["smpte2084", "arib-std-b67"]  # PQ and HLG
-        hdr_primaries = ["bt2020"]
-
-        return color_transfer in hdr_transfers or color_primaries in hdr_primaries
+        return (await probe_media_info(video_path)).is_hdr
     except Exception:
         return False
 
@@ -484,34 +485,10 @@ async def detect_crop(video_path: str) -> Optional[str]:
     """
     try:
         # First, get source video dimensions to check if it's 16:9
-        dim_cmd = [
-            "ffprobe",
-            "-v",
-            "error",
-            "-select_streams",
-            "v:0",
-            "-show_entries",
-            "stream=width,height",
-            "-of",
-            "csv=p=0",
-            video_path,
-        ]
-        logger.debug("    $ %s", shlex.join(dim_cmd))
-        dim_proc = await _subprocess_exec(
-            *dim_cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        dim_stdout, _ = await asyncio.wait_for(dim_proc.communicate(), timeout=30)
-        if dim_proc.returncode != 0:
+        probe_info = await probe_media_info(video_path)
+        if not probe_info.width or not probe_info.height:
             return None
-
-        # Parse "width,height" output (take first line only, ffprobe may emit multiple)
-        first_line = dim_stdout.decode("utf-8").strip().splitlines()[0].strip()
-        parts = first_line.split(",")
-        if len(parts) < 2:
-            return None
-        src_width, src_height = int(parts[0]), int(parts[1])
+        src_width, src_height = probe_info.width, probe_info.height
 
         # Check if source is 16:9 (allow small tolerance for weird resolutions)
         # 16:9 = 1.777..., typical: 1920x1080, 3840x2160, 1280x720
@@ -521,7 +498,7 @@ async def detect_crop(video_path: str) -> Optional[str]:
             return None
 
         # Use ffmpeg to run cropdetect on just 2 seconds at 5-minute mark
-        # This is much faster than scanning 60 seconds with ffprobe lavfi
+        # This is much faster than scanning a long window with lavfi analysis.
         cmd = [
             "ffmpeg",
             "-hide_banner",
@@ -620,28 +597,10 @@ async def detect_crop(video_path: str) -> Optional[str]:
 
 async def get_video_duration(video_path: str) -> Optional[float]:
     """
-    Get the duration of a video file in seconds using ffprobe.
+    Get the duration of a video file in seconds using ffmpeg probe output.
     """
     try:
-        proc = await _subprocess_exec(
-            "ffprobe",
-            "-v",
-            "quiet",
-            "-show_entries",
-            "format=duration",
-            "-of",
-            "json",
-            video_path,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
-        if proc.returncode != 0:
-            return None
-
-        data = json.loads(stdout)
-        duration = data.get("format", {}).get("duration")
-        return float(duration) if duration else None
+        return (await probe_media_info(video_path)).duration
     except Exception:
         return None
 
@@ -685,7 +644,7 @@ async def generate_showreel_images(
             return []
         ffmpeg_input = video_path
 
-    # Fast path: check if all showreel clips already exist before any ffprobe calls
+    # Fast path: check if all showreel clips already exist before any probe calls
     existing_paths = []
     all_exist = True
     extension = get_reel_extension()

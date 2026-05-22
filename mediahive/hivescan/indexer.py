@@ -23,6 +23,7 @@ from mediahive.hivescan.showreel import (
     get_existing_episode_reel_sources,
     get_existing_showreel_paths,
     get_existing_showreel_source_sets,
+    probe_media_info,
 )
 from mediahive.hivescan.tmdb_client import (
     fetch_movie_info,
@@ -54,6 +55,10 @@ async def _build_torrent_info(
 ) -> Torrent:
     """Build torrent info for a single torrent."""
     playable_file = await find_playable_file(item.path)
+    probe_info = None
+    if playable_file and not str(playable_file).endswith(".bdmv"):
+        probe_info = await probe_media_info(str(playable_file))
+
     if item.content_hash and item.content_hash.size == 0:
         item.content_hash.size = await get_directory_size(item.content_hash.path)
     size = item.content_hash.size if item.content_hash else None
@@ -62,10 +67,12 @@ async def _build_torrent_info(
     return Torrent(
         title=item.title,
         playable_file=make_relative_path(playable_file, media_root),
-        resolution=item.resolution,
+        resolution=item.resolution or (probe_info.resolution if probe_info else None),
         quality=item.quality,
         codec=item.codec,
         audio=item.audio,
+        audio_languages=probe_info.audio_languages if probe_info else None,
+        subtitle_languages=probe_info.subtitle_languages if probe_info else None,
         encoder=item.encoder,
         size=size,
         added_at=added_at,
@@ -116,6 +123,15 @@ async def _collect_episode_files(
     Returns dict mapping (season, episode) to list of file info dicts.
     """
     all_episode_files: Dict[Tuple[int, int], List[Dict]] = {}
+    probe_cache: Dict[str, object] = {}
+
+    async def get_probe(path: str):
+        cached = probe_cache.get(path)
+        if cached is not None:
+            return cached
+        probe = await probe_media_info(path)
+        probe_cache[path] = probe
+        return probe
 
     for item in items:
         episode_files = await find_episode_files(item.path)
@@ -125,10 +141,14 @@ async def _collect_episode_files(
             if key not in all_episode_files:
                 all_episode_files[key] = []
             for file_path, file_size in files:
+                probe = await get_probe(file_path)
                 all_episode_files[key].append(
                     {
                         "path": file_path,
                         "size": file_size,
+                        "probed_resolution": probe.resolution,
+                        "audio_languages": probe.audio_languages,
+                        "subtitle_languages": probe.subtitle_languages,
                         "resolution": item.resolution,
                         "quality": item.quality,
                         "codec": item.codec,
@@ -150,6 +170,7 @@ async def _collect_episode_files(
 
             playable = await find_playable_file(item.path)
             if playable:
+                probe = await get_probe(playable)
                 for sn in season_nums:
                     for ep in episode_nums:
                         key = (sn, ep)
@@ -169,6 +190,9 @@ async def _collect_episode_files(
                                 {
                                     "path": playable,
                                     "size": size,
+                                    "probed_resolution": probe.resolution,
+                                    "audio_languages": probe.audio_languages,
+                                    "subtitle_languages": probe.subtitle_languages,
                                     "resolution": item.resolution,
                                     "quality": item.quality,
                                     "codec": item.codec,
@@ -228,10 +252,12 @@ def _build_episodes_data(
             torrents[relpath] = Torrent(
                 title=f["torrent_title"],
                 playable_file=make_relative_path(f["path"], media_root),
-                resolution=f.get("resolution"),
+                resolution=f.get("resolution") or f.get("probed_resolution"),
                 quality=f.get("quality"),
                 codec=f.get("codec"),
                 audio=f.get("audio"),
+                audio_languages=f.get("audio_languages"),
+                subtitle_languages=f.get("subtitle_languages"),
                 encoder=f.get("encoder"),
                 size=f.get("size"),
             )
