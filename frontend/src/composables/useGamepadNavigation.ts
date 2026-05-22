@@ -1,9 +1,9 @@
-type GamepadAction = 'up' | 'down' | 'left' | 'right' | 'select' | 'back';
+type GamepadAction = 'up' | 'down' | 'left' | 'right' | 'select' | 'back' | 'menu';
 
 const GAMEPAD_AXIS_THRESHOLD = 0.55;
 const GAMEPAD_REPEAT_MS = 180;
 
-const KEY_BY_ACTION: Record<GamepadAction, string> = {
+const KEY_BY_ACTION: Partial<Record<GamepadAction, string>> = {
   up: 'ArrowUp',
   down: 'ArrowDown',
   left: 'ArrowLeft',
@@ -19,6 +19,7 @@ const gamepadPressedState: Record<GamepadAction, boolean> = {
   right: false,
   select: false,
   back: false,
+  menu: false,
 };
 
 const gamepadLastTriggerAt: Record<GamepadAction, number> = {
@@ -28,6 +29,7 @@ const gamepadLastTriggerAt: Record<GamepadAction, number> = {
   right: 0,
   select: 0,
   back: 0,
+  menu: 0,
 };
 
 let gamepadFrameId: number | null = null;
@@ -61,7 +63,10 @@ function applyGamepadAction(action: GamepadAction, isPressed: boolean, now: numb
   const shouldContinueWithKeyboard = window.dispatchEvent(actionEvent);
   if (!shouldContinueWithKeyboard) return;
 
-  dispatchKey(KEY_BY_ACTION[action]);
+  const key = KEY_BY_ACTION[action];
+  if (key) {
+    dispatchKey(key);
+  }
 }
 
 function resetPressedState() {
@@ -71,6 +76,7 @@ function resetPressedState() {
   gamepadPressedState.right = false;
   gamepadPressedState.select = false;
   gamepadPressedState.back = false;
+  gamepadPressedState.menu = false;
 }
 
 function pollGamepad() {
@@ -85,6 +91,7 @@ function pollGamepad() {
     let right = false;
     let select = false;
     let back = false;
+    let menu = false;
 
     for (const gamepad of connectedGamepads) {
       const axisX = gamepad.axes[0] ?? 0;
@@ -98,6 +105,8 @@ function pollGamepad() {
       // Xbox mapping on standard gamepads: A=0, B=1
       select = select || Boolean(gamepad.buttons[0]?.pressed);
       back = back || Boolean(gamepad.buttons[1]?.pressed);
+      // Y/Triangle button opens contextual release list where supported.
+      menu = menu || Boolean(gamepad.buttons[3]?.pressed);
     }
 
     applyGamepadAction('up', up, now);
@@ -106,6 +115,7 @@ function pollGamepad() {
     applyGamepadAction('right', right, now);
     applyGamepadAction('select', select, now);
     applyGamepadAction('back', back, now);
+    applyGamepadAction('menu', menu, now);
   } else {
     resetPressedState();
   }

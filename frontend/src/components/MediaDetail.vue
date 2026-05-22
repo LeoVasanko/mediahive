@@ -87,49 +87,17 @@
                 >
               </div>
               <div v-if="movieVersions.length > 0" class="versions-list versions-list-sidebar">
-                <div
+                <ReleaseVersionCard
                   v-for="(version, index) in movieVersions"
                   :key="index"
-                  class="version-row"
-                  :class="{
-                    'version-best': index === 0,
-                    'version-selectable': !!version.playable_file,
-                    'version-disabled': !version.playable_file,
-                  }"
-                  tabindex="0"
+                  :torrent="version"
+                  :best="index === 0"
+                  :selectable="!!version.playable_file"
+                  :disabled="!version.playable_file"
                   v-bind="navAttrs(2, index)"
-                  @click="handleVersionActivate(version, $event)"
-                  @keydown.enter.prevent="handleVersionActivate(version, $event)"
-                  @keydown.space.prevent="handleVersionActivate(version, $event)"
+                  @activate="handleVersionActivate(version, $event)"
                   :title="version.playable_file ? 'Click to play/continue. Alt+Click to open folder.' : 'No playable file'"
-                >
-                  <div class="version-main">
-                    <div class="version-badges">
-                      <span v-if="version.resolution" class="v-badge res">{{ version.resolution }}</span>
-                      <span v-if="getDisplayQualityBadge(version)" class="v-badge qual">{{ getDisplayQualityBadge(version) }}</span>
-                      <span v-if="getDisplayCodecBadge(version)" class="v-badge codec">{{ getDisplayCodecBadge(version) }}</span>
-                      <span v-if="getShowHdrBadge(version)" class="v-badge hdr">HDR</span>
-                      <span v-if="getDisplayAudioBadge(version)" class="v-badge audio">{{ getDisplayAudioBadge(version) }}</span>
-                      <span v-if="isVersionDisc(version)" class="v-disc">💿</span>
-                    </div>
-                    <div class="version-language-flags">
-                      <LanguageFlags class="language-flags-audio" :codes="version.audio_languages" />
-                      <span
-                        v-if="hasLanguageDisplay(version.audio_languages) && hasLanguageDisplay(version.subtitle_languages)"
-                        class="language-separator"
-                      >•</span>
-                      <LanguageFlags class="language-flags-subs" :codes="version.subtitle_languages" />
-                    </div>
-                  </div>
-                  <div class="version-dolby-cell">
-                    <DolbyBadges
-                      class="version-dolby"
-                      :has-dolby-vision="getHasDolbyVision(version)"
-                      :has-dolby-atmos="getHasDolbyAtmos(version)"
-                      :is-hdr="getHasHdr(version)"
-                    />
-                  </div>
-                </div>
+                />
               </div>
             </div>
 
@@ -192,10 +160,8 @@ import { getCoverUrl, getVideoPreviewUrl, getVideoSourceAttributes, isSafariBrow
 import castPlaceholderFemaleUrl from '../assets/cast-placeholder-female.svg';
 import castPlaceholderMaleUrl from '../assets/cast-placeholder-male.svg';
 import SeriesFullView from './SeriesFullView.vue';
-import LanguageFlags from './LanguageFlags.vue';
-import DolbyBadges from './DolbyBadges.vue';
+import ReleaseVersionCard from './ReleaseVersionCard.vue';
 import { navAttrs } from '../composables/useKeyboardNavigation';
-import { buildLanguageFlags } from '../utils/languageFlags';
 
 const props = defineProps<{
   item: MediaItem;
@@ -401,81 +367,6 @@ const synopsisPosterUrl = computed(() => {
   if (props.item.type !== 'movies') return null;
   return getCoverUrl(props.item.cover_path);
 });
-
-const dolbyTagPattern = /\b(dolby|atmos|vision|dovi|dv)\b/i;
-const dolbyVisionPattern = /\b(dolby\s*vision|dovi|\bdv\b)\b/i;
-const dolbyAtmosPattern = /\b(dolby\s*atmos|atmos)\b/i;
-const hdrPattern = /\bhdr\b|smpte\s*2084|bt\s*2020|hlg/i;
-const blurayTagPattern = /\bblu[\s.-]*ray\b/i;
-
-function hasDolbyTag(value: string | null | undefined): boolean {
-  return Boolean(value && dolbyTagPattern.test(value));
-}
-
-function hasAnyTag(
-  pattern: RegExp,
-  ...values: Array<string | null | undefined>
-): boolean {
-  return values.some((value) => Boolean(value && pattern.test(value)));
-}
-
-function getHasDolbyVision(version: Torrent): boolean {
-  return (
-    version.has_dolby_vision === true
-    || hasAnyTag(dolbyVisionPattern, version.quality, version.codec, version.audio, version.title)
-  );
-}
-
-function getHasDolbyAtmos(version: Torrent): boolean {
-  return (
-    version.has_dolby_atmos === true
-    || hasAnyTag(dolbyAtmosPattern, version.quality, version.codec, version.audio, version.title)
-  );
-}
-
-function getHasHdr(version: Torrent): boolean {
-  return (
-    version.is_hdr === true
-    || hasAnyTag(hdrPattern, version.quality, version.codec, version.audio, version.title)
-  );
-}
-
-function getDisplayQualityBadge(version: Torrent): string | null {
-  if (!version.quality || hasDolbyTag(version.quality)) return null;
-  if (blurayTagPattern.test(version.quality) && !isVersionDisc(version)) return null;
-  return version.quality;
-}
-
-function getDisplayCodecBadge(version: Torrent): string | null {
-  if (!version.codec || hasDolbyTag(version.codec)) return null;
-  return version.codec;
-}
-
-function getDisplayAudioBadge(version: Torrent): string | null {
-  if (!version.audio || hasDolbyTag(version.audio)) return null;
-  return version.audio;
-}
-
-function hasLanguageDisplay(codes: string[] | null | undefined): boolean {
-  const mapped = buildLanguageFlags(codes);
-  return mapped.flags.length > 0 || mapped.unmappedCodes.length > 0;
-}
-
-function hasHdrTag(value: string | null | undefined): boolean {
-  return Boolean(value && hdrPattern.test(value));
-}
-
-function getShowHdrBadge(version: Torrent): boolean {
-  if (!getHasHdr(version)) return false;
-  return !hasHdrTag(version.quality) && !hasHdrTag(version.codec) && !hasHdrTag(version.audio);
-}
-
-// Check if a specific version is a disc format (Blu-ray disc has index.bdmv)
-function isVersionDisc(version: Torrent): boolean {
-  if (!version.playable_file) return false;
-  const filename = version.playable_file.toLowerCase();
-  return filename.endsWith('index.bdmv') || filename.endsWith('.iso');
-}
 
 const movieGenres = computed(() => {
   if (props.item.type !== 'movies') return null;
@@ -1554,129 +1445,6 @@ function handleOpenFolder(folderPath: string) {
   display: flex;
   flex-direction: column;
   gap: 8px;
-}
-
-.versions-list-sidebar .version-row {
-  padding: 10px 12px;
-}
-
-.version-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) max-content;
-  align-items: stretch;
-  column-gap: 8px;
-  row-gap: 6px;
-  padding: 12px 16px;
-  background: rgba(10, 14, 22, 0.2);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  transition: background 0.2s, border-color 0.2s;
-}
-
-.version-row:hover {
-  background: rgba(10, 14, 22, 0.28);
-  border-color: rgba(255, 255, 255, 0.2);
-}
-
-.version-row.version-best {
-  border-color: rgba(255, 255, 255, 0.1);
-  background: rgba(10, 14, 22, 0.2);
-}
-
-.version-row.version-best:hover {
-  background: rgba(10, 14, 22, 0.28);
-  border-color: rgba(255, 255, 255, 0.2);
-}
-
-.version-row.version-selectable {
-  cursor: pointer;
-}
-
-.version-row.version-selectable:focus-visible {
-  outline: 2px solid rgba(255, 255, 255, 0.85);
-  outline-offset: 2px;
-}
-
-.version-row.version-disabled {
-  cursor: not-allowed;
-  opacity: 0.75;
-}
-
-.version-main {
-  grid-column: 1;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 6px;
-  min-width: 0;
-}
-
-.version-dolby-cell {
-  grid-column: 2;
-  display: flex;
-  align-items: stretch;
-  justify-content: flex-end;
-  min-width: 0;
-}
-
-.version-dolby {
-  align-self: stretch;
-}
-
-.btn-small {
-  padding: 6px 12px;
-  font-size: 0.8rem;
-}
-
-.version-badges {
-  display: flex;
-  flex-wrap: nowrap;
-  align-items: center;
-  gap: 6px;
-}
-
-.v-badge {
-  display: flex;
-  align-items: center;
-  font-size: 0.7rem;
-  padding: 3px 8px;
-  border-radius: 4px;
-  font-weight: 600;
-  text-transform: uppercase;
-}
-
-.v-disc {
-  display: flex;
-  align-items: center;
-  font-size: 1.1rem;
-  line-height: 1;
-}
-
-.v-badge.res {
-  background: #1d4ed8;
-  color: #eff6ff;
-}
-
-.v-badge.qual {
-  background: #7c3aed;
-  color: #f5f3ff;
-}
-
-.v-badge.codec {
-  background: #0f766e;
-  color: #ecfeff;
-}
-
-.v-badge.audio {
-  background: #b45309;
-  color: #fffbeb;
-}
-
-.v-badge.hdr {
-  background: #166534;
-  color: #dcfce7;
 }
 
 </style>

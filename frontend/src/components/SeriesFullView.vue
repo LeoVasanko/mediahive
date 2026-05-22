@@ -67,7 +67,7 @@
             tabindex="0"
             v-bind="navAttrs(sIndex + 2, eIndex)"
             @click="handlePlay(episode)"
-            @keydown.enter.prevent="handlePlay(episode)"
+            @keydown.enter.prevent="handleEpisodeEnter($event, episode)"
             @mouseenter="handleEpisodeHover(`${sIndex}-${eIndex}`, true)"
             @mouseleave="handleEpisodeHover(`${sIndex}-${eIndex}`, false)"
             @contextmenu="handleContextMenu($event, episode)"
@@ -133,61 +133,53 @@
           {{ contextMenu.episode.name || `Episode ${contextMenu.episode.episode_number}` }}
         </div>
         <div v-if="Object.values(contextMenu.episode.torrents || {}).length > 0">
-          <div
+          <ReleaseVersionCard
             v-for="(torrent, index) in Object.values(contextMenu.episode.torrents || {})"
             :key="index"
             class="context-menu-version"
-          >
-            <div class="version-main">
-              <div class="version-label">{{ getVersionLabel(torrent) }}</div>
-              <div class="version-language-flags">
-                <LanguageFlags class="language-flags-audio" :codes="torrent.audio_languages" compact />
-                <span
-                  v-if="hasLanguageDisplay(torrent.audio_languages) && hasLanguageDisplay(torrent.subtitle_languages)"
-                  class="language-separator"
-                >•</span>
-                <LanguageFlags class="language-flags-subs" :codes="torrent.subtitle_languages" compact />
-              </div>
-            </div>
-            <div class="version-dolby-cell">
-              <DolbyBadges
-                class="version-dolby"
-                :has-dolby-vision="getHasDolbyVision(torrent)"
-                :has-dolby-atmos="getHasDolbyAtmos(torrent)"
-                :is-hdr="getHasHdr(torrent)"
-              />
-            </div>
-            <div class="version-actions">
-              <button
-                class="ctx-btn ctx-btn-play"
-                tabindex="0"
-                @click="handlePlayVersion(torrent.playable_file)"
-                :disabled="!torrent.playable_file"
-              >▶ {{ getPlayLabel(torrent.playable_file) }}</button>
-              <button
-                class="ctx-btn ctx-btn-folder"
-                tabindex="0"
-                @click="handleOpenFolder(torrent.playable_file || '')"
-              >📁</button>
-            </div>
-          </div>
+            :torrent="torrent"
+            variant="menu"
+            compact-flags
+            :title="torrent.playable_file ? 'Click to play/continue. Alt+Click, Alt+Enter, or Cmd/Ctrl+E to open folder. Right-click for actions.' : 'No playable file'"
+            @activate="handleVersionActivate(torrent, $event)"
+            @keydown="handleVersionShortcutKeydown($event, torrent)"
+            @contextmenu="handleVersionContextMenu($event, torrent)"
+          />
         </div>
         <div v-else class="context-menu-empty">
           No versions available
         </div>
+      </div>
+      <div
+        v-if="versionActionMenu.visible && versionActionMenu.torrent"
+        class="version-action-menu"
+        :style="{ left: versionActionMenu.x + 'px', top: versionActionMenu.y + 'px' }"
+      >
+        <button
+          class="version-action-item"
+          :disabled="!versionActionMenu.torrent.playable_file"
+          @click="handlePlayVersion(versionActionMenu.torrent.playable_file)"
+        >
+          {{ getPlayLabel(versionActionMenu.torrent.playable_file) }}
+        </button>
+        <button
+          class="version-action-item"
+          :disabled="!versionActionMenu.torrent.playable_file"
+          @click="handleOpenFolder(versionActionMenu.torrent.playable_file || '')"
+        >
+          Open Folder
+        </button>
       </div>
     </Teleport>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, nextTick, watch } from 'vue';
+import { computed, ref, nextTick, watch, onMounted, onUnmounted } from 'vue';
 import type { Series, Season, Episode, Torrent } from '../types';
 import { getCoverUrl, getVideoPreviewUrl, getVideoSourceAttributes, isSafariBrowser } from '../api';
 import { navAttrs } from '../composables/useKeyboardNavigation';
-import LanguageFlags from './LanguageFlags.vue';
-import DolbyBadges from './DolbyBadges.vue';
-import { buildLanguageFlags } from '../utils/languageFlags';
+import ReleaseVersionCard from './ReleaseVersionCard.vue';
 
 const props = defineProps<{
   series: Series;
@@ -239,88 +231,143 @@ const contextMenu = ref<{
   episode: null,
 });
 
+const versionActionMenu = ref<{
+  visible: boolean;
+  x: number;
+  y: number;
+  torrent: Torrent | null;
+}>({
+  visible: false,
+  x: 0,
+  y: 0,
+  torrent: null,
+});
+
+const releaseMenuOriginElement = ref<HTMLElement | null>(null);
+
 // Show context menu on right-click
 function handleContextMenu(event: MouseEvent, episode: Episode) {
   event.preventDefault();
+  releaseMenuOriginElement.value = event.currentTarget as HTMLElement | null;
+  openEpisodeReleaseMenu(episode, event.clientX, event.clientY);
+}
+
+function openEpisodeReleaseMenu(episode: Episode, x: number, y: number) {
+  closeVersionActionMenu();
   contextMenu.value = {
     visible: true,
-    x: event.clientX,
-    y: event.clientY,
+    x,
+    y,
     episode,
   };
   // Add Escape key listener (capturing phase to intercept before other handlers)
   nextTick(() => {
     document.addEventListener('keydown', handleContextMenuKeydown, true);
-    // Focus first play button in the menu
-    const firstBtn = document.querySelector('.context-menu .ctx-btn-play:not(:disabled)') as HTMLElement;
-    if (firstBtn) {
-      firstBtn.focus();
-      firstBtn.classList.add('nav-focused');
+    // Focus first selectable version card.
+    const firstCard = document.querySelector('.context-menu .version-row.version-selectable') as HTMLElement;
+    if (firstCard) {
+      firstCard.focus();
     }
   });
 }
 
+function openEpisodeReleaseMenuFromElement(episode: Episode, element: HTMLElement | null) {
+  releaseMenuOriginElement.value = element;
+  if (!element) {
+    openEpisodeReleaseMenu(episode, window.innerWidth / 2, window.innerHeight / 2);
+    return;
+  }
+  const rect = element.getBoundingClientRect();
+  openEpisodeReleaseMenu(episode, rect.left + rect.width / 2, rect.top + rect.height / 2);
+}
+
 // Handle Escape and arrow keys in context menu (capturing phase to intercept before global handler)
 function handleContextMenuKeydown(event: KeyboardEvent) {
-  if (!contextMenu.value.visible || !contextMenu.value.episode) return;
+  if (!contextMenu.value.visible) return;
+
+  const popupFocusable = getPopupFocusableElements();
+
+  if (event.key === 'Tab') {
+    if (popupFocusable.length === 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+
+    const currentIndex = popupFocusable.findIndex((el) => el === document.activeElement);
+    const delta = event.shiftKey ? -1 : 1;
+    const nextIndex = currentIndex < 0
+      ? 0
+      : (currentIndex + delta + popupFocusable.length) % popupFocusable.length;
+    popupFocusable[nextIndex].focus();
+    return;
+  }
+
+  if (event.key === 'ArrowDown' || event.key === 'ArrowRight' || event.key === 'ArrowUp' || event.key === 'ArrowLeft') {
+    if (popupFocusable.length === 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+
+    const currentIndex = popupFocusable.findIndex((el) => el === document.activeElement);
+    const delta = (event.key === 'ArrowDown' || event.key === 'ArrowRight') ? 1 : -1;
+    const nextIndex = currentIndex < 0
+      ? 0
+      : (currentIndex + delta + popupFocusable.length) % popupFocusable.length;
+    popupFocusable[nextIndex].focus();
+    return;
+  }
 
   if (event.key === 'Escape') {
     event.preventDefault();
     event.stopPropagation();
+    if (versionActionMenu.value.visible) {
+      closeVersionActionMenu();
+      return;
+    }
     closeContextMenu();
-    return;
   }
+}
 
-  // Handle arrow key navigation within the menu
-  if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)) {
-    event.preventDefault();
-    event.stopPropagation();
-
-    const menu = document.querySelector('.context-menu');
-    if (!menu) return;
-
-    const buttons = Array.from(menu.querySelectorAll('.ctx-btn:not(:disabled)')) as HTMLElement[];
-    if (buttons.length === 0) return;
-
-    const currentIndex = buttons.findIndex(btn => btn === document.activeElement);
-    let nextIndex = currentIndex;
-
-    // Each row has 2 buttons (play, folder), navigate accordingly
-    const buttonsPerRow = 2;
-
-    switch (event.key) {
-      case 'ArrowRight':
-        // Move to next button (play -> folder)
-        nextIndex = Math.min(currentIndex + 1, buttons.length - 1);
-        break;
-      case 'ArrowLeft':
-        // Move to previous button (folder -> play)
-        nextIndex = Math.max(currentIndex - 1, 0);
-        break;
-      case 'ArrowDown':
-        // Move to same column in next row
-        nextIndex = Math.min(currentIndex + buttonsPerRow, buttons.length - 1);
-        break;
-      case 'ArrowUp':
-        // Move to same column in previous row
-        nextIndex = Math.max(currentIndex - buttonsPerRow, 0);
-        break;
-    }
-
-    if (nextIndex >= 0 && nextIndex < buttons.length) {
-      buttons[nextIndex].focus();
-      buttons[nextIndex].classList.add('nav-focused');
-      if (currentIndex >= 0 && currentIndex !== nextIndex) {
-        buttons[currentIndex].classList.remove('nav-focused');
-      }
-    }
-  }
+function getPopupFocusableElements(): HTMLElement[] {
+  const releaseItems = Array.from(
+    document.querySelectorAll<HTMLElement>('.context-menu .version-row.version-selectable')
+  );
+  const actionItems = versionActionMenu.value.visible
+    ? Array.from(document.querySelectorAll<HTMLElement>('.version-action-menu .version-action-item:not(:disabled)'))
+    : [];
+  return [...releaseItems, ...actionItems];
 }
 
 // Close context menu
 function closeContextMenu() {
+  closeVersionActionMenu();
   contextMenu.value.visible = false;
   document.removeEventListener('keydown', handleContextMenuKeydown, true);
+  nextTick(() => {
+    releaseMenuOriginElement.value?.focus();
+  });
+}
+
+function closeVersionActionMenu() {
+  versionActionMenu.value.visible = false;
+  versionActionMenu.value.torrent = null;
+}
+
+function handleGamepadAction(event: Event) {
+  const actionEvent = event as CustomEvent<{ action?: string }>;
+  if (actionEvent.detail?.action !== 'menu') return;
+
+  const active = document.activeElement as HTMLElement | null;
+  if (!active || !active.classList.contains('episode-tile')) return;
+
+  const row = parseInt(active.getAttribute('data-nav-row') || '-1', 10);
+  const col = parseInt(active.getAttribute('data-nav-col') || '-1', 10);
+  if (row < 2 || col < 0) return;
+
+  const season = props.series.seasons?.[row - 2];
+  const episode = season?.episodes?.[col];
+  if (!episode) return;
+
+  actionEvent.preventDefault();
+  openEpisodeReleaseMenuFromElement(episode, active);
 }
 
 // Play specific version
@@ -328,6 +375,7 @@ function handlePlayVersion(filePath: string | null) {
   if (filePath) {
     emit('play', filePath);
   }
+  closeVersionActionMenu();
   closeContextMenu();
 }
 
@@ -337,64 +385,44 @@ function getPlayLabel(filePath: string | null): string {
 
 // Open folder for a version
 function handleOpenFolder(folderPath: string) {
+  if (!folderPath) return;
   emit('openFolder', folderPath);
+  closeVersionActionMenu();
   closeContextMenu();
 }
 
-const dolbyTagPattern = /\b(dolby|atmos|vision|dovi|dv)\b/i;
-const dolbyVisionPattern = /\b(dolby\s*vision|dovi|\bdv\b)\b/i;
-const dolbyAtmosPattern = /\b(dolby\s*atmos|atmos)\b/i;
-const hdrPattern = /\bhdr\b|smpte\s*2084|bt\s*2020|hlg/i;
-
-function hasDolbyTag(value: string | null | undefined): boolean {
-  return Boolean(value && dolbyTagPattern.test(value));
+function handleVersionActivate(torrent: Torrent, event: MouseEvent | KeyboardEvent) {
+  if (!torrent.playable_file) return;
+  if (event.altKey) {
+    handleOpenFolder(torrent.playable_file);
+    return;
+  }
+  handlePlayVersion(torrent.playable_file);
 }
 
-function hasAnyTag(
-  pattern: RegExp,
-  ...values: Array<string | null | undefined>
-): boolean {
-  return values.some((value) => Boolean(value && pattern.test(value)));
+function handleVersionShortcutKeydown(event: KeyboardEvent, torrent: Torrent) {
+  if (!torrent.playable_file) return;
+  const key = event.key.toLowerCase();
+  if (key === 'e' && (event.metaKey || event.ctrlKey)) {
+    event.preventDefault();
+    event.stopPropagation();
+    handleOpenFolder(torrent.playable_file);
+  }
 }
 
-function getHasDolbyVision(torrent: Torrent): boolean {
-  return (
-    torrent.has_dolby_vision === true
-    || hasAnyTag(dolbyVisionPattern, torrent.quality, torrent.codec, torrent.audio, torrent.title)
-  );
-}
-
-function getHasDolbyAtmos(torrent: Torrent): boolean {
-  return (
-    torrent.has_dolby_atmos === true
-    || hasAnyTag(dolbyAtmosPattern, torrent.quality, torrent.codec, torrent.audio, torrent.title)
-  );
-}
-
-function getHasHdr(torrent: Torrent): boolean {
-  return (
-    torrent.is_hdr === true
-    || hasAnyTag(hdrPattern, torrent.quality, torrent.codec, torrent.audio, torrent.title)
-  );
-}
-
-function hasLanguageDisplay(codes: string[] | null | undefined): boolean {
-  const mapped = buildLanguageFlags(codes);
-  return mapped.flags.length > 0 || mapped.unmappedCodes.length > 0;
-}
-
-// Get version display label
-function getVersionLabel(torrent: Torrent): string {
-  const parts: string[] = [];
-  if (torrent.resolution) parts.push(torrent.resolution);
-  if (torrent.quality && !hasDolbyTag(torrent.quality)) parts.push(torrent.quality);
-  if (torrent.codec && !hasDolbyTag(torrent.codec)) parts.push(torrent.codec);
-  if (torrent.audio && !hasDolbyTag(torrent.audio)) parts.push(torrent.audio);
-  const hasExistingHdr = [torrent.quality, torrent.codec, torrent.audio].some(
-    (value) => Boolean(value && hdrPattern.test(value))
-  );
-  if (getHasHdr(torrent) && !hasExistingHdr) parts.push('HDR');
-  return parts.length > 0 ? parts.join(' • ') : 'Unknown';
+function handleVersionContextMenu(event: MouseEvent, torrent: Torrent) {
+  event.preventDefault();
+  event.stopPropagation();
+  versionActionMenu.value = {
+    visible: true,
+    x: event.clientX,
+    y: event.clientY,
+    torrent,
+  };
+  nextTick(() => {
+    const firstAction = document.querySelector('.version-action-menu .version-action-item:not(:disabled)') as HTMLElement | null;
+    firstAction?.focus();
+  });
 }
 
 // Video refs for hover effects
@@ -540,6 +568,22 @@ function handlePlay(episode: Episode) {
     emit('play', playableFile);
   }
 }
+
+function handleEpisodeEnter(event: KeyboardEvent, episode: Episode) {
+  if (event.altKey || event.metaKey || event.ctrlKey) {
+    openEpisodeReleaseMenuFromElement(episode, event.currentTarget as HTMLElement | null);
+    return;
+  }
+  handlePlay(episode);
+}
+
+onMounted(() => {
+  window.addEventListener('mediahive:gamepad-action', handleGamepadAction as EventListener);
+});
+
+onUnmounted(() => {
+  window.removeEventListener('mediahive:gamepad-action', handleGamepadAction as EventListener);
+});
 </script>
 
 <style scoped>
@@ -983,169 +1027,68 @@ function handlePlay(episode: Episode) {
   min-width: 280px;
   max-width: 400px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
-  overflow: hidden;
+  overflow: visible;
+  padding: 8px;
 }
 
 .context-menu-header {
-  padding: 12px 16px;
+  padding: 10px 12px;
   font-weight: 600;
   font-size: 0.9rem;
   background: rgba(255, 255, 255, 0.05);
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  margin-bottom: 8px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .context-menu-version {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) max-content max-content;
-  align-items: stretch;
-  padding: 10px 16px;
-  column-gap: 8px;
-  row-gap: 6px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-  transition: background-color 0.15s ease;
+  margin-bottom: 6px;
 }
 
 .context-menu-version:last-child {
-  border-bottom: none;
-}
-
-.version-label {
-  font-size: 0.8rem;
-  color: rgba(255, 255, 255, 0.8);
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  flex: 1;
-}
-
-.version-main {
-  grid-column: 1;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 6px;
-  min-width: 0;
-}
-
-.version-dolby-cell {
-  grid-column: 2;
-  display: flex;
-  align-items: stretch;
-  justify-content: flex-end;
-  min-width: 0;
-}
-
-.version-dolby {
-  align-self: stretch;
-}
-
-.version-language-flags {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  width: 100%;
-  white-space: nowrap;
-  overflow: hidden;
-  min-width: 0;
-}
-
-.version-language-flags > .language-flags-audio {
-  flex: 0 0 auto;
-}
-
-.version-language-flags > .language-flags-subs {
-  flex: 1 1 auto;
-  min-width: 0;
-  -webkit-mask-image: linear-gradient(to right, black calc(100% - 14px), transparent);
-  mask-image: linear-gradient(to right, black calc(100% - 14px), transparent);
-}
-
-.version-language-flags > .language-flags-subs :deep(.language-flags) {
-  display: inline-flex;
-  max-width: 100%;
-  overflow: hidden;
-}
-
-.version-language-flags > .language-flags-subs :deep(.language-flag-list) {
-  width: max-content;
-  max-width: none;
-  overflow: hidden;
-}
-
-.language-separator {
-  color: rgba(255, 255, 255, 0.8);
-  font-size: 0.9rem;
-  font-weight: 700;
-  line-height: 1;
-  margin: 0;
-}
-
-.version-actions {
-  grid-column: 3;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-}
-
-.ctx-btn {
-  padding: 6px 12px;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 0.75rem;
-  font-weight: 600;
-  transition: all 0.2s ease;
-  position: relative;
-  outline: none;
-}
-
-/* Blinking animation for button focus */
-@keyframes btn-outline-blink {
-  0%, 100% {
-    box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.9);
-  }
-  50% {
-    box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.4);
-  }
-}
-
-.ctx-btn-play {
-  background: #e50914;
-  color: white;
-}
-
-.ctx-btn-play:hover:not(:disabled),
-.ctx-btn-play.nav-focused:not(:disabled) {
-  background: #f40612;
-  animation: btn-outline-blink 1s ease-in-out infinite;
-}
-
-.ctx-btn-play:disabled {
-  background: rgba(255, 255, 255, 0.1);
-  color: rgba(255, 255, 255, 0.4);
-  cursor: not-allowed;
-}
-
-.ctx-btn-folder {
-  background: rgba(255, 255, 255, 0.1);
-  color: white;
-}
-
-.ctx-btn-folder:hover,
-.ctx-btn-folder.nav-focused {
-  background: rgba(255, 255, 255, 0.2);
-  animation: btn-outline-blink 1s ease-in-out infinite;
+  margin-bottom: 0;
 }
 
 .context-menu-empty {
-  padding: 16px;
+  padding: 12px;
   text-align: center;
   color: rgba(255, 255, 255, 0.5);
   font-size: 0.85rem;
+}
+
+.version-action-menu {
+  position: fixed;
+  z-index: 1001;
+  min-width: 180px;
+  background: rgba(18, 20, 28, 0.98);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+
+.version-action-item {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: #fff;
+  text-align: left;
+  padding: 10px 12px;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.version-action-item:hover:not(:disabled),
+.version-action-item:focus-visible:not(:disabled) {
+  background: rgba(255, 255, 255, 0.12);
+  outline: none;
+}
+
+.version-action-item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 </style>
