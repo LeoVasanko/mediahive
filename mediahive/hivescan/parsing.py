@@ -8,6 +8,7 @@ import PTN
 from aiopathlib import AsyncPath
 
 from mediahive.hivescan.models import ContentHash, ContentType, ParsedContent
+from mediahive.hivescan.utils import normalize_resolution_label
 
 
 def determine_content_type(parsed: dict) -> ContentType:
@@ -36,7 +37,7 @@ async def parse_download(path: Path) -> ParsedContent:
         content_type=content_type,
         title=parsed.get("title", name),
         year=parsed.get("year"),
-        resolution=parsed.get("resolution"),
+        resolution=normalize_resolution_label(parsed.get("resolution")),
         quality=parsed.get("quality"),
         codec=parsed.get("codec"),
         audio=parsed.get("audio"),

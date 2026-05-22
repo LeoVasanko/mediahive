@@ -2,10 +2,9 @@
 
 import time
 from pathlib import Path
-from typing import Optional, List
+from typing import List, Optional
 
 from aiopathlib import AsyncPath
-
 
 # Default output folder name (created at common root of scanned paths)
 DEFAULT_OUTPUT_FOLDER = ".mediahive"
@@ -15,13 +14,74 @@ _ATIME_FRESHNESS_THRESHOLD = 3600
 
 # Resolution priority for quality sorting (higher = better)
 RESOLUTION_PRIORITY = {
-    "2160p": 4,
+    "8K": 5,
     "4K": 4,
+    "FHD": 3,
+    "HD": 2,
+    "SD": 1,
+    # Backward compatibility for existing snapshot data
+    "4320p": 5,
+    "2160p": 4,
+    "UHD": 4,
     "1080p": 3,
     "1080i": 3,
     "720p": 2,
+    "576p": 1,
     "480p": 1,
 }
+
+
+def classify_resolution_from_dimensions(
+    width: int | None, height: int | None
+) -> str | None:
+    """Map raw frame dimensions to SD/HD/FHD/4K/8K buckets.
+
+    Uses the smallest standard frame bucket that can contain the source frame,
+    which keeps cropped cinematic encodes in their expected class.
+    """
+    if not width or not height or width <= 0 or height <= 0:
+        return None
+
+    long_edge = max(width, height)
+    short_edge = min(width, height)
+
+    buckets = [
+        (1024, 576, "SD"),
+        (1280, 720, "HD"),
+        (1920, 1080, "FHD"),
+        (4096, 2160, "4K"),
+        (8192, 4320, "8K"),
+    ]
+
+    for max_w, max_h, label in buckets:
+        if long_edge <= max_w and short_edge <= max_h:
+            return label
+
+    return "8K"
+
+
+def normalize_resolution_label(value: str | None) -> str | None:
+    """Normalize PTN/legacy resolution text into SD/HD/FHD/4K/8K labels."""
+    if not value:
+        return None
+
+    normalized = str(value).strip().upper()
+    mapping = {
+        "SD": "SD",
+        "HD": "HD",
+        "FHD": "FHD",
+        "4K": "4K",
+        "8K": "8K",
+        "4320P": "8K",
+        "2160P": "4K",
+        "UHD": "4K",
+        "1080P": "FHD",
+        "1080I": "FHD",
+        "720P": "HD",
+        "576P": "SD",
+        "480P": "SD",
+    }
+    return mapping.get(normalized)
 
 
 async def get_added_timestamp(path: Path) -> Optional[int]:

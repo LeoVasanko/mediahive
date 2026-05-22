@@ -67,7 +67,7 @@ async def _build_torrent_info(
     return Torrent(
         title=item.title,
         playable_file=make_relative_path(playable_file, media_root),
-        resolution=item.resolution or (probe_info.resolution if probe_info else None),
+        resolution=(probe_info.resolution if probe_info else None) or item.resolution,
         quality=item.quality,
         codec=item.codec,
         audio=item.audio,
@@ -252,7 +252,7 @@ def _build_episodes_data(
             torrents[relpath] = Torrent(
                 title=f["torrent_title"],
                 playable_file=make_relative_path(f["path"], media_root),
-                resolution=f.get("resolution") or f.get("probed_resolution"),
+                resolution=f.get("probed_resolution") or f.get("resolution"),
                 quality=f.get("quality"),
                 codec=f.get("codec"),
                 audio=f.get("audio"),

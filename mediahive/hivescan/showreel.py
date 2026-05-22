@@ -19,6 +19,8 @@ from typing import Optional
 
 from aiopathlib import AsyncPath
 
+from mediahive.hivescan.utils import classify_resolution_from_dimensions
+
 logger = logging.getLogger("hivescan.showreel")
 
 
@@ -388,7 +390,9 @@ async def probe_media_info(video_path: str) -> MediaProbeInfo:
             if dim_match:
                 info.width = int(dim_match.group(1))
                 info.height = int(dim_match.group(2))
-                info.resolution = f"{info.width}x{info.height}"
+                info.resolution = classify_resolution_from_dimensions(
+                    info.width, info.height
+                )
 
         info.is_hdr = (
             "smpte2084" in lower_text
