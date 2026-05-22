@@ -5,6 +5,7 @@ Or from PyInstaller: MediaHive.exe [media_folder]
 """
 
 import argparse
+import base64
 import ctypes
 import html
 import json
@@ -18,6 +19,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 
@@ -32,7 +34,9 @@ logger = logging.getLogger("mediahive.winmain")
 
 BACKEND_HOST = "127.0.0.1"
 BACKEND_PORT = 8420
-HEALTH_TIMEOUT = 2  # seconds
+BACKEND_HEALTH_REQUEST_TIMEOUT = 2  # seconds
+BACKEND_HEALTH_POLL_SECONDS = 0.25
+STARTUP_LOG_TAIL_LINES = 120
 MPC_BE_URL = "http://127.0.0.1:13579"
 GAMEPAD_REPEAT_SECONDS = 0.008
 GAMEPAD_POLL_SECONDS = 0.008
@@ -628,11 +632,194 @@ _SETUP_HTML = """<!DOCTYPE html>
 </body></html>"""
 
 
+_STARTUP_HTML_TEMPLATE = """<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>MediaHive</title><style>
+    :root {
+        --bg: #090909;
+        --bg-alt: #151515;
+        --fg: #eef2f7;
+        --muted: #b0b0b0;
+        --accent: #f2513b;
+        --border: #2b2b2b;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+    }
+    body {
+        font-family: Avenir, "Segoe UI", system-ui, sans-serif;
+        color: var(--fg);
+        background:
+            radial-gradient(1200px 680px at 12% -5%, #1c1c1c 0%, transparent 58%),
+            radial-gradient(980px 540px at 110% 105%, #2a1b19 0%, transparent 58%),
+            linear-gradient(150deg, var(--bg) 0%, var(--bg-alt) 100%);
+    }
+    .shell {
+        width: 100%;
+        height: 100%;
+        display: grid;
+        grid-template-rows: 1fr auto;
+        padding: 4vh 4vw;
+        gap: 3vh;
+    }
+    .hero-wrap {
+        display: grid;
+        place-items: start center;
+        text-align: center;
+        padding-top: clamp(30vh, 33vh, 36vh);
+    }
+    .logo {
+        width: min(630px, 54.6vw);
+        height: min(238px, 23.8vh);
+        max-width: 63vw;
+        background-position: center;
+        background-repeat: no-repeat;
+        background-size: contain;
+        filter: drop-shadow(0 20px 60px rgba(0, 0, 0, 0.45));
+        user-select: none;
+    }
+    .panel {
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        min-height: 28vh;
+        max-height: 36vh;
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        background: rgba(8, 8, 8, 0.76);
+        backdrop-filter: blur(3px);
+        overflow: hidden;
+    }
+    .status {
+        padding: 14px 16px;
+        color: var(--muted);
+        font-size: 18px;
+    }
+    .log {
+        margin: 0;
+        border-top: 1px solid var(--border);
+        border-bottom: 1px solid var(--border);
+        background: rgba(8, 12, 16, 0.86);
+        color: #d4dae1;
+        font: 12px/1.45 ui-monospace, Menlo, Consolas, monospace;
+        white-space: pre-wrap;
+        overflow: auto;
+        padding: 12px 16px;
+    }
+    .actions {
+        display: flex;
+        gap: 10px;
+        justify-content: flex-end;
+        padding: 12px 16px;
+    }
+    button {
+        border: 1px solid var(--border);
+        border-radius: 9px;
+        background: #151b22;
+        color: var(--fg);
+        padding: 10px 14px;
+        font-size: 14px;
+        cursor: pointer;
+    }
+    button:hover { filter: brightness(1.07); }
+    .primary {
+        border-color: color-mix(in srgb, var(--accent) 45%, #fff 0%);
+        background: linear-gradient(180deg, var(--accent) 0%, #cf412f 100%);
+        color: #fff;
+    }
+    .quiet {
+        background: #151b22;
+        color: #c4ccd6;
+    }
+    .pulse::after {
+        content: "";
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        margin-left: 10px;
+        border-radius: 50%;
+        background: var(--accent);
+        animation: pulse 1.2s ease-in-out infinite;
+    }
+    @keyframes pulse {
+        0%, 100% { opacity: 0.3; transform: scale(0.9); }
+        50% { opacity: 1; transform: scale(1.1); }
+    }
+</style></head><body>
+    <main class="shell">
+        <section class="hero-wrap">
+            <div
+                class="logo"
+                role="img"
+                aria-label="MediaHive"
+                style="background-image: url('__MEDIAHIVE_LOGO_URI__');"
+            ></div>
+        </section>
+        <section class="panel">
+            <div id="status" class="status pulse">Starting MediaHive</div>
+            <pre id="log" class="log">Waiting for startup logs...</pre>
+            <div class="actions">
+                <button id="quit" class="primary" type="button">Quit</button>
+            </div>
+        </section>
+    </main>
+    <script>
+        const statusEl = document.getElementById('status');
+        const logEl = document.getElementById('log');
+        const quitBtn = document.getElementById('quit');
+        let navigating = false;
+
+        async function refresh() {
+            if (!window.pywebview || !window.pywebview.api || navigating) {
+                return;
+            }
+            try {
+                const status = await window.pywebview.api.startup_status();
+                if (status && typeof status.message === 'string') {
+                    statusEl.textContent = status.message;
+                    if (status.ready) {
+                        statusEl.classList.remove('pulse');
+                    }
+                }
+                const logText = await window.pywebview.api.startup_log_tail();
+                if (typeof logText === 'string' && logText.length > 0) {
+                    logEl.textContent = logText;
+                    logEl.scrollTop = logEl.scrollHeight;
+                }
+                if (status && status.ready && status.backend_url) {
+                    navigating = true;
+                    window.location.href = status.backend_url;
+                }
+            } catch (err) {
+                statusEl.textContent = 'Waiting for startup bridge...';
+            }
+        }
+
+        quitBtn.addEventListener('click', async () => {
+            if (!window.pywebview || !window.pywebview.api) {
+                return;
+            }
+            await window.pywebview.api.quit_app();
+        });
+
+        setInterval(refresh, 500);
+        refresh();
+    </script>
+</body></html>"""
+
+
 class JsApi:
     """Python methods exposed to the frontend via window.pywebview.api."""
 
     def __init__(self) -> None:
         self._window: webview.Window | None = None
+        self._startup_state: dict[str, object] | None = None
+        self._startup_state_lock: threading.Lock | None = None
+        self._startup_log_path: Path | None = None
+        self._request_quit_callback: Callable[[], None] | None = None
 
     def pick_folder(self) -> str | None:
         """Open a native OS folder picker and return the chosen path (or None)."""
@@ -640,6 +827,46 @@ class JsApi:
             return None
         result = self._window.create_file_dialog(webview.FOLDER_DIALOG)
         return result[0] if result else None
+
+    def configure_startup_bridge(
+        self,
+        startup_state: dict[str, object],
+        startup_state_lock: threading.Lock,
+        startup_log_path: Path | None,
+        request_quit_callback: Callable[[], None],
+    ) -> None:
+        self._startup_state = startup_state
+        self._startup_state_lock = startup_state_lock
+        self._startup_log_path = startup_log_path
+        self._request_quit_callback = request_quit_callback
+
+    def startup_status(self) -> dict[str, object]:
+        if self._startup_state is None or self._startup_state_lock is None:
+            return {
+                "ready": False,
+                "failed": False,
+                "message": "Initializing startup bridge...",
+                "backend_url": "",
+            }
+        with self._startup_state_lock:
+            return dict(self._startup_state)
+
+    def startup_log_tail(self) -> str:
+        if self._startup_log_path is None:
+            return "Log file unavailable in development mode."
+        try:
+            lines = self._startup_log_path.read_text(encoding="utf-8").splitlines()
+        except Exception as exc:
+            return f"Could not read startup log: {exc}"
+        if not lines:
+            return "No startup log entries yet."
+        return "\n".join(lines[-STARTUP_LOG_TAIL_LINES:])
+
+    def quit_app(self) -> None:
+        if self._request_quit_callback is not None:
+            self._request_quit_callback()
+        if self._window is not None:
+            self._window.destroy()
 
 
 def _prepend_meipass_to_path() -> None:
@@ -649,26 +876,75 @@ def _prepend_meipass_to_path() -> None:
         os.environ["PATH"] = meipass + os.pathsep + os.environ.get("PATH", "")
 
 
-def _wait_for_backend(timeout: int = HEALTH_TIMEOUT) -> bool:
+def _wait_for_backend(timeout: int | None = None) -> bool:
     url = os.environ["MEDIAHIVE_BACKEND_URL"] + "/api/health"
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
+    deadline = time.monotonic() + timeout if timeout is not None else None
+    while True:
+        if deadline is not None and time.monotonic() >= deadline:
+            return False
         try:
-            with urllib.request.urlopen(url, timeout=2):
+            with urllib.request.urlopen(url, timeout=BACKEND_HEALTH_REQUEST_TIMEOUT):
                 return True
         except Exception:
-            time.sleep(0.25)
-    return False
+            time.sleep(BACKEND_HEALTH_POLL_SECONDS)
 
 
 def _icon_path() -> str | None:
     """Locate the application icon at runtime (frozen or development)."""
     if getattr(sys, "frozen", False):
-        base = Path(sys._MEIPASS)  # type: ignore[attr-defined]
+        meipass = Path(sys._MEIPASS)  # type: ignore[attr-defined]
+        base = meipass / "mediahive" if (meipass / "mediahive").exists() else meipass
     else:
         base = Path(__file__).parent
     ico = base / "assets" / "mediahive.ico"
     return str(ico) if ico.exists() else None
+
+
+def _runtime_package_base() -> Path:
+    """Return runtime package base for frozen and development layouts."""
+    if getattr(sys, "frozen", False):
+        meipass = Path(sys._MEIPASS)  # type: ignore[attr-defined]
+        packaged = meipass / "mediahive"
+        return packaged if packaged.exists() else meipass
+    return Path(__file__).parent
+
+
+def _startup_logo_path() -> Path | None:
+    """Locate the startup logo asset for embedding in the splash page."""
+    base = _runtime_package_base()
+    png = base / "assets" / "mediahive-logo.png"
+    if png.exists():
+        return png
+    webp = base / "assets" / "mediahive.webp"
+    if webp.exists():
+        return webp
+    ico = base / "assets" / "mediahive.ico"
+    if ico.exists():
+        return ico
+    icns = base / "assets" / "mediahive.icns"
+    if icns.exists():
+        return icns
+    return None
+
+
+def _startup_html() -> str:
+    logo_uri = ""
+    logo_path = _startup_logo_path()
+    if logo_path is not None:
+        try:
+            data = logo_path.read_bytes()
+            ext = logo_path.suffix.lower()
+            mime = {
+                ".png": "image/png",
+                ".webp": "image/webp",
+                ".ico": "image/x-icon",
+                ".icns": "image/icns",
+            }.get(ext, "application/octet-stream")
+            encoded = base64.b64encode(data).decode("ascii")
+            logo_uri = f"data:{mime};base64,{encoded}"
+        except Exception:
+            logo_uri = ""
+    return _STARTUP_HTML_TEMPLATE.replace("__MEDIAHIVE_LOGO_URI__", logo_uri)
 
 
 def _webview_start_kwargs() -> dict[str, str]:
@@ -734,8 +1010,9 @@ def winmain() -> None:
     _prepend_meipass_to_path()
 
     # In a frozen (windowed) build there is no console — redirect output to a log file
+    startup_log_path: Path | None = None
     if getattr(sys, "frozen", False):
-        _setup_logging()
+        startup_log_path = _setup_logging()
 
     # Resolution order: CLI arg → MEDIAHIVE_PATH env → saved config → ask user
     folder = (
@@ -776,15 +1053,56 @@ def winmain() -> None:
     )
     backend_thread.start()
 
-    if not _wait_for_backend():
+    startup_state_lock = threading.Lock()
+    startup_state: dict[str, object] = {
+        "ready": False,
+        "failed": False,
+        "message": "Starting MediaHive",
+        "backend_url": backend_url,
+    }
+
+    def _request_quit() -> None:
         server.should_exit = True
-        raise RuntimeError(f"Backend did not become ready within {HEALTH_TIMEOUT}s")
+
+    def _set_startup_state(**updates: object) -> None:
+        with startup_state_lock:
+            startup_state.update(updates)
+
+    def _monitor_backend_ready() -> None:
+        _set_startup_state(message="Starting MediaHive")
+        while not server.should_exit:
+            if _wait_for_backend(timeout=5):
+                _set_startup_state(
+                    ready=True,
+                    failed=False,
+                    message="Backend ready. Opening MediaHive...",
+                )
+                return
+            if not backend_thread.is_alive():
+                _set_startup_state(
+                    ready=False,
+                    failed=True,
+                    message="Backend stopped unexpectedly. Check logs or quit.",
+                )
+                return
+
+    threading.Thread(
+        target=_monitor_backend_ready,
+        daemon=True,
+        name="mediahive-startup-monitor",
+    ).start()
 
     api = JsApi()
+    api.configure_startup_bridge(
+        startup_state=startup_state,
+        startup_state_lock=startup_state_lock,
+        startup_log_path=startup_log_path,
+        request_quit_callback=_request_quit,
+    )
     logger.info("Configured pywebview backend: %s", _selected_webview_backend())
     window = webview.create_window(
         title="MediaHive",
-        url=backend_url,
+        html=_startup_html(),
         fullscreen=True,
         js_api=api,
     )

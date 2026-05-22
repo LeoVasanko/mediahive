@@ -16,6 +16,8 @@ block_cipher = None
 
 _pkg = Path(mediahive.server.__file__).parent
 _frontend_build = _pkg / "frontend-build"
+_logo_webp = _pkg / "assets" / "mediahive.webp"
+_logo_png = _pkg / "assets" / "mediahive-logo.png"
 _icon_win = _pkg / "assets" / "mediahive.ico"
 _icon_mac = _pkg / "assets" / "mediahive.icns"
 _tools_dir = Path(SPECPATH).parent / "build" / "ffmpeg"
@@ -35,6 +37,10 @@ if _icon_win.exists():
     _datas.append((str(_icon_win), "mediahive/assets"))
 if _icon_mac.exists():
     _datas.append((str(_icon_mac), "mediahive/assets"))
+if _logo_webp.exists():
+    _datas.append((str(_logo_webp), "mediahive/assets"))
+if _logo_png.exists():
+    _datas.append((str(_logo_png), "mediahive/assets"))
 
 _hiddenimports = [
     # uvicorn dynamic imports
