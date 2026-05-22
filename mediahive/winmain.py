@@ -775,6 +775,7 @@ def winmain() -> None:
 
     mediaroot = _normalize_media_root_input(folder)
     os.environ["MEDIAHIVE_PATH"] = mediaroot.as_posix()
+    os.environ["MEDIAHIVE_DEFER_INITIAL_ROOT"] = "1"
 
     backend_port = _reserve_backend_port()
     backend_url = f"http://{BACKEND_HOST}:{backend_port}"

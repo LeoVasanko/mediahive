@@ -158,9 +158,19 @@ async def lifespan(app: FastAPI):
     await store.load_snapshot()
     _scanner_active = False
 
-    logger.info(
-        "Server started without active media root; waiting for folder activation"
-    )
+    initial_root_raw = os.environ.get("MEDIAHIVE_PATH")
+    defer_initial_root = os.environ.get("MEDIAHIVE_DEFER_INITIAL_ROOT") == "1"
+
+    if initial_root_raw and not defer_initial_root:
+        initial_root = Path(initial_root_raw).expanduser()
+        if not initial_root.is_absolute():
+            initial_root = Path.cwd() / initial_root
+        _folder_switch_task = asyncio.create_task(_switch_folder(initial_root))
+        logger.info("Server started; scheduled initial media root activation")
+    else:
+        logger.info(
+            "Server started without active media root; waiting for folder activation"
+        )
 
     yield
 
