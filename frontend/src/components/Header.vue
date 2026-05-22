@@ -146,14 +146,15 @@ function goToCategory() {
 
 // Handle search input focus - navigate to search if we have a query
 function handleSearchFocus() {
-  // If on detail page, go back to browse first
-  if (isDetailPage.value) {
-    goToCategory();
-  }
+  // Intentionally no-op: focusing search should not navigate away from detail.
 }
 
 // Sync local search to parent
-watch(localSearch, (val) => {
+watch(localSearch, (val, prevVal) => {
+  // When user starts typing from detail page, exit detail and show search results.
+  if (isDetailPage.value && !prevVal && !!val.trim()) {
+    goToCategory();
+  }
   emit('search', val);
 });
 

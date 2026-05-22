@@ -71,6 +71,7 @@
       @close="closeDetail"
       @play="handlePlay"
       @open-folder="handleOpenFolder"
+      @search-actor="handleActorSearch"
     />
 
     <!-- Browse/Search pages -->
@@ -502,6 +503,11 @@ function showDetail(item: MediaItem) {
 
 // Close detail by navigating back to list
 function closeDetail() {
+  router.push(`/${currentView.value}`);
+}
+
+function handleActorSearch(actorName: string) {
+  searchQuery.value = actorName;
   router.push(`/${currentView.value}`);
 }
 

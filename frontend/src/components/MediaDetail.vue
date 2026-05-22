@@ -94,31 +94,33 @@
                   :best="index === 0"
                   :selectable="!!version.playable_file"
                   :disabled="!version.playable_file"
-                  v-bind="navAttrs(2, index)"
+                  v-bind="navAttrs(2, index, index === 0 ? 0 : undefined)"
                   @activate="handleVersionActivate(version, $event)"
                   :title="version.playable_file ? 'Click to play/continue. Alt+Click to open folder.' : 'No playable file'"
                 />
               </div>
             </div>
 
-            <div v-if="movieCast && movieCast.length > 0" class="cast-gallery cast-gallery-wide">
-              <div class="cast-list">
-                <div
-                  v-for="castMember in movieCast"
-                  :key="`${castMember.name}-${castMember.character || ''}`"
-                  class="cast-card"
+            <div v-if="limitedMovieCast.length > 0" class="cast-list" data-sync-scroll-row="true">
+              <div
+                v-for="(castMember, castIndex) in limitedMovieCast"
+                :key="`${castMember.name}-${castMember.character || ''}`"
+                class="cast-card media-card"
+                v-bind="navAttrs(2, movieVersions.length + castIndex)"
+                role="button"
+                :title="`Search for ${castMember.name}`"
+                @click="handleCastSelect(castMember.name)"
+              >
+                <img
+                  v-if="castMember.profile_path && !castMember.profile_path.startsWith('/')"
+                  :src="getCoverUrl(castMember.profile_path)"
+                  :alt="castMember.name"
+                  class="cast-photo"
                 >
-                  <img
-                    v-if="castMember.profile_path && !castMember.profile_path.startsWith('/')"
-                    :src="getCoverUrl(castMember.profile_path)"
-                    :alt="castMember.name"
-                    class="cast-photo"
-                  >
-                  <img v-else :src="getCastPlaceholderUrl(castMember.gender)" :alt="`${castMember.name} placeholder portrait`" class="cast-photo cast-photo-fallback">
-                  <div class="cast-copy">
-                    <span class="cast-name">{{ castMember.name }}</span>
-                    <span v-if="castMember.character" class="cast-character">{{ castMember.character }}</span>
-                  </div>
+                <img v-else :src="getCastPlaceholderUrl(castMember.gender)" :alt="`${castMember.name} placeholder portrait`" class="cast-photo cast-photo-fallback">
+                <div class="cast-copy">
+                  <span class="cast-name">{{ castMember.name }}</span>
+                  <span v-if="castMember.character" class="cast-character">{{ castMember.character }}</span>
                 </div>
               </div>
             </div>
@@ -172,6 +174,7 @@ const emit = defineEmits<{
   close: [];
   play: [string];
   openFolder: [string];
+  searchActor: [string];
 }>();
 
 // Track expanded episode for showing multiple releases
@@ -388,6 +391,11 @@ const movieCast = computed(() => {
   return (props.item.data as Movie).info?.cast as CastMember[] | null;
 });
 
+const limitedMovieCast = computed(() => {
+  if (!movieCast.value) return [];
+  return movieCast.value;
+});
+
 const movieRuntime = computed(() => {
   if (props.item.type !== 'movies') return null;
   return (props.item.data as Movie).info?.runtime;
@@ -473,6 +481,12 @@ function handleVersionActivate(version: Torrent, event: MouseEvent | KeyboardEve
 function handleOpenFolder(folderPath: string) {
   emit('openFolder', folderPath);
 }
+
+function handleCastSelect(castName: string) {
+  const name = castName.trim();
+  if (!name) return;
+  emit('searchActor', name);
+}
 </script>
 
 <style scoped>
@@ -547,6 +561,7 @@ function handleOpenFolder(folderPath: string) {
     'left main right';
   gap: 32px;
   align-items: start;
+  position: relative;
 }
 
 .content-main {
@@ -752,26 +767,59 @@ function handleOpenFolder(folderPath: string) {
   line-height: 1.6;
 }
 
-.cast-gallery {
-  margin-bottom: 12px;
-}
-
-.cast-gallery-wide {
-  grid-area: cast;
-  margin-bottom: 0;
-}
-
 .cast-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(94px, 1fr));
+  position: absolute;
+  top: calc(-1 * (var(--header-height) + 30px));
+  left: calc(-50vw + 50% + 40vw - 0.8rem);
+  width: calc(100vw - (40vw - 0.8rem));
+  margin: 0;
+  padding-top: 4px;
+  padding-right: 32px;
+  padding-bottom: 8px;
+  padding-left: 0;
+  z-index: 2;
+  display: flex;
+  flex-wrap: nowrap;
   gap: 6px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.cast-list::-webkit-scrollbar {
+  height: 0;
+  display: none;
 }
 
 .cast-card {
+  flex: 0 0 94px;
+  width: 94px;
   position: relative;
   overflow: hidden;
   border-radius: 12px;
   aspect-ratio: 2 / 3;
+  cursor: pointer;
+}
+
+.cast-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  border: 0 solid rgba(255, 255, 255, 0.95);
+  pointer-events: none;
+  transition: border-width 120ms ease;
+}
+
+.cast-card:focus-visible,
+.cast-card.nav-focused {
+  outline: none;
+}
+
+.cast-card:focus-visible::after,
+.cast-card.nav-focused::after {
+  border-width: 2px;
 }
 
 .cast-photo {
@@ -837,6 +885,17 @@ function handleOpenFolder(folderPath: string) {
 
   .sidebar-left {
     align-self: auto;
+  }
+
+  .cast-list {
+    position: static;
+    top: auto;
+    left: auto;
+    width: auto;
+    margin-left: 0;
+    margin-top: 0;
+    padding-left: 0;
+    padding-right: 0;
   }
 }
 
