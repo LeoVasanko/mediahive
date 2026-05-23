@@ -160,7 +160,7 @@ async def _discover_downloads(task_id: str) -> List[ParsedContent]:
     explored and how many items have been found so far.
     """
     downloads: List[ParsedContent] = []
-    media_root_str = str(_media_root) if _media_root else None
+    media_root_str = _media_root.as_posix() if _media_root else None
     dirs_visited = 0
 
     async def _report(detail: str) -> None:
@@ -319,7 +319,7 @@ async def _run_scan():
       4. Queue showreel tasks
     """
     task_id = f"scan-{uuid.uuid4().hex[:8]}"
-    media_root_str = str(_media_root) if _media_root else None
+    media_root_str = _media_root.as_posix() if _media_root else None
 
     try:
         logger.info("Scan started (%s)", task_id)
@@ -523,7 +523,7 @@ async def _showreel_worker():
     """Background worker that generates showreels one at a time."""
     logger.info("Showreel worker started")
     media_root_path = Path(_media_root) if _media_root else None
-    media_root_str = str(_media_root) if _media_root else None
+    media_root_str = _media_root.as_posix() if _media_root else None
 
     while True:
         try:

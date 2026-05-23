@@ -46,7 +46,7 @@ The server exposes:
         print(f"Error: Folder does not exist: {media_root}")
         exit(1)
 
-    os.environ["MEDIAHIVE_PATH"] = str(media_root)
+    os.environ["MEDIAHIVE_PATH"] = media_root.as_posix()
 
     logging.basicConfig(
         level=logging.INFO,

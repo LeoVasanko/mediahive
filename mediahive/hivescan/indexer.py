@@ -164,7 +164,7 @@ async def _collect_episode_files(
                         "codec": item.codec,
                         "audio": item.audio,
                         "encoder": item.encoder,
-                        "torrent_path": str(item.path),
+                        "torrent_path": item.path.as_posix(),
                         "torrent_title": item.title,
                     }
                 )
@@ -212,7 +212,7 @@ async def _collect_episode_files(
                                     "codec": item.codec,
                                     "audio": item.audio,
                                     "encoder": item.encoder,
-                                    "torrent_path": str(item.path),
+                                    "torrent_path": item.path.as_posix(),
                                     "torrent_title": item.title,
                                 }
                             )
@@ -493,7 +493,7 @@ async def _process_movies(
 
         torrents = {}
         for item in items:
-            relpath = make_relative_path(str(item.path), media_root)
+            relpath = make_relative_path(item.path.as_posix(), media_root)
             torrent = await _build_torrent_info(item, media_root)
             torrents[relpath] = torrent
 
@@ -518,7 +518,7 @@ async def _process_movies(
                 ".ifo"
             ):
                 abs_playable = (
-                    str(Path(media_root) / best_version.playable_file)
+                    (Path(media_root) / best_version.playable_file).as_posix()
                     if media_root
                     else best_version.playable_file
                 )
@@ -569,7 +569,7 @@ async def _process_movies(
 
         torrents = {}
         for item in items:
-            relpath = make_relative_path(str(item.path), media_root)
+            relpath = make_relative_path(item.path.as_posix(), media_root)
             torrent = await _build_torrent_info(item, media_root)
             torrents[relpath] = torrent
 
@@ -593,7 +593,7 @@ async def _process_movies(
                 (".bdmv", ".ifo")
             ):
                 abs_playable = (
-                    str(Path(media_root) / best_version.playable_file)
+                    (Path(media_root) / best_version.playable_file).as_posix()
                     if media_root
                     else best_version.playable_file
                 )

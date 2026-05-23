@@ -32,6 +32,16 @@ async def _subprocess_exec(*args, **kwargs):
     return await asyncio.create_subprocess_exec(*args, **kwargs)
 
 
+async def _kill_proc(proc: asyncio.subprocess.Process | None) -> None:
+    """Kill a subprocess immediately if it is still running."""
+    if proc is not None and proc.returncode is None:
+        proc.kill()
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=2)
+        except Exception:
+            pass
+
+
 # Showreel timestamp positions in seconds (5, 10, 15, 20, 25 minutes)
 SHOWREEL_TIMESTAMPS = [5 * 60, 10 * 60, 15 * 60, 20 * 60, 25 * 60]
 REEL_SOURCE_EXTENSIONS = [".webm", ".mp4"]
@@ -48,10 +58,10 @@ def _to_media_path(path: Path, media_root: Optional[Path] = None) -> str:
     """Convert an absolute reel file path to a media-root-relative path when possible."""
     if media_root:
         try:
-            return str(path.relative_to(media_root))
+            return path.relative_to(media_root).as_posix()
         except ValueError:
-            return str(path)
-    return str(path)
+            return path.as_posix()
+    return path.as_posix()
 
 
 def get_reel_extension() -> str:
@@ -110,11 +120,11 @@ def get_expected_showreel_paths(
         output_path = media_folder / f"reel{reel_num}{extension}"
         if media_root:
             try:
-                paths.append(str(output_path.relative_to(media_root)))
+                paths.append(output_path.relative_to(media_root).as_posix())
             except ValueError:
-                paths.append(str(output_path))
+                paths.append(output_path.as_posix())
         else:
-            paths.append(str(output_path))
+            paths.append(output_path.as_posix())
     return paths
 
 
@@ -141,10 +151,10 @@ def get_expected_episode_reel_path(
     )
     if media_root:
         try:
-            return str(output_path.relative_to(media_root))
+            return output_path.relative_to(media_root).as_posix()
         except ValueError:
-            return str(output_path)
-    return str(output_path)
+            return output_path.as_posix()
+    return output_path.as_posix()
 
 
 def get_existing_showreel_paths(
@@ -248,7 +258,7 @@ def get_bluray_uri(video_path: str) -> Optional[str]:
     # e.g., /path/to/disc/BDMV/index.bdmv -> /path/to/disc
     if path.parent.name == "BDMV":
         disc_root = path.parent.parent
-        return f"bluray:{disc_root}"
+        return f"bluray:{disc_root.as_posix()}"
 
     return None
 
@@ -666,7 +676,7 @@ async def generate_showreel_images(
         output_filename = f"reel{reel_num}{extension}"
         output_path = media_folder / output_filename
         if await AsyncPath(output_path).exists():
-            existing_paths.append(str(output_path))
+            existing_paths.append(output_path.as_posix())
         else:
             all_exist = False
             break
@@ -718,7 +728,7 @@ async def generate_showreel_images(
 
         # Skip if already exists
         if await AsyncPath(output_path).exists():
-            generated_paths.append(str(output_path))
+            generated_paths.append(output_path.as_posix())
             if on_progress:
                 on_progress(reel_num)
             continue
@@ -757,10 +767,11 @@ async def generate_showreel_images(
             encoder,
             *encoder_opts,
             *audio_opts,
-            str(output_path),
+            output_path.as_posix(),
         ]
 
         logger.debug("    $ %s", shlex.join(cmd))
+        proc = None
         try:
             proc = await _subprocess_exec(
                 *cmd,
@@ -770,7 +781,7 @@ async def generate_showreel_images(
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
 
             if proc.returncode == 0 and await AsyncPath(output_path).exists():
-                generated_paths.append(str(output_path))
+                generated_paths.append(output_path.as_posix())
                 logger.info(
                     "    Showreel reel%d generated for %s",
                     reel_num,
@@ -791,6 +802,7 @@ async def generate_showreel_images(
                 # Abort remaining reels - if first one fails, others likely will too
                 break
         except BaseException as e:
+            await _kill_proc(proc)
             await AsyncPath(output_path).unlink(missing_ok=True)
             if isinstance(e, (KeyboardInterrupt, SystemExit, asyncio.CancelledError)):
                 raise
@@ -862,7 +874,7 @@ async def generate_episode_reel(
 
     # Skip if already exists
     if await AsyncPath(output_path).exists():
-        return str(output_path)
+        return output_path.as_posix()
 
     # Check video duration
     duration = await get_video_duration(ffmpeg_input)
@@ -924,10 +936,11 @@ async def generate_episode_reel(
         encoder,
         *encoder_opts,
         *audio_opts,
-        str(output_path),
+        output_path.as_posix(),
     ]
 
     logger.debug("    $ %s", shlex.join(cmd))
+    proc = None
     try:
         proc = await _subprocess_exec(
             *cmd,
@@ -938,7 +951,7 @@ async def generate_episode_reel(
 
         if proc.returncode == 0 and await AsyncPath(output_path).exists():
             logger.info("    Episode reel generated: %s", ep_code)
-            return str(output_path)
+            return output_path.as_posix()
         else:
             stderr_text = stderr.decode(errors="replace").strip() if stderr else ""
             logger.error(
@@ -950,6 +963,7 @@ async def generate_episode_reel(
             await AsyncPath(output_path).unlink(missing_ok=True)
             return None
     except BaseException as e:
+        await _kill_proc(proc)
         await AsyncPath(output_path).unlink(missing_ok=True)
         if isinstance(e, (KeyboardInterrupt, SystemExit, asyncio.CancelledError)):
             raise

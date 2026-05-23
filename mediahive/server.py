@@ -254,7 +254,7 @@ async def health_check():
 @app.get("/api/config")
 async def get_config():
     """Return current server configuration."""
-    return {"media_folder": str(MEDIAROOT) if MEDIAROOT else None}
+    return {"media_folder": MEDIAROOT.as_posix() if MEDIAROOT else None}
 
 
 @app.post("/api/change-folder")
@@ -275,7 +275,7 @@ async def change_folder_endpoint(request: Request):
 
     # Persist first — if the background switch crashes, the next launch still uses the new path
     cfg = load_config()
-    save_config(msgspec.structs.replace(cfg, media_folder=str(new_root)))
+    save_config(msgspec.structs.replace(cfg, media_folder=new_root.as_posix()))
     logger.info("Config saved: media_folder=%s", new_root)
 
     # Schedule the in-memory switch without blocking this response
@@ -304,7 +304,7 @@ async def _switch_folder(new_root: Path) -> None:
             await store.flush_snapshot()
 
             # Update env and module globals
-            os.environ["MEDIAHIVE_PATH"] = str(new_root)
+            os.environ["MEDIAHIVE_PATH"] = new_root.as_posix()
             MEDIAROOT = new_root
 
             # Fresh event queue — discard any stale events from the old folder
@@ -312,7 +312,7 @@ async def _switch_folder(new_root: Path) -> None:
 
             # Re-initialise the index store
             snapshot_path = MEDIAROOT / ".mediahive" / "index.json"
-            store = IndexStore(snapshot_path, media_root=str(MEDIAROOT))
+            store = IndexStore(snapshot_path, media_root=MEDIAROOT.as_posix())
             await store.load_snapshot()
             logger.info(
                 "Index store ready: %d movies, %d series",

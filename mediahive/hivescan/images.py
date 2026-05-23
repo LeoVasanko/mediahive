@@ -37,7 +37,7 @@ async def _download_image(
     """Download an image from URL to output path."""
     ap = AsyncPath(output_path)
     if await ap.exists():
-        return str(output_path)
+        return output_path.as_posix()
 
     try:
         client = _get_image_client()
@@ -45,7 +45,7 @@ async def _download_image(
         response.raise_for_status()
         await AsyncPath(output_path.parent).mkdir(parents=True, exist_ok=True)
         await ap.write_bytes(response.content)
-        return str(output_path)
+        return output_path.as_posix()
     except Exception as e:
         print(f"    Failed to download {description}: {e}")
         return None
@@ -67,7 +67,7 @@ async def download_cover_image(
     cover_path = media_folder / "cover.jpg"
 
     if await AsyncPath(cover_path).exists():
-        return str(cover_path)
+        return cover_path.as_posix()
 
     url = f"{TMDB_IMAGE_BASE}/{size}{poster_path}"
     print(f"    Downloading cover: {title}")
@@ -90,7 +90,7 @@ async def download_backdrop_image(
     local_path = media_folder / "backdrop.jpg"
 
     if await AsyncPath(local_path).exists():
-        return str(local_path)
+        return local_path.as_posix()
 
     url = f"{TMDB_IMAGE_BASE}/{size}{backdrop_path}"
     print(f"    Downloading backdrop: {title}")
@@ -109,7 +109,7 @@ async def download_season_poster(
     output_path = media_folder / f"season{season_num:02d}.jpg"
 
     if await AsyncPath(output_path).exists():
-        return str(output_path)
+        return output_path.as_posix()
 
     await AsyncPath(media_folder).mkdir(parents=True, exist_ok=True)
     url = f"{TMDB_IMAGE_BASE}/{DEFAULT_POSTER_SIZE}{poster_path}"
@@ -132,7 +132,7 @@ async def download_cast_profile(
     output_path = cast_dir / f"{cast_index + 1:02d}-{safe_name}.jpg"
 
     if await AsyncPath(output_path).exists():
-        return str(output_path)
+        return output_path.as_posix()
 
     await AsyncPath(cast_dir).mkdir(parents=True, exist_ok=True)
     url = f"{TMDB_IMAGE_BASE}/{size}{profile_path}"

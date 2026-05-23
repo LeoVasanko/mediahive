@@ -92,7 +92,7 @@ async def find_episode_files(
     Returns:
         Dict mapping (season_num, episode_num) to list of (file_path, file_size) tuples
     """
-    cache_key = str(path)
+    cache_key = path.as_posix()
     if cache_key in _episode_files_cache:
         return _episode_files_cache[cache_key]
 
@@ -103,7 +103,7 @@ async def find_episode_files(
         if path.suffix.lower() in VIDEO_EXTENSIONS:
             ep_info = parse_episode_from_filename(path.name)
             if ep_info:
-                episodes[ep_info] = [(str(path), (await ap.stat()).st_size)]
+                episodes[ep_info] = [(path.as_posix(), (await ap.stat()).st_size)]
         _episode_files_cache[cache_key] = episodes
         return episodes
 
@@ -117,7 +117,9 @@ async def find_episode_files(
                 if ep_info:
                     if ep_info not in episodes:
                         episodes[ep_info] = []
-                    episodes[ep_info].append((str(f), (await af.stat()).st_size))
+                    episodes[ep_info].append(
+                        (Path(f).as_posix(), (await af.stat()).st_size)
+                    )
     except OSError, PermissionError:
         pass
 
@@ -132,7 +134,7 @@ async def find_playable_file(path: Path) -> Optional[str]:
     For Blu-ray discs: Returns BDMV/MovieObject.bdmv (fallback: BDMV/index.bdmv)
     For other content: Returns the largest video file
     """
-    cache_key = str(path)
+    cache_key = path.as_posix()
     if cache_key in _playable_file_cache:
         return _playable_file_cache[cache_key]
 
@@ -140,7 +142,7 @@ async def find_playable_file(path: Path) -> Optional[str]:
 
     if await ap.is_file():
         if path.suffix.lower() in VIDEO_EXTENSIONS:
-            result = str(path)
+            result = path.as_posix()
             _playable_file_cache[cache_key] = result
             return result
         _playable_file_cache[cache_key] = None
@@ -152,12 +154,12 @@ async def find_playable_file(path: Path) -> Optional[str]:
     bdmv_index = bdmv_dir / "index.bdmv"
 
     if await AsyncPath(bdmv_movieobject).exists():
-        result = str(bdmv_movieobject)
+        result = bdmv_movieobject.as_posix()
         _playable_file_cache[cache_key] = result
         return result
 
     if await AsyncPath(bdmv_index).exists():
-        result = str(bdmv_index)
+        result = bdmv_index.as_posix()
         _playable_file_cache[cache_key] = result
         return result
 
@@ -166,7 +168,7 @@ async def find_playable_file(path: Path) -> Optional[str]:
     video_ts_ifo = video_ts_dir / "VIDEO_TS.IFO"
 
     if await AsyncPath(video_ts_ifo).exists():
-        result = str(video_ts_ifo)
+        result = video_ts_ifo.as_posix()
         _playable_file_cache[cache_key] = result
         return result
 
@@ -179,12 +181,12 @@ async def find_playable_file(path: Path) -> Optional[str]:
                 nested_index = nested_bdmv_dir / "index.bdmv"
 
                 if await AsyncPath(nested_movieobject).exists():
-                    result = str(nested_movieobject)
+                    result = nested_movieobject.as_posix()
                     _playable_file_cache[cache_key] = result
                     return result
 
                 if await AsyncPath(nested_index).exists():
-                    result = str(nested_index)
+                    result = nested_index.as_posix()
                     _playable_file_cache[cache_key] = result
                     return result
 
@@ -192,7 +194,7 @@ async def find_playable_file(path: Path) -> Optional[str]:
                 nested_video_ts_ifo = nested_video_ts_dir / "VIDEO_TS.IFO"
 
                 if await AsyncPath(nested_video_ts_ifo).exists():
-                    result = str(nested_video_ts_ifo)
+                    result = nested_video_ts_ifo.as_posix()
                     _playable_file_cache[cache_key] = result
                     return result
     except OSError, PermissionError:
@@ -206,7 +208,7 @@ async def find_playable_file(path: Path) -> Optional[str]:
             if await af.is_file() and Path(f).suffix.lower() in VIDEO_EXTENSIONS:
                 if "sample" in Path(f).name.lower():
                     continue
-                video_files.append((str(f), (await af.stat()).st_size))
+                video_files.append((Path(f).as_posix(), (await af.stat()).st_size))
     except OSError, PermissionError:
         pass
 
@@ -259,7 +261,7 @@ async def find_metadata_probe_file(playable_path: Optional[str]) -> Optional[str
                     if name.startswith("VTS_") and len(name) >= 10:
                         ts_num = name[4:6]
                         size = (await af.stat()).st_size
-                        title_sets[ts_num].append((str(f), size))
+                        title_sets[ts_num].append((Path(f).as_posix(), size))
             except OSError, PermissionError:
                 _bluray_probe_file_cache[cache_key] = None
                 return None
@@ -273,12 +275,8 @@ async def find_metadata_probe_file(playable_path: Optional[str]) -> Optional[str
                 title_sets.keys(),
                 key=lambda ts: sum(size for _, size in title_sets[ts]),
             )
-            best_vobs = sorted(
-                title_sets[best_ts], key=lambda x: x[0].upper()
-            )
-            concat_uri = "concat:" + "|".join(
-                path for path, _ in best_vobs
-            )
+            best_vobs = sorted(title_sets[best_ts], key=lambda x: x[0].upper())
+            concat_uri = "concat:" + "|".join(path for path, _ in best_vobs)
             _bluray_probe_file_cache[cache_key] = concat_uri
             return concat_uri
 
@@ -305,7 +303,7 @@ async def find_metadata_probe_file(playable_path: Optional[str]) -> Optional[str
             af = AsyncPath(f)
             if not await af.is_file():
                 continue
-            candidates.append((str(f), (await af.stat()).st_size))
+            candidates.append((Path(f).as_posix(), (await af.stat()).st_size))
     except OSError, PermissionError:
         _bluray_probe_file_cache[cache_key] = None
         return None
@@ -327,17 +325,17 @@ async def find_cover_image(
     media_folder = get_media_folder_path(title, year, media_type, cover_dir)
     cover_path = media_folder / "cover.jpg"
     if await AsyncPath(cover_path).exists():
-        return str(cover_path)
+        return cover_path.as_posix()
 
     # Legacy structure fallback
     subdir = "movies" if media_type == "movie" else "series"
     if media_type == "movie" and year:
         legacy_path = cover_dir / subdir / f"{sanitize_filename(title)} ({year}).jpg"
         if await AsyncPath(legacy_path).exists():
-            return str(legacy_path)
+            return legacy_path.as_posix()
 
     legacy_path = cover_dir / subdir / f"{sanitize_filename(title)}.jpg"
     if await AsyncPath(legacy_path).exists():
-        return str(legacy_path)
+        return legacy_path.as_posix()
 
     return None
