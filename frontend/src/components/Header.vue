@@ -65,52 +65,68 @@
     <div class="header-settings">
       <button
         class="header-settings-btn"
-        title="Manage media roots"
-        @click="showRootsPanel = !showRootsPanel"
+        title="Settings"
+        @click="showSettings = !showSettings"
       >
         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 5 15.4 1.65 1.65 0 0 0 3.4 15H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
         </svg>
       </button>
 
-      <!-- Roots management dropdown -->
-      <div v-if="showRootsPanel" class="roots-panel">
-        <div class="roots-panel-header">
-          <span class="roots-panel-title">Media Roots</span>
-          <button class="roots-panel-close" @click="showRootsPanel = false">×</button>
+      <!-- Full-screen settings view -->
+      <div v-if="showSettings" class="settings-view">
+        <div class="settings-header">
+          <button class="settings-back" @click="showSettings = false">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M19 12H5M12 19l-7-7 7-7"/>
+            </svg>
+            <span>Back</span>
+          </button>
+          <h1 class="settings-title">Settings</h1>
+          <div class="settings-header-spacer"></div>
         </div>
-        <div class="roots-list">
-          <div
-            v-for="root in roots"
-            :key="root.root_id"
-            class="roots-item"
-            :class="`roots-item--${root.status}`"
-          >
-            <div class="roots-item-info">
-              <span class="roots-item-name">{{ root.name }}</span>
-              <span class="roots-item-path">{{ root.path }}</span>
-            </div>
-            <div class="roots-item-meta">
-              <span class="roots-item-status">{{ root.status }}</span>
-              <button
-                v-if="roots.length > 1"
-                class="roots-item-remove"
-                @click="removeRoot(root.root_id)"
-                title="Remove root"
+
+        <div class="settings-content">
+          <section class="settings-section">
+            <h2 class="settings-section-title">Media Roots</h2>
+            <p class="settings-section-desc">Folders scanned and indexed by MediaHive.</p>
+
+            <div class="roots-list">
+              <div
+                v-for="root in roots"
+                :key="root.root_id"
+                class="roots-item"
+                :class="`roots-item--${root.status}`"
               >
-                ×
+                <div class="roots-item-info">
+                  <span class="roots-item-name">{{ root.name }}</span>
+                  <span class="roots-item-path">{{ root.path }}</span>
+                </div>
+                <div class="roots-item-meta">
+                  <span class="roots-item-status">{{ root.status }}</span>
+                  <button
+                    v-if="roots.length > 1"
+                    class="roots-item-remove"
+                    @click="removeRoot(root.root_id)"
+                    title="Remove root"
+                  >
+                    ×
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div class="roots-actions">
+              <button
+                v-if="isDesktopApp"
+                class="roots-add-btn"
+                @click="addRoot"
+              >
+                + Add Folder…
               </button>
             </div>
-          </div>
-        </div>
-        <div class="roots-actions">
-          <button
-            v-if="isDesktopApp"
-            class="roots-add-btn"
-            @click="addRoot"
-          >
-            + Add Folder…
-          </button>
+          </section>
         </div>
       </div>
     </div>
@@ -153,7 +169,7 @@ function _onPywebviewReady() { isDesktopApp.value = true; }
 window.addEventListener('pywebviewready', _onPywebviewReady, { once: true });
 onUnmounted(() => window.removeEventListener('pywebviewready', _onPywebviewReady));
 
-const showRootsPanel = ref(false);
+const showSettings = ref(false);
 const roots = ref<RootEntry[]>([]);
 
 async function refreshRoots() {
@@ -199,14 +215,14 @@ async function addRoot() {
   try {
     await replaceRoots(newRoots);
     await refreshRoots();
-    showRootsPanel.value = false;
+    showSettings.value = false;
   } catch (e) {
     console.error('Failed to add root:', e);
     alert('Failed to add root');
   }
 }
 
-watch(showRootsPanel, (visible) => {
+watch(showSettings, (visible) => {
   if (visible) void refreshRoots();
 });
 
@@ -316,47 +332,84 @@ onUnmounted(() => {
   position: relative;
 }
 
-.roots-panel {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
-  width: 320px;
-  background: rgba(20, 20, 20, 0.95);
-  backdrop-filter: blur(16px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 12px;
-  padding: 16px;
-  z-index: 1000;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
-}
-
-.roots-panel-header {
+.settings-view {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: var(--bg-primary);
+  z-index: 2000;
   display: flex;
-  justify-content: space-between;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.settings-header {
+  display: flex;
   align-items: center;
-  margin-bottom: 12px;
+  justify-content: space-between;
+  padding: 16px 24px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  flex-shrink: 0;
 }
 
-.roots-panel-title {
-  font-weight: 600;
-  font-size: 0.95rem;
-}
-
-.roots-panel-close {
+.settings-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   background: none;
   border: none;
   color: var(--text-secondary);
-  font-size: 1.2rem;
+  font-size: 0.9rem;
   cursor: pointer;
-  padding: 0 4px;
+  padding: 8px 0;
+  transition: color 0.2s;
+}
+
+.settings-back:hover {
+  color: var(--text-primary);
+}
+
+.settings-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+.settings-header-spacer {
+  width: 80px;
+}
+
+.settings-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 32px 24px;
+  max-width: 720px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.settings-section {
+  margin-bottom: 40px;
+}
+
+.settings-section-title {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0 0 6px;
+}
+
+.settings-section-desc {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  margin: 0 0 20px;
 }
 
 .roots-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  max-height: 240px;
-  overflow-y: auto;
+  gap: 10px;
 }
 
 .roots-item {
