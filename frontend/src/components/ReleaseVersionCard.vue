@@ -18,10 +18,11 @@
     <div class="version-main">
       <div class="version-badges">
         <span v-if="torrent.resolution" class="v-badge res">{{ torrent.resolution }}</span>
-        <span v-if="displayQualityBadge" class="v-badge qual">{{ displayQualityBadge }}</span>
-        <span v-if="displayCodecBadge" class="v-badge codec">{{ displayCodecBadge }}</span>
         <span v-if="showHdrBadge" class="v-badge hdr">HDR</span>
+        <span v-if="displayCodecBadge" class="v-badge codec">{{ displayCodecBadge }}</span>
+        <span v-if="displayQualityBadge" class="v-badge qual">{{ displayQualityBadge }}</span>
         <span v-if="displayAudioBadge" class="v-badge audio">{{ displayAudioBadge }}</span>
+        <span v-if="displayReleaseGroupBadge" class="v-badge group">{{ displayReleaseGroupBadge }}</span>
       </div>
       <div class="version-language-flags">
         <LanguageFlags class="language-flags-audio" :codes="torrent.audio_languages" :compact="compactFlags" />
@@ -255,6 +256,12 @@ const displayAudioBadge = computed(() => {
   return props.torrent.audio;
 });
 
+const displayReleaseGroupBadge = computed(() => {
+  const value = props.torrent.encoder?.trim();
+  if (!value) return null;
+  return value;
+});
+
 const showHdrBadge = computed(() => {
   if (!hasHdr.value) return false;
   return !hasHdrTag(props.torrent.quality) && !hasHdrTag(props.torrent.codec) && !hasHdrTag(props.torrent.audio);
@@ -369,20 +376,64 @@ function handleActivate(event: MouseEvent | KeyboardEvent) {
 }
 
 .version-badges {
+  --badge-row-height: 27px;
+  /* Regular hex geometry: horizontal inset = h / (2 * sqrt(3)) ~= 0.288675 * h */
+  --badge-hex-inset: calc(var(--badge-row-height) * 0.288675);
   display: flex;
   flex-wrap: nowrap;
-  align-items: center;
-  gap: 6px;
+  align-items: stretch;
+  gap: 0;
+  height: var(--badge-row-height);
 }
 
 .v-badge {
   display: flex;
   align-items: center;
-  font-size: 0.7rem;
-  padding: 3px 8px;
-  border-radius: 4px;
+  height: 100%;
+  font-size: 0.78rem;
+  line-height: 1;
+  padding: 0 8px 0 calc(4px + var(--badge-hex-inset));
   font-weight: 600;
   text-transform: uppercase;
+  margin-left: calc(-1 * var(--badge-hex-inset));
+  clip-path: polygon(var(--badge-hex-inset) 0, 100% 0, 100% 100%, 0 100%);
+}
+
+.v-badge:first-child {
+  margin-left: 0;
+  padding-left: 9px;
+  clip-path: polygon(
+    var(--badge-hex-inset) 0,
+    100% 0,
+    100% 100%,
+    var(--badge-hex-inset) 100%,
+    0 50%
+  );
+}
+
+.v-badge:last-child {
+  padding-right: calc(6px + var(--badge-hex-inset));
+  clip-path: polygon(
+    var(--badge-hex-inset) 0,
+    calc(100% - var(--badge-hex-inset)) 0,
+    100% 50%,
+    calc(100% - var(--badge-hex-inset)) 100%,
+    0 100%
+  );
+}
+
+.v-badge:only-child {
+  margin-left: 0;
+  padding-left: 6px;
+  padding-right: calc(6px + var(--badge-hex-inset));
+  clip-path: polygon(
+    var(--badge-hex-inset) 0,
+    calc(100% - var(--badge-hex-inset)) 0,
+    100% 50%,
+    calc(100% - var(--badge-hex-inset)) 100%,
+    var(--badge-hex-inset) 100%,
+    0 50%
+  );
 }
 
 .version-service-logo {
@@ -395,28 +446,33 @@ function handleActivate(event: MouseEvent | KeyboardEvent) {
 }
 
 .v-badge.res {
-  background: #1d4ed8;
-  color: #eff6ff;
+  background: #111111;
+  color: #f8fafc;
 }
 
 .v-badge.qual {
-  background: #7c3aed;
-  color: #f5f3ff;
+  background: #334155;
+  color: #f1f5f9;
 }
 
 .v-badge.codec {
-  background: #0f766e;
-  color: #ecfeff;
+  background: #1f2937;
+  color: #f3f4f6;
 }
 
 .v-badge.audio {
-  background: #b45309;
-  color: #fffbeb;
+  background: #475569;
+  color: #f1f5f9;
 }
 
 .v-badge.hdr {
-  background: #166534;
-  color: #dcfce7;
+  background: #d4a017;
+  color: #1c1917;
+}
+
+.v-badge.group {
+  background: #64748b;
+  color: #f8fafc;
 }
 
 .version-language-flags {
