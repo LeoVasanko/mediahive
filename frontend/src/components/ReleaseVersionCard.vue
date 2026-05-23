@@ -22,7 +22,6 @@
         <span v-if="displayCodecBadge" class="v-badge codec">{{ displayCodecBadge }}</span>
         <span v-if="showHdrBadge" class="v-badge hdr">HDR</span>
         <span v-if="displayAudioBadge" class="v-badge audio">{{ displayAudioBadge }}</span>
-        <span v-if="isDisc" class="v-disc">💿</span>
       </div>
       <div class="version-language-flags">
         <LanguageFlags class="language-flags-audio" :codes="torrent.audio_languages" :compact="compactFlags" />
@@ -34,6 +33,12 @@
       </div>
     </div>
     <div class="version-dolby-cell">
+      <img
+        v-if="showBlurayLogo"
+        class="version-bluray-logo"
+        :src="blurayLogoUrl"
+        alt="Blu-ray"
+      >
       <DolbyBadges
         class="version-dolby"
         :has-dolby-vision="hasDolbyVision"
@@ -64,6 +69,7 @@ import type { Torrent } from '../types';
 import LanguageFlags from './LanguageFlags.vue';
 import DolbyBadges from './DolbyBadges.vue';
 import { buildLanguageFlags } from '../utils/languageFlags';
+import blurayLogoUrl from '../assets/bluray.webp';
 
 defineOptions({
   inheritAttrs: false,
@@ -143,9 +149,28 @@ const hasHdr = computed(() => {
   );
 });
 
+const isDisc = computed(() => {
+  if (!props.torrent.playable_file) return false;
+  const filename = props.torrent.playable_file.toLowerCase();
+  return filename.endsWith('index.bdmv') || filename.endsWith('.iso');
+});
+
+const showBlurayLogo = computed(() => {
+  if (!isDisc.value) return false;
+  const filename = (props.torrent.playable_file || '').toLowerCase();
+  if (filename.endsWith('index.bdmv')) return true;
+  return hasAnyTag(
+    blurayTagPattern,
+    props.torrent.quality,
+    props.torrent.codec,
+    props.torrent.audio,
+    props.torrent.title,
+  );
+});
+
 const displayQualityBadge = computed(() => {
   if (!props.torrent.quality || hasDolbyTag(props.torrent.quality)) return null;
-  if (blurayTagPattern.test(props.torrent.quality) && !isDisc.value) return null;
+  if (blurayTagPattern.test(props.torrent.quality)) return null;
   return props.torrent.quality;
 });
 
@@ -162,12 +187,6 @@ const displayAudioBadge = computed(() => {
 const showHdrBadge = computed(() => {
   if (!hasHdr.value) return false;
   return !hasHdrTag(props.torrent.quality) && !hasHdrTag(props.torrent.codec) && !hasHdrTag(props.torrent.audio);
-});
-
-const isDisc = computed(() => {
-  if (!props.torrent.playable_file) return false;
-  const filename = props.torrent.playable_file.toLowerCase();
-  return filename.endsWith('index.bdmv') || filename.endsWith('.iso');
 });
 
 const isSelectable = computed(() => {
@@ -258,11 +277,20 @@ function handleActivate(event: MouseEvent | KeyboardEvent) {
   display: flex;
   align-items: stretch;
   justify-content: flex-end;
+  gap: 6px;
   min-width: 0;
 }
 
 .version-dolby {
   align-self: stretch;
+}
+
+.version-bluray-logo {
+  align-self: center;
+  width: auto;
+  height: 22px;
+  object-fit: contain;
+  filter: drop-shadow(0 0 0.4px rgba(0, 0, 0, 0.5));
 }
 
 .version-badges {
@@ -280,13 +308,6 @@ function handleActivate(event: MouseEvent | KeyboardEvent) {
   border-radius: 4px;
   font-weight: 600;
   text-transform: uppercase;
-}
-
-.v-disc {
-  display: flex;
-  align-items: center;
-  font-size: 1.1rem;
-  line-height: 1;
 }
 
 .v-badge.res {
