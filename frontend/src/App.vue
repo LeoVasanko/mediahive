@@ -749,26 +749,75 @@ const seriesByGenre = computed(() => {
 
 // Calculate relevance score for a match
 // Higher score = more relevant (beginning of name > word boundary > mid-word)
-function getRelevanceScore(query: string, field: string): number {
-  const lowerField = field.toLowerCase();
-  const lowerQuery = query.toLowerCase();
+function normalizeSearchText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ');
+}
 
-  if (!lowerField.includes(lowerQuery)) return 0;
+function getTermMatchScore(term: string, field: string): number {
+  const index = field.indexOf(term);
+  if (index < 0) return 0;
 
-  const index = lowerField.indexOf(lowerQuery);
-
-  // Exact match at start of string - highest score
   if (index === 0) return 100;
 
-  // Match at word boundary (after space, hyphen, colon, etc.)
-  const charBefore = lowerField[index - 1];
-  if (/[\s\-:_.,;()\[\]]/.test(charBefore)) return 80;
+  const charBefore = field[index - 1];
+  if (/\s/.test(charBefore)) return 80;
 
-  // Match in the first half of the string
-  if (index < lowerField.length / 2) return 50;
+  if (index < field.length / 2) return 50;
 
-  // Match anywhere else
   return 30;
+}
+
+function getRelevanceScore(query: string, field: string): number {
+  const normalizedField = normalizeSearchText(field);
+  const normalizedQuery = normalizeSearchText(query);
+
+  if (!normalizedField || !normalizedQuery) return 0;
+
+  let bestScore = 0;
+  const exactIndex = normalizedField.indexOf(normalizedQuery);
+
+  // Exact phrase gets the strongest preference.
+  if (exactIndex >= 0) {
+    if (exactIndex === 0) {
+      bestScore = 110;
+    } else {
+      const charBefore = normalizedField[exactIndex - 1];
+      if (/\s/.test(charBefore)) {
+        bestScore = 95;
+      } else if (exactIndex < normalizedField.length / 2) {
+        bestScore = 75;
+      } else {
+        bestScore = 60;
+      }
+    }
+  }
+
+  const terms = normalizedQuery.split(' ');
+  if (terms.length > 1) {
+    let matchedTerms = 0;
+    let termScoreTotal = 0;
+
+    for (const term of terms) {
+      const termScore = getTermMatchScore(term, normalizedField);
+      if (termScore > 0) {
+        matchedTerms += 1;
+        termScoreTotal += termScore;
+      }
+    }
+
+    if (matchedTerms > 0) {
+      const coverage = matchedTerms / terms.length;
+      const averageScore = termScoreTotal / matchedTerms;
+      const combinedScore = Math.round(averageScore * (0.6 + (coverage * 0.4)));
+      if (combinedScore > bestScore) bestScore = combinedScore;
+    }
+  }
+
+  return bestScore;
 }
 
 // Get best relevance score from multiple fields
@@ -915,32 +964,21 @@ function performSearch(query: string) {
   const allScored: ScoredMediaItem[] = [];
   const processedIds = new Set<string>();
 
-  // Check if query is a year (4 digits, reasonable range)
+  // Treat a standalone 4-digit query as a year hint, not an exclusive filter.
   const yearMatch = query.match(/^(\d{4})$/);
   const searchYear = yearMatch ? parseInt(yearMatch[1], 10) : null;
-  const isYearSearch = searchYear !== null && searchYear >= 1900 && searchYear <= 2100;
+  const isYearQuery = searchYear !== null && searchYear >= 1900 && searchYear <= 2100;
+  const yearBonus = 25;
 
   // Search movies
   for (const movie of mediaIndex.value.movies) {
-    // Year search - match movies from that year
-    if (isYearSearch) {
-      if (movie.year === searchYear) {
-        allScored.push({
-          item: movieToMediaItem(movie),
-          score: 100 + (movie.info?.rating ?? 0) / 10,  // High base score, ranked by rating
-          matchType: 'movies'
-        });
-        processedIds.add(movie.id);
-      }
-      continue;
-    }
-
     // Direct title match -> Movies category
     const titleScore = getBestScore(query, movie.title, movie.info?.original_title);
-    if (titleScore > 0) {
+    const yearScore = isYearQuery && movie.year === searchYear ? yearBonus : 0;
+    if (titleScore > 0 || yearScore > 0) {
       allScored.push({
         item: movieToMediaItem(movie),
-        score: titleScore + (movie.info?.rating ?? 0) / 10,
+        score: titleScore + yearScore + (movie.info?.rating ?? 0) / 10,
         matchType: 'movies'
       });
       processedIds.add(movie.id);
@@ -981,27 +1019,15 @@ function performSearch(query: string) {
 
   // Search series
   for (const series of mediaIndex.value.series) {
-    // Year search - match series that started that year
-    if (isYearSearch) {
-      // Extract year from release_date (format: "YYYY-MM-DD" or just "YYYY")
-      const seriesYear = series.info?.release_date ? parseInt(series.info.release_date.substring(0, 4), 10) : null;
-      if (seriesYear === searchYear) {
-        allScored.push({
-          item: seriesToMediaItem(series),
-          score: 100 + (series.info?.rating ?? 0) / 10,
-          matchType: 'series'
-        });
-        processedIds.add(series.id);
-      }
-      continue;
-    }
-
     // Direct title match -> Series category
     const titleScore = getBestScore(query, series.title, series.info?.original_title);
-    if (titleScore > 0) {
+    // Extract year from release_date (format: "YYYY-MM-DD" or just "YYYY")
+    const seriesYear = series.info?.release_date ? parseInt(series.info.release_date.substring(0, 4), 10) : null;
+    const yearScore = isYearQuery && seriesYear === searchYear ? yearBonus : 0;
+    if (titleScore > 0 || yearScore > 0) {
       allScored.push({
         item: seriesToMediaItem(series),
-        score: titleScore + (series.info?.rating ?? 0) / 10,
+        score: titleScore + yearScore + (series.info?.rating ?? 0) / 10,
         matchType: 'series'
       });
       processedIds.add(series.id);
