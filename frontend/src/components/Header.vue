@@ -93,7 +93,6 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   search: [string];
-  clearSearch: [];
   goBack: [];
 }>();
 
@@ -126,14 +125,12 @@ const isSearchActive = computed(() => {
 // Switch views on focus (no Enter required) - only in browse mode
 function switchToMovies() {
   if (!isDetailPage.value && props.currentView !== 'movies') {
-    emit('clearSearch');
     router.push('/movies');
   }
 }
 
 function switchToSeries() {
   if (!isDetailPage.value && props.currentView !== 'series') {
-    emit('clearSearch');
     router.push('/series');
   }
 }
@@ -150,11 +147,7 @@ function handleSearchFocus() {
 }
 
 // Sync local search to parent
-watch(localSearch, (val, prevVal) => {
-  // When user starts typing from detail page, exit detail and show search results.
-  if (isDetailPage.value && !prevVal && !!val.trim()) {
-    goToCategory();
-  }
+watch(localSearch, (val) => {
   emit('search', val);
 });
 

@@ -35,8 +35,7 @@
       :mpc-be-connected="mpcBeConnected"
       :nav-row="1"
       :position="headerPosition"
-      @search="searchQuery = $event"
-      @clear-search="searchQuery = ''"
+      @search="updateSearchQuery"
       @go-back="goBack"
     />
 
@@ -199,6 +198,33 @@ const { getFocusState, restoreFocusState, focusAt, focusElement } = useKeyboardN
 const router = useRouter();
 const route = useRoute();
 
+function normalizeSearchQuery(value: unknown): string {
+  if (Array.isArray(value)) {
+    return normalizeSearchQuery(value[0]);
+  }
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function getRouteSearchQuery() {
+  return normalizeSearchQuery(route.query.q);
+}
+
+function getBrowsePath() {
+  return route.meta.view === 'series' ? '/series' : '/movies';
+}
+
+function getBrowseViewFromPath(path: string): 'movies' | 'series' {
+  return path === '/series' ? 'series' : 'movies';
+}
+
+function normalizeHistoryPath(value: string): string {
+  const hashIndex = value.indexOf('#');
+  const fromHash = hashIndex >= 0 ? value.slice(hashIndex + 1) : value;
+  const pathWithQuery = fromHash.startsWith('/') ? fromHash : `/${fromHash}`;
+  const queryIndex = pathWithQuery.indexOf('?');
+  return queryIndex >= 0 ? pathWithQuery.slice(0, queryIndex) : pathWithQuery;
+}
+
 // WebSocket-driven media index
 const { mediaIndex, loading, error, connected: wsConnected, tasks } = useMediaWebSocket();
 
@@ -209,6 +235,8 @@ const searchResults = ref<MediaItem[]>([]);
 const isSearching = ref(false);
 const mpcBeConnected = ref(false);
 const resumePositions = ref<Record<string, number>>({});
+const searchQuery = ref(getRouteSearchQuery());
+const searchReturnPath = ref<string | null>(null);
 const MPC_BE_OPENING_GRACE_MS = 4000;
 const mpcBeOpeningUntil = ref(0);
 let mpcBePollTimer: number | null = null;
@@ -340,6 +368,66 @@ function restoreFocusForPage(page: string) {
   }
 }
 
+function restoreBrowseFocus(path: string) {
+  window.setTimeout(() => {
+    restoreFocusForPage(getBrowseViewFromPath(path));
+  }, 100);
+}
+
+function clearSearch(options: { preferBack?: boolean; targetPath?: string } = {}) {
+  const currentQuery = getRouteSearchQuery();
+  const targetPath = options.targetPath ?? getBrowsePath();
+
+  searchQuery.value = '';
+
+  if (!currentQuery && route.path === targetPath) {
+    searchReturnPath.value = null;
+    return;
+  }
+
+  const backPath = typeof window.history.state?.back === 'string'
+    ? normalizeHistoryPath(window.history.state.back)
+    : '';
+  const canRestoreWithBack = options.preferBack !== false
+    && !!currentQuery
+    && searchReturnPath.value === targetPath
+    && backPath === targetPath;
+
+  searchReturnPath.value = null;
+
+  if (canRestoreWithBack) {
+    router.back();
+  } else {
+    void router.replace({ path: targetPath });
+  }
+
+  restoreBrowseFocus(targetPath);
+}
+
+function updateSearchQuery(nextValue: string) {
+  const nextQuery = normalizeSearchQuery(nextValue);
+  const currentQuery = getRouteSearchQuery();
+  const browsePath = getBrowsePath();
+
+  if (!nextQuery) {
+    clearSearch({ preferBack: true });
+    return;
+  }
+
+  searchQuery.value = nextQuery;
+
+  if (!currentQuery) {
+    if (!route.params.id) {
+      saveFocusForPage(currentView.value);
+    }
+    searchReturnPath.value = browsePath;
+    void router.push({ path: browsePath, query: { q: nextQuery } });
+    return;
+  }
+
+  void router.replace({ path: browsePath, query: { q: nextQuery } });
+}
+
 // Handle Escape key for navigation hierarchy
 function handleEscapeKey(event: KeyboardEvent) {
   if (event.key !== 'Escape') return;
@@ -368,18 +456,16 @@ function handleEscapeKey(event: KeyboardEvent) {
     return;
   }
 
+  if (getRouteSearchQuery()) {
+    event.preventDefault();
+    clearSearch({ preferBack: true });
+    return;
+  }
+
   // From series list -> movies list
   if (path === '/series') {
     event.preventDefault();
     saveFocusForPage('series');
-    router.push('/movies');
-    restoreFocusForPage('movies');
-    return;
-  }
-
-  // From search -> go back
-  if (path.startsWith('/search')) {
-    event.preventDefault();
     router.push('/movies');
     restoreFocusForPage('movies');
     return;
@@ -402,9 +488,6 @@ onUnmounted(() => {
   window.removeEventListener('click', requestInitialFullscreen);
   stopMpcBePolling();
 });
-
-// Search query stored in ref (not URL-based)
-const searchQuery = ref('');
 
 // Handle back navigation (Escape key or Back button)
 function goBack() {
@@ -507,8 +590,7 @@ function closeDetail() {
 }
 
 function handleActorSearch(actorName: string) {
-  searchQuery.value = actorName;
-  router.push(`/${currentView.value}`);
+  updateSearchQuery(actorName);
 }
 
 // Convert raw data to MediaItem format
@@ -1042,6 +1124,20 @@ watch([mediaIndex, currentView, searchQuery, selectedItem], ([index, view, query
     }, 100);
   }
 });
+
+watch(
+  () => route.fullPath,
+  () => {
+    const nextQuery = getRouteSearchQuery();
+    if (nextQuery !== searchQuery.value) {
+      searchQuery.value = nextQuery;
+    }
+    if (!nextQuery) {
+      searchReturnPath.value = null;
+    }
+  },
+  { immediate: true }
+);
 
 watch(searchQuery, (query) => {
   if (searchTimeout) {
