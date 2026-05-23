@@ -35,9 +35,15 @@
     <div class="version-dolby-cell">
       <img
         v-if="showBlurayLogo"
-        class="version-bluray-logo"
+        class="version-disc-logo"
         :src="blurayLogoUrl"
         alt="Blu-ray"
+      >
+      <img
+        v-else-if="showDvdLogo"
+        class="version-disc-logo"
+        :src="dvdLogoUrl"
+        alt="DVD"
       >
       <DolbyBadges
         class="version-dolby"
@@ -70,6 +76,7 @@ import LanguageFlags from './LanguageFlags.vue';
 import DolbyBadges from './DolbyBadges.vue';
 import { buildLanguageFlags } from '../utils/languageFlags';
 import blurayLogoUrl from '../assets/bluray.webp';
+import dvdLogoUrl from '../assets/dvd.webp';
 
 defineOptions({
   inheritAttrs: false,
@@ -107,6 +114,8 @@ const dolbyVisionPattern = /\b(dolby\s*vision|dovi|\bdv\b)\b/i;
 const dolbyAtmosPattern = /\b(dolby\s*atmos|atmos)\b/i;
 const hdrPattern = /\bhdr\b|smpte\s*2084|bt\s*2020|hlg/i;
 const blurayTagPattern = /\bblu[\s.-]*ray\b/i;
+const blurayPlayablePattern = /(?:^|[\\/])(movieobject|index)\.bdmv$/i;
+const dvdPlayablePattern = /(?:^|[\\/])video_ts\.ifo$/i;
 
 function hasDolbyTag(value: string | null | undefined): boolean {
   return Boolean(value && dolbyTagPattern.test(value));
@@ -151,21 +160,26 @@ const hasHdr = computed(() => {
 
 const isDisc = computed(() => {
   if (!props.torrent.playable_file) return false;
-  const filename = props.torrent.playable_file.toLowerCase();
-  return filename.endsWith('movieobject.bdmv') || filename.endsWith('index.bdmv') || filename.endsWith('.iso');
+  const filename = props.torrent.playable_file;
+  return blurayPlayablePattern.test(filename) || dvdPlayablePattern.test(filename) || filename.toLowerCase().endsWith('.iso');
+});
+
+const isBlurayDisc = computed(() => {
+  if (!props.torrent.playable_file) return false;
+  return blurayPlayablePattern.test(props.torrent.playable_file);
+});
+
+const isDvdDisc = computed(() => {
+  if (!props.torrent.playable_file) return false;
+  return dvdPlayablePattern.test(props.torrent.playable_file);
 });
 
 const showBlurayLogo = computed(() => {
-  if (!isDisc.value) return false;
-  const filename = (props.torrent.playable_file || '').toLowerCase();
-  if (filename.endsWith('movieobject.bdmv') || filename.endsWith('index.bdmv')) return true;
-  return hasAnyTag(
-    blurayTagPattern,
-    props.torrent.quality,
-    props.torrent.codec,
-    props.torrent.audio,
-    props.torrent.title,
-  );
+  return isBlurayDisc.value;
+});
+
+const showDvdLogo = computed(() => {
+  return isDvdDisc.value;
 });
 
 const displayQualityBadge = computed(() => {
@@ -285,7 +299,7 @@ function handleActivate(event: MouseEvent | KeyboardEvent) {
   align-self: stretch;
 }
 
-.version-bluray-logo {
+.version-disc-logo {
   align-self: center;
   width: auto;
   height: 22px;
