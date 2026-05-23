@@ -472,26 +472,26 @@ function getImageUrl(item: MediaItem): string | undefined {
     return undefined;
   }
 
-  return getCoverUrl(imagePath);
+  return getCoverUrl(imagePath, item.root_id);
 }
 
 function getVideoSources(item: MediaItem): Array<{ src: string; type: string; codecs: string }> {
   if (isVideoPath(item.cover_path)) {
-    return [{ src: getVideoPreviewUrl(getCoverUrl(item.cover_path)), ...getVideoSourceAttributes(item.cover_path) }];
+    return [{ src: getVideoPreviewUrl(getCoverUrl(item.cover_path, item.root_id)), ...getVideoSourceAttributes(item.cover_path) }];
   }
 
   const showreelSourceSets = item.showreel_source_sets;
   if (showreelSourceSets && showreelSourceSets.length > 0) {
     return showreelSourceSets[0]
       .filter(path => isVideoPath(path))
-      .map(path => ({ src: getVideoPreviewUrl(getCoverUrl(path)), ...getVideoSourceAttributes(path) }));
+      .map(path => ({ src: getVideoPreviewUrl(getCoverUrl(path, item.root_id)), ...getVideoSourceAttributes(path) }));
   }
 
   const showreel = item.showreel_images;
   if (showreel && showreel.length > 0) {
     return showreel
       .filter(path => isVideoPath(path))
-      .map(path => ({ src: getVideoPreviewUrl(getCoverUrl(path)), ...getVideoSourceAttributes(path) }));
+      .map(path => ({ src: getVideoPreviewUrl(getCoverUrl(path, item.root_id)), ...getVideoSourceAttributes(path) }));
   }
 
   return [];

@@ -113,7 +113,7 @@
               >
                 <img
                   v-if="castMember.profile_path && !castMember.profile_path.startsWith('/')"
-                  :src="getCoverUrl(castMember.profile_path)"
+                  :src="getCoverUrl(castMember.profile_path, item.root_id)"
                   :alt="castMember.name"
                   class="cast-photo"
                 >
@@ -341,7 +341,7 @@ watch(collageSlots, async (slots) => {
 }, { immediate: true });
 
 function getShowreelUrl(path: string): string {
-  return getVideoPreviewUrl(getCoverUrl(path));
+  return getVideoPreviewUrl(getCoverUrl(path, props.item.root_id));
 }
 
 function getShowreelSourceAttributes(path: string): VideoSourceAttributes {
@@ -359,7 +359,7 @@ const backdropStyle = computed(() => {
   if (props.item.type !== 'movies') return {};
   const movie = props.item.data as Movie;
   const imagePath = movie.backdrop_path;
-  const imageUrl = getCoverUrl(imagePath);
+  const imageUrl = getCoverUrl(imagePath, props.item.root_id);
   if (imageUrl) {
     return { backgroundImage: `url("${imageUrl}")` };
   }
@@ -368,7 +368,7 @@ const backdropStyle = computed(() => {
 
 const synopsisPosterUrl = computed(() => {
   if (props.item.type !== 'movies') return null;
-  return getCoverUrl(props.item.cover_path);
+  return getCoverUrl(props.item.cover_path, props.item.root_id);
 });
 
 const movieGenres = computed(() => {

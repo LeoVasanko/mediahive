@@ -76,6 +76,7 @@ class Movie(msgspec.Struct):
     showreel_images: list[str] | None = None
     showreel_source_sets: list[list[str]] | None = None
     torrents: dict[str, Torrent] = {}
+    root_id: str | None = None
 
 
 class Series(msgspec.Struct):
@@ -89,6 +90,7 @@ class Series(msgspec.Struct):
     cover_path: str | None = None
     backdrop_path: str | None = None
     seasons: list[Season] = []
+    root_id: str | None = None
 
 
 # ---------------------------------------------------------------------------

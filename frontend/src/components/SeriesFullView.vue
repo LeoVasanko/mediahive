@@ -502,7 +502,7 @@ function handleEpisodeHover(key: string, isEntering: boolean) {
 // Backdrop URL - only use backdrop_path, fall back to collage (handled in template)
 const backdropUrl = computed(() => {
   if (props.series.info?.backdrop_path) {
-    return getCoverUrl(props.series.info.backdrop_path);
+    return getCoverUrl(props.series.info.backdrop_path, props.series.root_id);
   }
   return null;
 });
@@ -523,7 +523,7 @@ const ratingClass = computed(() => {
 // Get season poster
 function getSeasonPoster(season: Season): string | undefined {
   if (season.poster_path) {
-    return getCoverUrl(season.poster_path);
+    return getCoverUrl(season.poster_path, props.series.root_id);
   }
   return undefined;
 }
@@ -536,14 +536,14 @@ function getEpisodeVideoSources(episode: Episode): Array<{ src: string; type: st
       : [];
 
   return sources.map((path) => ({
-    src: getVideoPreviewUrl(getCoverUrl(path)),
+    src: getVideoPreviewUrl(getCoverUrl(path, props.series.root_id)),
     ...getVideoSourceAttributes(path),
   }));
 }
 
 // Collage slice style for season posters
 function getCollageSliceStyle(season: Season, index: number) {
-  const posterUrl = season.poster_path ? getCoverUrl(season.poster_path) : null;
+  const posterUrl = season.poster_path ? getCoverUrl(season.poster_path, props.series.root_id) : null;
   const totalSlices = Math.min(seasonsWithPosters.value.length, 5);
   const sliceWidth = 100 / totalSlices;
 

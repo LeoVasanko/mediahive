@@ -1,17 +1,24 @@
 import { ref, readonly, onUnmounted } from 'vue';
 import type { Movie, Series, MediaIndex, TaskInfo, WsMessage } from '../types';
 
+interface RootState {
+  rootId: string;
+  ws: WebSocket | null;
+  movieMap: Map<string, Movie>;
+  seriesMap: Map<string, Series>;
+  connected: boolean;
+  reconnectTimer: ReturnType<typeof setTimeout> | null;
+}
+
 /**
- * Composable that connects to the MediaHive WebSocket and keeps
- * the media index updated in real time.
+ * Composable that connects to per-root MediaHive WebSockets and keeps
+ * a merged media index updated in real time.
  *
- * The server sends:
+ * The server sends per-root:
  *  - "init"   → full index (movies + series) on connect
  *  - "upsert" → single item inserted or updated
  *  - "remove" → single item removed
  *  - "task"   → background task progress
- *
- * Messages are msgspec-encoded binary JSON with a "type" tag field.
  */
 export function useMediaWebSocket() {
   const mediaIndex = ref<MediaIndex | null>(null);
@@ -20,17 +27,16 @@ export function useMediaWebSocket() {
   const connected = ref(false);
   const tasks = ref<Map<string, TaskInfo>>(new Map());
 
-  let ws: WebSocket | null = null;
-  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  const roots = ref<Map<string, RootState>>(new Map());
   let disposed = false;
 
-  // Lookup maps for fast upsert / remove
-  const movieMap = new Map<string, Movie>();
-  const seriesMap = new Map<string, Series>();
-
   function buildIndex(): MediaIndex {
-    const movies = Array.from(movieMap.values());
-    const series = Array.from(seriesMap.values());
+    const movies: Movie[] = [];
+    const series: Series[] = [];
+    for (const state of roots.value.values()) {
+      movies.push(...state.movieMap.values());
+      series.push(...state.seriesMap.values());
+    }
     return {
       version: 0,
       generated_at: new Date().toISOString(),
@@ -43,63 +49,57 @@ export function useMediaWebSocket() {
     };
   }
 
-  function handleMessage(event: MessageEvent) {
-    try {
-      // Server sends binary frames (msgspec json bytes)
-      let text: string;
-      if (event.data instanceof Blob) {
-        // Will be handled by the blob reader below
-        event.data.text().then((t) => processJson(t));
-        return;
-      } else if (event.data instanceof ArrayBuffer) {
-        text = new TextDecoder().decode(event.data);
-      } else {
-        text = event.data as string;
+  function updateMergedState() {
+    mediaIndex.value = buildIndex();
+    // Loading is done when at least one root has connected and sent init
+    let anyConnected = false;
+    for (const state of roots.value.values()) {
+      if (state.connected) {
+        anyConnected = true;
+        break;
       }
-      processJson(text);
-    } catch (e) {
-      console.error('[WS] Failed to handle message:', e);
     }
+    if (anyConnected) {
+      loading.value = false;
+      error.value = null;
+    }
+    connected.value = anyConnected;
   }
 
-  function processJson(text: string) {
+  function processJson(state: RootState, text: string) {
     const msg = JSON.parse(text) as WsMessage;
 
     switch (msg.type) {
       case 'init': {
-        movieMap.clear();
-        seriesMap.clear();
-        for (const m of msg.data.movies) movieMap.set(m.id, m);
-        for (const s of msg.data.series) seriesMap.set(s.id, s);
-        mediaIndex.value = buildIndex();
-        loading.value = false;
-        error.value = null;
-        console.log(`[WS] init: ${movieMap.size} movies, ${seriesMap.size} series`);
+        state.movieMap.clear();
+        state.seriesMap.clear();
+        for (const m of msg.data.movies) state.movieMap.set(m.id, m);
+        for (const s of msg.data.series) state.seriesMap.set(s.id, s);
+        updateMergedState();
+        console.log(`[WS ${state.rootId}] init: ${state.movieMap.size} movies, ${state.seriesMap.size} series`);
         break;
       }
       case 'upsert': {
         if (msg.kind === 'movie') {
-          movieMap.set(msg.item.id, msg.item as Movie);
+          state.movieMap.set(msg.item.id, msg.item as Movie);
         } else {
-          seriesMap.set(msg.item.id, msg.item as Series);
+          state.seriesMap.set(msg.item.id, msg.item as Series);
         }
-        // Rebuild the index ref so Vue detects the change
-        mediaIndex.value = buildIndex();
+        updateMergedState();
         break;
       }
       case 'remove': {
         if (msg.kind === 'movie') {
-          movieMap.delete(msg.id);
+          state.movieMap.delete(msg.id);
         } else {
-          seriesMap.delete(msg.id);
+          state.seriesMap.delete(msg.id);
         }
-        mediaIndex.value = buildIndex();
+        updateMergedState();
         break;
       }
       case 'task': {
         const info = msg.data;
         if (info.status === 'completed' || info.status === 'cancelled' || info.status === 'error') {
-          // Keep finished tasks briefly so the UI can show completion
           tasks.value.set(info.id, info);
           setTimeout(() => {
             tasks.value.delete(info.id);
@@ -108,71 +108,143 @@ export function useMediaWebSocket() {
         } else {
           tasks.value.set(info.id, info);
         }
-        // Trigger reactivity
         tasks.value = new Map(tasks.value);
         break;
       }
     }
   }
 
-  function connect() {
-    if (disposed) return;
-
-    // Build WS URL relative to current page
-    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const url = `${proto}//${location.host}/api/ws`;
-
-    console.log(`[WS] Connecting to ${url}...`);
-    ws = new WebSocket(url);
-
-    ws.onopen = () => {
-      connected.value = true;
-      error.value = null;
-      console.log('[WS] Connected');
-    };
-
-    ws.onmessage = handleMessage;
-
-    ws.onclose = (ev) => {
-      connected.value = false;
-      console.log(`[WS] Closed (code=${ev.code})`);
-      scheduleReconnect();
-    };
-
-    ws.onerror = (ev) => {
-      console.error('[WS] Error:', ev);
-      if (!mediaIndex.value) {
-        error.value = 'WebSocket connection failed';
+  function handleMessage(state: RootState, event: MessageEvent) {
+    try {
+      let text: string;
+      if (event.data instanceof Blob) {
+        event.data.text().then((t) => processJson(state, t));
+        return;
+      } else if (event.data instanceof ArrayBuffer) {
+        text = new TextDecoder().decode(event.data);
+      } else {
+        text = event.data as string;
       }
-    };
+      processJson(state, text);
+    } catch (e) {
+      console.error(`[WS ${state.rootId}] Failed to handle message:`, e);
+    }
   }
 
-  function scheduleReconnect() {
+  function connectRoot(rootId: string) {
     if (disposed) return;
-    if (reconnectTimer) clearTimeout(reconnectTimer);
-    reconnectTimer = setTimeout(() => {
-      console.log('[WS] Reconnecting...');
-      connect();
-    }, 2000);
+    const existing = roots.value.get(rootId);
+    if (existing?.ws) {
+      // Already connecting or connected
+      return;
+    }
+
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const url = `${proto}//${location.host}/api/roots/${encodeURIComponent(rootId)}/ws`;
+
+    const state: RootState = {
+      rootId,
+      ws: null,
+      movieMap: new Map(),
+      seriesMap: new Map(),
+      connected: false,
+      reconnectTimer: null,
+    };
+    roots.value.set(rootId, state);
+
+    function doConnect() {
+      if (disposed) return;
+      console.log(`[WS ${rootId}] Connecting to ${url}...`);
+      const ws = new WebSocket(url);
+      state.ws = ws;
+
+      ws.onopen = () => {
+        state.connected = true;
+        updateMergedState();
+        console.log(`[WS ${rootId}] Connected`);
+      };
+
+      ws.onmessage = (ev) => handleMessage(state, ev);
+
+      ws.onclose = (ev) => {
+        state.connected = false;
+        state.ws = null;
+        updateMergedState();
+        console.log(`[WS ${rootId}] Closed (code=${ev.code})`);
+        scheduleReconnect();
+      };
+
+      ws.onerror = (ev) => {
+        console.error(`[WS ${rootId}] Error:`, ev);
+        if (!mediaIndex.value) {
+          error.value = 'WebSocket connection failed';
+        }
+      };
+    }
+
+    function scheduleReconnect() {
+      if (disposed) return;
+      if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
+      state.reconnectTimer = setTimeout(() => {
+        console.log(`[WS ${rootId}] Reconnecting...`);
+        doConnect();
+      }, 2000);
+    }
+
+    doConnect();
+  }
+
+  function disconnectRoot(rootId: string) {
+    const state = roots.value.get(rootId);
+    if (!state) return;
+    if (state.reconnectTimer) {
+      clearTimeout(state.reconnectTimer);
+      state.reconnectTimer = null;
+    }
+    if (state.ws) {
+      state.ws.onclose = null;
+      state.ws.close();
+      state.ws = null;
+    }
+    state.connected = false;
+    roots.value.delete(rootId);
+    updateMergedState();
+  }
+
+  function setActiveRoots(rootIds: string[]) {
+    if (disposed) return;
+    const desired = new Set(rootIds);
+    const current = new Set(roots.value.keys());
+
+    // Add new roots
+    for (const rid of desired) {
+      if (!current.has(rid)) {
+        connectRoot(rid);
+      }
+    }
+
+    // Remove old roots
+    for (const rid of current) {
+      if (!desired.has(rid)) {
+        disconnectRoot(rid);
+      }
+    }
   }
 
   function disconnect() {
     disposed = true;
-    if (reconnectTimer) {
-      clearTimeout(reconnectTimer);
-      reconnectTimer = null;
+    for (const state of roots.value.values()) {
+      if (state.reconnectTimer) {
+        clearTimeout(state.reconnectTimer);
+      }
+      if (state.ws) {
+        state.ws.onclose = null;
+        state.ws.close();
+      }
     }
-    if (ws) {
-      ws.onclose = null; // prevent reconnect
-      ws.close();
-      ws = null;
-    }
+    roots.value.clear();
   }
 
-  // Start the connection
-  connect();
-
-  // Clean up on component unmount
   onUnmounted(disconnect);
 
   return {
@@ -181,6 +253,7 @@ export function useMediaWebSocket() {
     error: readonly(error),
     connected: readonly(connected),
     tasks: readonly(tasks),
+    setActiveRoots,
     disconnect,
   };
 }

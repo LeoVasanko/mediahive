@@ -1,4 +1,5 @@
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
@@ -9,20 +10,10 @@ DEFAULT_PORT = 8420
 DEVMODE = os.getenv("MEDIAHIVE_DEV") == "1"
 
 
-def resolve_media_root(path: str | None = None) -> Path:
-    """Resolve the media root folder from a path, MEDIAHIVE_PATH env, or cwd."""
-    match Path(path or os.environ.get("MEDIAHIVE_PATH") or Path.cwd()).parts:
-        case (*rest, ".mediahive", "index.json"):
-            ...
-        case (*rest, ".mediahive"):
-            ...
-        case rest:
-            ...
-    mediaroot = Path(*rest).resolve()
-    if not mediaroot.exists() or not mediaroot.is_dir():
-        sys.stderr.write(f"Error: Folder does not exist: {mediaroot}\n")
-        sys.exit(1)
-    return mediaroot
+def _derive_name(path: str) -> str:
+    """Derive a root name from a path."""
+    p = Path(path)
+    return p.name or p.anchor.strip("/\\").lower() or "media"
 
 
 def main():
@@ -30,9 +21,10 @@ def main():
         description="MediaHive - Media scanning, indexing, and streaming"
     )
     parser.add_argument(
-        "media_folder",
-        nargs="?",
-        help="Path to the media folder (default: MEDIAHIVE_PATH or current directory)",
+        "media_folders",
+        nargs="*",
+        metavar="MEDIA_FOLDER",
+        help="One or more media folders to index (default: none — configure via UI or API)",
     )
     parser.add_argument(
         "-l",
@@ -43,8 +35,21 @@ def main():
 
     args = parser.parse_args()
 
-    mediaroot = resolve_media_root(args.media_folder)
-    os.environ["MEDIAHIVE_PATH"] = mediaroot.as_posix()
+    if args.media_folders:
+        roots: dict[str, str] = {}
+        for path in args.media_folders:
+            # Defer filesystem validation to the server so startup is never
+            # blocked by macOS permission dialogs or missing paths.
+            p = Path(path).expanduser()
+            name = _derive_name(p.as_posix())
+            # Resolve collisions
+            base_name = name
+            suffix = 2
+            while name in roots:
+                name = f"{base_name}{suffix}"
+                suffix += 1
+            roots[name] = p.as_posix()
+        os.environ["MEDIAHIVE_ROOTS"] = json.dumps(roots)
 
     dev = {"reload": True, "reload_dirs": ["mediahive"]}
     server.run(

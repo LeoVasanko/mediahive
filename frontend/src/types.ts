@@ -69,6 +69,7 @@ export interface Movie {
   showreel_images: string[] | null;
   showreel_source_sets: string[][] | null;
   torrents: { [key: string]: Torrent };
+  root_id: string | null;
 }
 
 export interface Episode {
@@ -104,6 +105,7 @@ export interface Series {
   cover_path: string | null;
   backdrop_path: string | null;
   seasons: Season[];
+  root_id: string | null;
 }
 
 export interface MediaStats {
@@ -156,6 +158,7 @@ export interface MediaItem {
   type: MediaType;
   resolution?: string | null;
   data: Movie | Series | EpisodeWithSeries;
+  root_id: string | null;
   // Optional search match info - only present in search results
   searchMatchInfo?: SearchMatchInfo;
 }

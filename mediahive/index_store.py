@@ -48,9 +48,10 @@ class IndexStore:
     # This would make IndexStore testable without FastAPI's WebSocket.
     """
 
-    def __init__(self, snapshot_path: Path, media_root: Optional[str] = None):
+    def __init__(self, snapshot_path: Path, media_root: Optional[str] = None, root_id: Optional[str] = None):
         self.snapshot_path = snapshot_path
         self.media_root = media_root
+        self.root_id = root_id
 
         # The index: keyed by item id
         self.movies: dict[str, Movie] = {}
@@ -66,6 +67,14 @@ class IndexStore:
     # ------------------------------------------------------------------
     # Persistence
     # ------------------------------------------------------------------
+
+    def _maybe_migrate_id(self, item_id: str) -> str:
+        """Prepend root_id to legacy item IDs that lack it."""
+        if not self.root_id:
+            return item_id
+        if ":" in item_id:
+            return item_id
+        return f"{self.root_id}:{item_id}"
 
     async def load_snapshot(self) -> None:
         """Load index from disk snapshot (recovery on startup)."""
@@ -110,6 +119,8 @@ class IndexStore:
                     m.showreel_source_sets = (
                         [[p] for p in filtered_images] if filtered_images else None
                     )
+                m.id = self._maybe_migrate_id(m.id)
+                m.root_id = self.root_id
                 self.movies[m.id] = m
             for s in data.series:
                 for season in s.seasons:
@@ -139,6 +150,8 @@ class IndexStore:
                             else:
                                 ep.reel_image = None
                                 ep.reel_sources = None
+                s.id = self._maybe_migrate_id(s.id)
+                s.root_id = self.root_id
                 self.series[s.id] = s
             logger.info(
                 "Loaded snapshot: %d movies, %d series",
@@ -193,6 +206,8 @@ class IndexStore:
 
     def upsert_movie(self, item: Movie) -> bool:
         """Insert or update a movie. Returns True if it was a real change."""
+        if not item.root_id and self.root_id:
+            item.root_id = self.root_id
         existing = self.movies.get(item.id)
         if existing is not None:
             if msgspec.json.encode(existing) == msgspec.json.encode(item):
@@ -204,6 +219,8 @@ class IndexStore:
 
     def upsert_series(self, item: Series) -> bool:
         """Insert or update a series. Returns True if it was a real change."""
+        if not item.root_id and self.root_id:
+            item.root_id = self.root_id
         existing = self.series.get(item.id)
         if existing is not None:
             if msgspec.json.encode(existing) == msgspec.json.encode(item):

@@ -99,7 +99,7 @@ async def get_added_timestamp(path: Path) -> Optional[int]:
     ap = AsyncPath(path)
     try:
         stat_info = await ap.stat()
-    except OSError, PermissionError:
+    except (OSError, PermissionError):
         return None
 
     if await ap.is_dir():
@@ -124,7 +124,7 @@ async def get_directory_size(path: Path) -> int:
         for item in ap.rglob("*"):
             if await AsyncPath(item).is_file():
                 total += (await AsyncPath(item).stat()).st_size
-    except OSError, PermissionError:
+    except (OSError, PermissionError):
         pass
     return total
 

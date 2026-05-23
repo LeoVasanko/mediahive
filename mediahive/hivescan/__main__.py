@@ -1,4 +1,5 @@
 import argparse
+import json
 import logging
 import os
 from pathlib import Path
@@ -16,11 +17,11 @@ Examples:
 
 Exclude paths by creating .mediahive/scanignore (gitignore syntax).
 
-The server exposes:
-  WS   /ws          Live index updates & task progress
-  POST /api/scan    Trigger a new scan
-  GET  /api/status  Current server status
-  GET  /api/index   Full index as JSON (HTTP fallback)
+The server exposes per-root endpoints:
+  WS   /api/roots/{root_id}/ws  Live index updates & task progress
+  POST /api/roots/{root_id}/scan    Trigger a new scan
+  GET  /api/roots/{root_id}/status  Current root status
+  GET  /api/roots/{root_id}/index   Full index as JSON (HTTP fallback)
         """,
     )
     parser.add_argument(
@@ -41,12 +42,11 @@ The server exposes:
 
     args = parser.parse_args()
 
-    media_root = Path(args.media_folder).resolve()
-    if not media_root.exists() or not media_root.is_dir():
-        print(f"Error: Folder does not exist: {media_root}")
-        exit(1)
-
-    os.environ["MEDIAHIVE_PATH"] = media_root.as_posix()
+    # Defer filesystem validation to the server; pass raw path via env.
+    media_root = Path(args.media_folder).expanduser()
+    os.environ["MEDIAHIVE_ROOTS"] = json.dumps({
+        media_root.name or "media": media_root.as_posix()
+    })
 
     logging.basicConfig(
         level=logging.INFO,

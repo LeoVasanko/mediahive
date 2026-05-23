@@ -92,16 +92,16 @@ const posterImageUrl = computed(() => {
   if (!props.item.cover_path || isVideoPath(props.item.cover_path)) {
     return null;
   }
-  return getCoverUrl(props.item.cover_path);
+  return getCoverUrl(props.item.cover_path, props.item.root_id);
 });
 
 const posterVideoUrl = computed(() => {
   if (props.item.cover_path && isVideoPath(props.item.cover_path)) {
-    return getCoverUrl(props.item.cover_path);
+    return getCoverUrl(props.item.cover_path, props.item.root_id);
   }
 
   const fallbackVideo = props.item.showreel_images?.find(path => isVideoPath(path));
-  return fallbackVideo ? getCoverUrl(fallbackVideo) : null;
+  return fallbackVideo ? getCoverUrl(fallbackVideo, props.item.root_id) : null;
 });
 
 const rating = computed(() => {

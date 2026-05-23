@@ -380,6 +380,7 @@ async def _process_movies(
     fetch_covers: bool,
     generate_showreels: bool,
     media_root: Optional[str] = None,
+    root_id: Optional[str] = None,
 ) -> AsyncIterator[Tuple[Movie, Optional[Tuple[str, Path, str]]]]:
     """
     Async generator that processes all movies.
@@ -473,7 +474,8 @@ async def _process_movies(
         year = group_data["year"]
 
         display_title = tmdb_info.title
-        item_id = hashlib.md5(f"movie:{tmdb_id}".encode()).hexdigest()[:12]
+        content_hash = hashlib.md5(f"movie:{tmdb_id}".encode()).hexdigest()[:12]
+        item_id = f"{root_id}:{content_hash}" if root_id else content_hash
         media_folder = get_media_folder_path(display_title, year, "movie", cover_dir)
 
         # Find/download cover
@@ -551,6 +553,7 @@ async def _process_movies(
             showreel_images=showreel_paths if showreel_paths else None,
             showreel_source_sets=showreel_source_sets if showreel_source_sets else None,
             torrents=torrents,
+            root_id=root_id,
         )
         yield movie, showreel_task
 
@@ -559,7 +562,8 @@ async def _process_movies(
         items = group_data["items"]
         title = group_data["title"]
         year = group_data["year"]
-        item_id = hashlib.md5(f"movie:{title}:{year}".encode()).hexdigest()[:12]
+        content_hash = hashlib.md5(f"movie:{title}:{year}".encode()).hexdigest()[:12]
+        item_id = f"{root_id}:{content_hash}" if root_id else content_hash
 
         cover_path = (
             await find_cover_image(title, year, "movie", cover_dir)
@@ -620,6 +624,7 @@ async def _process_movies(
             showreel_images=showreel_paths if showreel_paths else None,
             showreel_source_sets=showreel_source_sets if showreel_source_sets else None,
             torrents=torrents,
+            root_id=root_id,
         )
         yield movie, showreel_task
 
@@ -630,6 +635,7 @@ async def _process_series(
     fetch_covers: bool,
     generate_showreels: bool,
     media_root: Optional[str] = None,
+    root_id: Optional[str] = None,
 ) -> AsyncIterator[Tuple[Series, List[Tuple[str, Path, int, int, str]]]]:
     """
     Async generator that processes all series.
@@ -714,7 +720,8 @@ async def _process_series(
         torrent_titles = group_data["torrent_titles"]
 
         display_title = tmdb_info.title
-        series_id = hashlib.md5(f"series:{tmdb_id}".encode()).hexdigest()[:12]
+        content_hash = hashlib.md5(f"series:{tmdb_id}".encode()).hexdigest()[:12]
+        series_id = f"{root_id}:{content_hash}" if root_id else content_hash
 
         logger.debug("  [%d/%d] %s", series_idx, len(tmdb_groups), display_title)
 
@@ -779,6 +786,7 @@ async def _process_series(
             cover_path=make_relative_path(cover_path, media_root),
             backdrop_path=make_relative_path(backdrop_path, media_root),
             seasons=seasons_data,
+            root_id=root_id,
         )
         yield series, ep_reel_tasks
 
@@ -786,7 +794,8 @@ async def _process_series(
     for key, group_data in no_tmdb_groups.items():
         items = group_data["items"]
         title = group_data["title"]
-        series_id = hashlib.md5(f"series:{title}".encode()).hexdigest()[:12]
+        content_hash = hashlib.md5(f"series:{title}".encode()).hexdigest()[:12]
+        series_id = f"{root_id}:{content_hash}" if root_id else content_hash
 
         cover_path = (
             await find_cover_image(title, None, "series", cover_dir)
@@ -823,5 +832,6 @@ async def _process_series(
             newest=newest,
             cover_path=make_relative_path(cover_path, media_root),
             seasons=seasons_data,
+            root_id=root_id,
         )
         yield series, ep_reel_tasks

@@ -120,7 +120,7 @@ async def find_episode_files(
                     episodes[ep_info].append(
                         (Path(f).as_posix(), (await af.stat()).st_size)
                     )
-    except OSError, PermissionError:
+    except (OSError, PermissionError):
         pass
 
     _episode_files_cache[cache_key] = episodes
@@ -197,7 +197,7 @@ async def find_playable_file(path: Path) -> Optional[str]:
                     result = nested_video_ts_ifo.as_posix()
                     _playable_file_cache[cache_key] = result
                     return result
-    except OSError, PermissionError:
+    except (OSError, PermissionError):
         pass
 
     # Find largest video file
@@ -209,7 +209,7 @@ async def find_playable_file(path: Path) -> Optional[str]:
                 if "sample" in Path(f).name.lower():
                     continue
                 video_files.append((Path(f).as_posix(), (await af.stat()).st_size))
-    except OSError, PermissionError:
+    except (OSError, PermissionError):
         pass
 
     if not video_files:
@@ -262,7 +262,7 @@ async def find_metadata_probe_file(playable_path: Optional[str]) -> Optional[str
                         ts_num = name[4:6]
                         size = (await af.stat()).st_size
                         title_sets[ts_num].append((Path(f).as_posix(), size))
-            except OSError, PermissionError:
+            except (OSError, PermissionError):
                 _bluray_probe_file_cache[cache_key] = None
                 return None
 
@@ -304,7 +304,7 @@ async def find_metadata_probe_file(playable_path: Optional[str]) -> Optional[str
             if not await af.is_file():
                 continue
             candidates.append((Path(f).as_posix(), (await af.stat()).st_size))
-    except OSError, PermissionError:
+    except (OSError, PermissionError):
         _bluray_probe_file_cache[cache_key] = None
         return None
 

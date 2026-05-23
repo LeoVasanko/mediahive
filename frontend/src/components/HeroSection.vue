@@ -47,7 +47,7 @@ const emit = defineEmits<{
 }>();
 
 const coverUrl = computed(() => {
-  return getCoverUrl(props.item.cover_path);
+  return getCoverUrl(props.item.cover_path, props.item.root_id);
 });
 
 const resolution = computed(() => {

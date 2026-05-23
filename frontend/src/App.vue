@@ -184,7 +184,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import type { Movie, Series, MediaItem, EpisodeWithSeries, MatchedPerson, MatchedEpisode, TaskInfo } from './types';
-import { playMedia, openFolder, isMpcBeReachable, fetchResumePositions, normalizeMediaPath, getPlayerStatus } from './api';
+import { playMedia, openFolder, isMpcBeReachable, fetchResumePositions, normalizeMediaPath, getPlayerStatus, fetchRoots } from './api';
 import { useKeyboardNavigation } from './composables/useKeyboardNavigation';
 import { useMediaWebSocket } from './composables/useMediaWebSocket';
 import Header from './components/Header.vue';
@@ -226,10 +226,52 @@ function normalizeHistoryPath(value: string): string {
 }
 
 // WebSocket-driven media index
-const { mediaIndex, loading, error, connected: wsConnected, tasks } = useMediaWebSocket();
+const { mediaIndex, loading, error, connected: wsConnected, tasks, setActiveRoots } = useMediaWebSocket();
 
 // Active tasks for the debug overlay
 const activeTasks = computed<TaskInfo[]>(() => Array.from(tasks.value.values()));
+
+// Poll for active roots and connect WS to them
+const rootStatuses = ref<Map<string, { path: string; status: string }>>(new Map());
+
+async function refreshRoots() {
+  try {
+    const roots = await fetchRoots();
+    const newMap = new Map<string, { path: string; status: string }>();
+    const activeIds: string[] = [];
+    for (const r of roots) {
+      newMap.set(r.root_id, { path: r.path, status: r.status });
+      if (r.status === 'ready' || r.status === 'scanning' || r.status === 'loading') {
+        activeIds.push(r.root_id);
+      }
+    }
+    rootStatuses.value = newMap;
+    setActiveRoots(activeIds);
+  } catch (e) {
+    console.error('Failed to fetch roots:', e);
+  }
+}
+
+let rootsPollTimer: number | null = null;
+function startRootsPolling() {
+  if (rootsPollTimer !== null) return;
+  void refreshRoots();
+  rootsPollTimer = window.setInterval(refreshRoots, 5000);
+}
+function stopRootsPolling() {
+  if (rootsPollTimer !== null) {
+    window.clearInterval(rootsPollTimer);
+    rootsPollTimer = null;
+  }
+}
+
+onMounted(() => {
+  startRootsPolling();
+});
+
+onUnmounted(() => {
+  stopRootsPolling();
+});
 
 const searchResults = ref<MediaItem[]>([]);
 const isSearching = ref(false);
@@ -609,6 +651,7 @@ function movieToMediaItem(movie: Movie): MediaItem {
     type: 'movies',
     resolution: resolution,
     data: movie,
+    root_id: movie.root_id,
   };
 }
 
@@ -637,6 +680,7 @@ function seriesToMediaItem(series: Series): MediaItem {
     showreel_source_sets: reelSourceSets.length > 0 ? reelSourceSets : null,
     type: 'series',
     data: series,
+    root_id: series.root_id,
   };
 }
 
@@ -1430,10 +1474,34 @@ function reloadPage() {
   window.location.reload();
 }
 
+function findRootIdForPath(filePath: string): string | null {
+  if (!mediaIndex.value) return null;
+  for (const movie of mediaIndex.value.movies) {
+    for (const torrent of Object.values(movie.torrents || {})) {
+      if (torrent.playable_file === filePath) return movie.root_id;
+    }
+  }
+  for (const series of mediaIndex.value.series) {
+    for (const season of series.seasons || []) {
+      for (const episode of season.episodes || []) {
+        for (const torrent of Object.values(episode.torrents || {})) {
+          if (torrent.playable_file === filePath) return series.root_id;
+        }
+      }
+    }
+  }
+  return null;
+}
+
 async function handlePlay(filePath: string) {
+  const rootId = findRootIdForPath(filePath);
+  if (!rootId) {
+    console.error('Cannot play: unknown root for path', filePath);
+    return;
+  }
   mpcBeOpeningUntil.value = Date.now() + MPC_BE_OPENING_GRACE_MS;
   try {
-    await playMedia(filePath);
+    await playMedia(rootId, filePath);
     const connected = await tryConnectMpcBe();
     if (connected) {
       mpcBeConnected.value = true;
@@ -1445,8 +1513,13 @@ async function handlePlay(filePath: string) {
 }
 
 async function handleOpenFolder(folderPath: string) {
+  const rootId = findRootIdForPath(folderPath);
+  if (!rootId) {
+    console.error('Cannot open folder: unknown root for path', folderPath);
+    return;
+  }
   try {
-    await openFolder(folderPath);
+    await openFolder(rootId, folderPath);
   } catch (e) {
     console.error('Failed to open folder:', e);
   }

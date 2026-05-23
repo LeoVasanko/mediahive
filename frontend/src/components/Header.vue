@@ -62,16 +62,57 @@
       <span>Player Open</span>
     </div>
 
-    <div v-if="isDesktopApp" class="header-settings">
+    <div class="header-settings">
       <button
         class="header-settings-btn"
-        title="Change media folder"
-        @click="changeFolder"
+        title="Manage media roots"
+        @click="showRootsPanel = !showRootsPanel"
       >
         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
         </svg>
       </button>
+
+      <!-- Roots management dropdown -->
+      <div v-if="showRootsPanel" class="roots-panel">
+        <div class="roots-panel-header">
+          <span class="roots-panel-title">Media Roots</span>
+          <button class="roots-panel-close" @click="showRootsPanel = false">×</button>
+        </div>
+        <div class="roots-list">
+          <div
+            v-for="root in roots"
+            :key="root.root_id"
+            class="roots-item"
+            :class="`roots-item--${root.status}`"
+          >
+            <div class="roots-item-info">
+              <span class="roots-item-name">{{ root.name }}</span>
+              <span class="roots-item-path">{{ root.path }}</span>
+            </div>
+            <div class="roots-item-meta">
+              <span class="roots-item-status">{{ root.status }}</span>
+              <button
+                v-if="roots.length > 1"
+                class="roots-item-remove"
+                @click="removeRoot(root.root_id)"
+                title="Remove root"
+              >
+                ×
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="roots-actions">
+          <button
+            v-if="isDesktopApp"
+            class="roots-add-btn"
+            @click="addRoot"
+          >
+            + Add Folder…
+          </button>
+        </div>
+      </div>
     </div>
   </header>
 </template>
@@ -81,7 +122,14 @@ import { ref, watch, computed, onMounted, onUnmounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { navAttrs } from '../composables/useKeyboardNavigation';
 import logoUrl from '../assets/mediahive.webp';
-import { pickFolderAndRestart } from '../api';
+import { fetchRoots, replaceRoots, pickFolderAndAddRoot } from '../api';
+
+interface RootEntry {
+  root_id: string;
+  name: string;
+  path: string;
+  status: string;
+}
 
 const props = defineProps<{
   currentView: 'movies' | 'series';
@@ -100,17 +148,67 @@ const router = useRouter();
 const searchInputRef = ref<HTMLInputElement | null>(null);
 const localSearch = ref(props.searchQuery);
 
-// True only when running inside the packaged pywebview desktop app.
-// pywebview injects window.pywebview asynchronously, so we listen for the
-// 'pywebviewready' event rather than checking at component creation time.
 const isDesktopApp = ref(typeof (window as any).pywebview !== 'undefined');
 function _onPywebviewReady() { isDesktopApp.value = true; }
 window.addEventListener('pywebviewready', _onPywebviewReady, { once: true });
 onUnmounted(() => window.removeEventListener('pywebviewready', _onPywebviewReady));
 
-async function changeFolder() {
-  await pickFolderAndRestart();
+const showRootsPanel = ref(false);
+const roots = ref<RootEntry[]>([]);
+
+async function refreshRoots() {
+  try {
+    const data = await fetchRoots();
+    roots.value = data.map(r => ({
+      root_id: r.root_id,
+      name: r.path.split('/').pop() || r.path.split('\\').pop() || r.root_id,
+      path: r.path,
+      status: r.status,
+    }));
+  } catch (e) {
+    console.error('Failed to fetch roots:', e);
+  }
 }
+
+async function removeRoot(rootId: string) {
+  const filtered = roots.value.filter(r => r.root_id !== rootId);
+  const newRoots = Object.fromEntries(filtered.map(r => [r.name, r.path]));
+  try {
+    await replaceRoots(newRoots);
+    await refreshRoots();
+  } catch (e) {
+    console.error('Failed to remove root:', e);
+    alert('Failed to remove root');
+  }
+}
+
+async function addRoot() {
+  const folder = await pickFolderAndAddRoot();
+  if (!folder) return;
+  const name = folder.split('/').pop() || folder.split('\\').pop() || 'media';
+  // Resolve name collisions
+  let uniqueName = name;
+  let suffix = 2;
+  const currentNames = new Set(roots.value.map(r => r.name));
+  while (currentNames.has(uniqueName)) {
+    uniqueName = `${name}${suffix}`;
+    suffix++;
+  }
+  const newRoots = Object.fromEntries(roots.value.map(r => [r.name, r.path]));
+  newRoots[uniqueName] = folder;
+  try {
+    await replaceRoots(newRoots);
+    await refreshRoots();
+    showRootsPanel.value = false;
+  } catch (e) {
+    console.error('Failed to add root:', e);
+    alert('Failed to add root');
+  }
+}
+
+watch(showRootsPanel, (visible) => {
+  if (visible) void refreshRoots();
+});
 
 // Check if we're on a detail page
 const isDetailPage = computed(() => {
@@ -212,5 +310,150 @@ onUnmounted(() => {
   border-radius: 999px;
   background: #22c55e;
   box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.18);
+}
+
+.header-settings {
+  position: relative;
+}
+
+.roots-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 320px;
+  background: rgba(20, 20, 20, 0.95);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 16px;
+  z-index: 1000;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+.roots-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.roots-panel-title {
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.roots-panel-close {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 1.2rem;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.roots-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.roots-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  gap: 8px;
+}
+
+.roots-item--ready {
+  border-left: 3px solid #22c55e;
+}
+
+.roots-item--scanning {
+  border-left: 3px solid #f59e0b;
+}
+
+.roots-item--loading {
+  border-left: 3px solid #3b82f6;
+}
+
+.roots-item--error {
+  border-left: 3px solid #ef4444;
+}
+
+.roots-item-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.roots-item-name {
+  font-size: 0.85rem;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.roots-item-path {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.roots-item-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.roots-item-status {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+}
+
+.roots-item-remove {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 1rem;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.roots-item-remove:hover {
+  color: #ef4444;
+}
+
+.roots-actions {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.roots-add-btn {
+  width: 100%;
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px dashed rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.roots-add-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
 }
 </style>

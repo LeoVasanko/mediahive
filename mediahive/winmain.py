@@ -154,12 +154,15 @@ def _save_playback_state(path: Path, state: dict[str, object]) -> None:
     tmp_path.replace(path)
 
 
-def _media_key_for_filepath(filepath: str, media_root: Path) -> str | None:
-    try:
-        relative = Path(filepath).resolve().relative_to(media_root.resolve())
-    except Exception:
-        return None
-    return relative.as_posix()
+def _media_key_for_filepath(filepath: str, roots: list[Path]) -> tuple[str, Path] | None:
+    """Resolve a filepath to a (relative_key, matched_root) tuple."""
+    for root in roots:
+        try:
+            relative = Path(filepath).resolve().relative_to(root.resolve())
+            return relative.as_posix(), root
+        except Exception:
+            continue
+    return None
 
 
 def _should_clear_resume(position_ms: int, duration_ms: int) -> bool:
@@ -191,7 +194,7 @@ def _mpcbe_request(path: str, timeout: float = MPC_BE_REQUEST_TIMEOUT) -> bool:
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return 200 <= resp.status < 300
-    except urllib.error.URLError, TimeoutError, OSError:
+    except (urllib.error.URLError, TimeoutError, OSError):
         return False
 
 
@@ -222,7 +225,7 @@ def _mpcbe_fetch_status() -> tuple[str, int, int, int] | None:
     try:
         with urllib.request.urlopen(req, timeout=MPC_BE_REQUEST_TIMEOUT) as resp:
             response_html = resp.read().decode("utf-8", errors="replace")
-    except urllib.error.URLError, TimeoutError, OSError:
+    except (urllib.error.URLError, TimeoutError, OSError):
         return None
 
     state_match = _STATE_RE.search(response_html)
@@ -242,7 +245,7 @@ def _mpcbe_fetch_status() -> tuple[str, int, int, int] | None:
 
 
 def _start_gamepad_remote(
-    stop_event: threading.Event, media_root: Path
+    stop_event: threading.Event, roots: list[Path]
 ) -> threading.Thread:
     """Start background XInput polling and send mapped commands to MPC-BE."""
     get_state = _load_xinput_get_state()
@@ -273,7 +276,10 @@ def _start_gamepad_remote(
     player_state: int | None = None
     status_updated_at = 0.0
     status_miss_count = 0
-    playback_state_path = media_root / ".mediahive" / "playback-state.json"
+
+    # Use the first root's playback state path as primary
+    primary_root = roots[0] if roots else Path.cwd()
+    playback_state_path = primary_root / ".mediahive" / "playback-state.json"
     playback_state = _load_playback_state(playback_state_path)
     resume_positions = playback_state["resume_positions"]
     if not isinstance(resume_positions, dict):
@@ -429,7 +435,8 @@ def _start_gamepad_remote(
         status_miss_count = 0
 
         filepath, position_ms, duration_ms, state = status
-        media_key = _media_key_for_filepath(filepath, media_root) if filepath else None
+        resolved = _media_key_for_filepath(filepath, roots) if filepath else None
+        media_key = resolved[0] if resolved else None
 
         if tracked_media_key is not None and media_key != tracked_media_key:
             finalize_tracked_current()
@@ -676,7 +683,6 @@ def _icon_path() -> str | None:
 
 def _webview_start_kwargs() -> dict[str, str]:
     """Return platform-specific pywebview startup kwargs."""
-    # On macOS, force Qt backend so pywebview uses Chromium/WebEngine instead of WKWebView.
     if sys.platform == "darwin":
         return {"gui": "qt"}
     return {}
@@ -751,7 +757,7 @@ def winmain() -> None:
     parser.add_argument(
         "media_folder",
         nargs="?",
-        help="Path to the media folder (default: saved config, MEDIAHIVE_PATH, or cwd)",
+        help="Path to the media folder (default: saved config or initial setup dialog)",
     )
     args = parser.parse_args()
 
@@ -761,33 +767,42 @@ def winmain() -> None:
     if getattr(sys, "frozen", False):
         _setup_logging()
 
-    # Resolution order: CLI arg → MEDIAHIVE_PATH env → saved config → ask user
-    folder = (
-        args.media_folder
-        or os.environ.get("MEDIAHIVE_PATH")
-        or load_config().media_folder
-    )
+    cfg = load_config()
 
-    if not folder:
+    # Build initial roots dict (filesystem is NOT touched here — validation is
+    # deferred to the server's background activation task).
+    initial_roots: dict[str, str] = {}
+    if args.media_folder:
+        p = _normalize_media_root_input(args.media_folder)
+        name = p.name or "media"
+        initial_roots[name] = p.as_posix()
+    elif cfg.roots:
+        initial_roots = cfg.roots
+    elif cfg.media_folder:
+        p = _normalize_media_root_input(cfg.media_folder)
+        name = p.name or "media"
+        initial_roots[name] = p.as_posix()
+
+    if not initial_roots:
         folder = _run_initial_setup()
         if not folder:
-            return  # user cancelled the folder picker
+            return  # user cancelled
+        p = _normalize_media_root_input(folder)
+        name = p.name or "media"
+        initial_roots[name] = p.as_posix()
 
-    mediaroot = _normalize_media_root_input(folder)
-    os.environ["MEDIAHIVE_PATH"] = mediaroot.as_posix()
-    os.environ["MEDIAHIVE_DEFER_INITIAL_ROOT"] = "1"
+    # Persist resolved roots
+    if cfg.roots != initial_roots:
+        save_config(msgspec.structs.replace(cfg, roots=initial_roots))
+
+    # Pass roots to the server via env (validation deferred to server startup)
+    os.environ["MEDIAHIVE_ROOTS"] = json.dumps(initial_roots)
 
     backend_port = _reserve_backend_port()
     backend_url = f"http://{BACKEND_HOST}:{backend_port}"
     os.environ["MEDIAHIVE_BACKEND_URL"] = backend_url
 
-    # Persist the resolved path so subsequent launches remember it.
-    cfg = load_config()
-    if cfg.media_folder != mediaroot.as_posix():
-        save_config(msgspec.structs.replace(cfg, media_folder=mediaroot.as_posix()))
-
-    # Run the FastAPI backend on a background thread so the main thread is
-    # free for pywebview (Edge WebView2 requires the GUI on the main thread).
+    # Run the FastAPI backend on a background thread
     config = uvicorn.Config(
         "mediahive.server:app",
         host=BACKEND_HOST,
@@ -801,19 +816,19 @@ def winmain() -> None:
     )
     backend_thread.start()
 
-    def _activate_initial_folder() -> None:
-        body = json.dumps({"folder": mediaroot.as_posix()}).encode("utf-8")
+    def _activate_initial_roots() -> None:
+        body = json.dumps({"roots": initial_roots}).encode("utf-8")
         req = urllib.request.Request(
-            url=f"{backend_url}/api/change-folder",
+            url=f"{backend_url}/api/roots",
             data=body,
-            method="POST",
+            method="PUT",
             headers={"Content-Type": "application/json"},
         )
         try:
             with urllib.request.urlopen(req, timeout=10):
-                logger.info("Requested initial media folder activation")
+                logger.info("Requested initial roots activation")
         except Exception as exc:
-            logger.warning("Initial media folder activation request failed: %s", exc)
+            logger.warning("Initial roots activation request failed: %s", exc)
 
     if not _wait_for_backend(timeout=HEALTH_TIMEOUT):
         server.should_exit = True
@@ -831,6 +846,9 @@ def winmain() -> None:
     poll_stop = threading.Event()
     poll_thread: threading.Thread | None = None
 
+    # Resolve all root paths for gamepad remote
+    gamepad_roots = [Path(p) for p in initial_roots.values()]
+
     def on_shown() -> None:
         api._window = window
         try:
@@ -842,13 +860,12 @@ def winmain() -> None:
 
         nonlocal poll_thread
         if poll_thread is None and _supports_gamepad_remote():
-            poll_thread = _start_gamepad_remote(poll_stop, mediaroot)
+            poll_thread = _start_gamepad_remote(poll_stop, gamepad_roots)
 
-        # Trigger initial folder activation after main UI is shown.
         threading.Thread(
-            target=_activate_initial_folder,
+            target=_activate_initial_roots,
             daemon=True,
-            name="mediahive-initial-folder-activation",
+            name="mediahive-initial-roots-activation",
         ).start()
 
     webview.start(func=on_shown, icon=_icon_path(), **_webview_start_kwargs())

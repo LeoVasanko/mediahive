@@ -1,7 +1,20 @@
-import type { MediaIndex } from './types';
+
 
 export interface PlayerStatus {
   remote: boolean;
+}
+
+export interface RootStatus {
+  root_id: string;
+  path: string;
+  status: string;
+  error: string | null;
+  movies: number;
+  series: number;
+}
+
+export interface RootsResponse {
+  roots: RootStatus[];
 }
 
 export function normalizeMediaPath(input: string): string {
@@ -71,12 +84,53 @@ export function getVideoSourceAttributes(path: string | null | undefined): Video
 }
 
 /**
- * Load the media index from the server
+ * Fetch active roots and their statuses
  */
-export async function loadMediaIndex(): Promise<MediaIndex> {
-  const response = await fetch('/api/index');
+export async function fetchRoots(): Promise<RootStatus[]> {
+  const response = await fetch('/api/roots');
   if (!response.ok) {
-    throw new Error(`Failed to load media index: ${response.statusText}`);
+    throw new Error(`Failed to load roots: ${response.statusText}`);
+  }
+  const data = await response.json();
+  return data.roots || [];
+}
+
+/**
+ * Fetch merged resume positions from all roots.
+ */
+export async function fetchResumePositions(): Promise<Record<string, number>> {
+  try {
+    const roots = await fetchRoots();
+    const merged: Record<string, number> = {};
+    await Promise.all(
+      roots.map(async (root) => {
+        const response = await fetch(`/api/roots/${encodeURIComponent(root.root_id)}/playback/resume-positions`);
+        if (!response.ok) return;
+        const data = await response.json().catch(() => ({}));
+        const positions = data?.resume_positions;
+        if (positions && typeof positions === 'object') {
+          Object.assign(merged, positions);
+        }
+      })
+    );
+    return merged;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Replace the full root set atomically
+ */
+export async function replaceRoots(roots: Record<string, string>): Promise<{ accepted: RootStatus[]; failed: unknown[] }> {
+  const response = await fetch('/api/roots', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ roots }),
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: response.statusText }));
+    throw new Error(err.detail || response.statusText);
   }
   return response.json();
 }
@@ -84,10 +138,10 @@ export async function loadMediaIndex(): Promise<MediaIndex> {
 /**
  * Play a media file with the system's default player
  */
-export async function playMedia(filePath: string): Promise<void> {
+export async function playMedia(rootId: string, filePath: string): Promise<void> {
   const normalizedPath = normalizeMediaPath(filePath);
   try {
-    const response = await fetch('/api/play', {
+    const response = await fetch(`/api/roots/${encodeURIComponent(rootId)}/play`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ file_path: normalizedPath }),
@@ -105,10 +159,10 @@ export async function playMedia(filePath: string): Promise<void> {
 /**
  * Open a folder in the system file manager
  */
-export async function openFolder(folderPath: string): Promise<void> {
+export async function openFolder(rootId: string, folderPath: string): Promise<void> {
   const normalizedPath = normalizeMediaPath(folderPath);
   try {
-    const response = await fetch('/api/open-folder', {
+    const response = await fetch(`/api/roots/${encodeURIComponent(rootId)}/open-folder`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ folder_path: normalizedPath }),
@@ -148,18 +202,6 @@ export async function isMpcBeReachable(): Promise<boolean> {
   }
 }
 
-export async function fetchResumePositions(): Promise<Record<string, number>> {
-  try {
-    const response = await fetch('/api/playback/resume-positions');
-    if (!response.ok) return {};
-    const data = await response.json().catch(() => ({}));
-    const resumePositions = data?.resume_positions;
-    return resumePositions && typeof resumePositions === 'object' ? resumePositions : {};
-  } catch {
-    return {};
-  }
-}
-
 /**
  * Convert a cover path to a displayable URL.
  * Uses FastAPI server for async file serving.
@@ -167,7 +209,7 @@ export async function fetchResumePositions(): Promise<Record<string, number>> {
  * The path comes from the server already converted to Windows format (Z:\...)
  * Paths starting with '/' are TMDB relative paths that weren't fetched - ignore them
  */
-export function getCoverUrl(coverPath: string | null): string {
+export function getCoverUrl(coverPath: string | null, rootId?: string | null): string {
   if (!coverPath) {
     return '';
   }
@@ -177,7 +219,7 @@ export function getCoverUrl(coverPath: string | null): string {
   }
 
   // Convert relative path to URL path for FastAPI server
-  // .mediahive/covers/Movies/... -> /media/.mediahive/covers/Movies/...
+  // .mediahive/covers/Movies/... -> /api/media/{root_id}/.mediahive/covers/Movies/...
   let urlPath = coverPath;
 
   // Remove drive letter (Z:) and convert backslashes to forward slashes
@@ -194,30 +236,18 @@ export function getCoverUrl(coverPath: string | null): string {
   // Encode URI components but preserve slashes
   const encodedPath = urlPath.split('/').map(segment => encodeURIComponent(segment)).join('/');
 
-  return `/api/media${encodedPath}`;
+  const rid = rootId || 'unknown';
+  return `/api/media/${encodeURIComponent(rid)}${encodedPath}`;
 }
 
 /**
- * Invoke the native OS folder picker via pywebview, then switch the server's
- * media folder in-place and reload the page. Only works inside the packaged
- * desktop app.
+ * Invoke the native OS folder picker via pywebview, then add the selected
+ * folder to the server's root list. Only works inside the packaged desktop app.
  */
-export async function pickFolderAndRestart(): Promise<void> {
+export async function pickFolderAndAddRoot(): Promise<string | null> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const api = (window as any).pywebview?.api;
-  if (!api) return;
+  if (!api) return null;
   const folder: string | null = await api.pick_folder();
-  if (!folder) return;
-  const res = await fetch('/api/change-folder', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ folder }),
-  });
-  if (res.ok) {
-    // Give the server a moment to complete the background folder switch before reloading
-    setTimeout(() => window.location.reload(), 500);
-  } else {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    alert(`Failed to change folder: ${err.detail || res.statusText}`);
-  }
+  return folder;
 }

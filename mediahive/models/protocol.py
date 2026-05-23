@@ -1,5 +1,4 @@
-"""
-Protocol structures for API and WebSocket communication.
+"""Protocol structures for API and WebSocket communication.
 
 All types are msgspec.Structs for fast serialization.
 """
@@ -52,37 +51,41 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 
-class ScanRequest(msgspec.Struct):
-    """POST /api/scan body."""
-
-    paths: list[str] | None = None
-
-
-class StatusResponse(msgspec.Struct):
-    """GET /api/status response."""
-
-    scanning: bool = False
-    movies: int = 0
-    series: int = 0
-    showreel_queue: int = 0
-
-
 class PlayMediaRequest(msgspec.Struct):
-    """POST /api/play body (mediahive server)."""
+    """POST /api/roots/{root_id}/play body."""
 
     file_path: str = ""
 
 
 class OpenFolderRequest(msgspec.Struct):
-    """POST /api/open-folder body (mediahive server)."""
+    """POST /api/roots/{root_id}/open-folder body."""
 
     folder_path: str = ""
 
 
-class ChangeFolderRequest(msgspec.Struct):
-    """POST /api/change-folder body."""
+class RootsRequest(msgspec.Struct):
+    """PUT /api/roots body."""
 
-    folder: str
+    roots: dict[str, str]
+
+
+class RootEntryResponse(msgspec.Struct):
+    """Single root entry in responses."""
+
+    name: str
+    path: str
+    root_id: str
+
+
+class RootStatusResponse(msgspec.Struct):
+    """Per-root status in GET /api/roots."""
+
+    root_id: str
+    path: str
+    status: str
+    error: str | None = None
+    movies: int = 0
+    series: int = 0
 
 
 # ---------------------------------------------------------------------------

@@ -6,6 +6,8 @@ pipeline with live WebSocket updates.  Excluded paths are controlled by
 ``.mediahive/scanignore`` (gitignore-style syntax).
 """
 
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
@@ -22,25 +24,21 @@ from pathlib import Path
 
 import aiofiles
 import msgspec
-import msgspec.structs
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi_vue import Frontend
 
 from mediahive.__main__ import DEVMODE
-from mediahive.config import load_config, save_config
-from mediahive.hivescan.scanner import start as start_scanner
-from mediahive.hivescan.scanner import stop as stop_scanner
-from mediahive.index_store import IndexStore
-from mediahive.models.events import ScanEvent, Task, Upsert
+from mediahive.config import load_config
+from mediahive.hivescan.scanner import RootScanner
 from mediahive.models.protocol import (
-    ChangeFolderRequest,
     MsgspecResponse,
     OpenFolderRequest,
     PlayMediaRequest,
-    StatusResponse,
+    RootsRequest,
 )
+from mediahive.root_registry import Supervisor, compute_root_id
 
 logger = logging.getLogger("mediahive.server")
 
@@ -54,35 +52,49 @@ _POPEN_KWARGS: dict = (
 # Vue Frontend static files
 frontend = Frontend(Path(__file__).with_name("frontend-build"), cached=["/assets/"])
 
-# Media root path (initialized in lifespan)
-MEDIAROOT = None
+# Supervisor manages all root contexts
+supervisor = Supervisor()
 
-# In-memory index store (available immediately, switched to real root later)
-_BOOTSTRAP_SNAPSHOT = Path(tempfile.gettempdir()) / "mediahive" / "index.json"
-store: IndexStore = IndexStore(_BOOTSTRAP_SNAPSHOT, media_root=None)
-
-# Whether the scanner subsystem is active
-_scanner_active = False
-
-# Background folder switch task and lock so startup/change-folder cannot race
-_folder_switch_task: asyncio.Task | None = None
-_folder_switch_lock = asyncio.Lock()
-
-# Queue for scanner → server events
-_scan_events: asyncio.Queue[ScanEvent] = asyncio.Queue()
-_consumer_task: asyncio.Task | None = None
 _RANGE_RE = re.compile(r"bytes=(\d*)-(\d*)$")
 
 
-def _require_media_root() -> Path:
-    if MEDIAROOT is None:
-        raise HTTPException(status_code=503, detail="Media root not initialized yet")
-    return MEDIAROOT
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 
-async def _send_event(event: ScanEvent) -> None:
-    """Push a scan event onto the queue (passed to hivescan as *send*)."""
-    await _scan_events.put(event)
+def _get_context(root_id: str):
+    ctx = supervisor.get(root_id)
+    if ctx is None:
+        raise HTTPException(status_code=404, detail=f"Root not found: {root_id}")
+    return ctx
+
+
+def _load_resume_positions(root_path: Path) -> dict[str, int]:
+    playback_state_path = root_path / ".mediahive" / "playback-state.json"
+    try:
+        raw = json.loads(playback_state_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+    resume_positions = raw.get("resume_positions") if isinstance(raw, dict) else None
+    if not isinstance(resume_positions, dict):
+        return {}
+
+    cleaned: dict[str, int] = {}
+    for key, value in resume_positions.items():
+        if isinstance(key, str) and isinstance(value, (int, float)):
+            cleaned[key] = max(0, int(value))
+    return cleaned
+
+
+def _open_with_default_app(path: Path) -> None:
+    if sys.platform == "win32":
+        os.startfile(str(path))
+        return
+
+    opener = "open" if sys.platform == "darwin" else "xdg-open"
+    subprocess.Popen([opener, str(path)], **_POPEN_KWARGS)
 
 
 def _parse_range_header(range_header: str, file_size: int) -> tuple[int, int]:
@@ -127,70 +139,103 @@ def _parse_range_header(range_header: str, file_size: int) -> tuple[int, int]:
     return start, min(end, file_size - 1)
 
 
-async def _consume_scan_events() -> None:
-    """Background task: apply incoming scan events to the IndexStore."""
-    while True:
+def _validate_root_paths(roots: dict[str, str]) -> dict[str, str]:
+    """Validate root paths on the filesystem.
+
+    Runs in a thread pool so macOS permission dialogs (and other blocking
+    filesystem checks) do not halt the asyncio event loop.
+    """
+    validated: dict[str, str] = {}
+    for name, path_str in roots.items():
+        p = Path(path_str).expanduser().resolve()
+        if not p.exists() or not p.is_dir():
+            logger.warning("Root path invalid, skipping: %s", path_str)
+            continue
+        validated[name] = p.as_posix()
+    return validated
+
+
+async def _attach_scanners() -> None:
+    """Ensure every active root context has a running scanner."""
+    for ctx in supervisor.all_contexts().values():
+        if ctx.scanner is None and ctx.status in ("ready", "loading"):
+            try:
+                scanner = RootScanner(ctx.root_id, ctx.root_path, ctx.send_event)
+                await scanner.start()
+                ctx.scanner = scanner
+            except Exception:
+                logger.exception("Failed to attach scanner for root %s", ctx.root_id)
+
+
+async def _activate_all_roots() -> None:
+    """Background task: validate and activate all configured roots.
+
+    This is deferred from lifespan startup so the server can begin accepting
+    requests immediately.  Filesystem validation runs in a thread pool to avoid
+    blocking the event loop (and to let macOS permission dialogs appear without
+    stalling the server).
+    """
+    desired: dict[str, str] = {}
+
+    # 1. Persisted config roots
+    cfg = load_config()
+    if cfg.roots:
+        desired.update(cfg.roots)
+
+    # 2. CLI roots via MEDIAHIVE_ROOTS (JSON dict)
+    env_roots_raw = os.environ.get("MEDIAHIVE_ROOTS")
+    if env_roots_raw:
         try:
-            event = await _scan_events.get()
-            if isinstance(event, Upsert):
-                if event.kind == "movie":
-                    store.upsert_movie(event.item)
-                else:
-                    store.upsert_series(event.item)
-            elif isinstance(event, Task):
-                store.broadcast_task(event.data)
-        except asyncio.CancelledError:
-            return
+            env_roots = json.loads(env_roots_raw)
+            if isinstance(env_roots, dict):
+                desired.update(env_roots)
         except Exception:
-            logger.exception("Error processing scan event")
+            logger.exception("Failed to parse MEDIAHIVE_ROOTS")
+
+    if not desired:
+        logger.info("No roots configured; waiting for PUT /api/roots")
+        return
+
+    # Validate paths in a thread pool (macOS permission-dialog safe)
+    validated = await asyncio.to_thread(_validate_root_paths, desired)
+    if not validated:
+        logger.warning("No valid roots found after validation")
+        return
+
+    try:
+        await supervisor.replace_roots(validated)
+    except Exception:
+        logger.exception("Failed to replace roots during background activation")
+        return
+
+    await _attach_scanners()
+    logger.info("Background root activation complete; %d root(s) active", len(supervisor.all_contexts()))
+
+
+# ---------------------------------------------------------------------------
+# Lifespan
+# ---------------------------------------------------------------------------
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global MEDIAROOT, store, _scanner_active, _consumer_task, _folder_switch_task
-
     await frontend.load()
 
-    # Bring up the API immediately with an empty in-memory store.
-    # Media-root initialization/scanner startup are deferred to a background task
-    # so macOS permission prompts cannot block server readiness.
-    store = IndexStore(_BOOTSTRAP_SNAPSHOT, media_root=None)
-    await store.load_snapshot()
-    _scanner_active = False
+    # Defer root activation to a background task so the server starts
+    # immediately and macOS permission dialogs do not block startup.
+    activation_task = asyncio.create_task(_activate_all_roots())
 
-    initial_root_raw = os.environ.get("MEDIAHIVE_PATH")
-    defer_initial_root = os.environ.get("MEDIAHIVE_DEFER_INITIAL_ROOT") == "1"
-
-    if initial_root_raw and not defer_initial_root:
-        initial_root = Path(initial_root_raw).expanduser()
-        if not initial_root.is_absolute():
-            initial_root = Path.cwd() / initial_root
-        _folder_switch_task = asyncio.create_task(_switch_folder(initial_root))
-        logger.info("Server started; scheduled initial media root activation")
-    else:
-        logger.info(
-            "Server started without active media root; waiting for folder activation"
-        )
+    logger.info("Server ready; waiting for root activation")
 
     yield
 
-    # Shutdown
-    if _folder_switch_task and not _folder_switch_task.done():
-        _folder_switch_task.cancel()
-        try:
-            await _folder_switch_task
-        except asyncio.CancelledError:
-            pass
+    activation_task.cancel()
+    try:
+        await activation_task
+    except asyncio.CancelledError:
+        pass
 
-    await stop_scanner()
-    _scanner_active = False
-    if _consumer_task:
-        _consumer_task.cancel()
-        try:
-            await _consumer_task
-        except asyncio.CancelledError:
-            pass
-    await store.flush_snapshot()
+    await supervisor.shutdown()
 
 
 app = FastAPI(title="MediaHive Server", lifespan=lifespan, debug=DEVMODE)
@@ -205,44 +250,9 @@ app.add_middleware(
 )
 
 
-def normalize_path(url_path: str) -> Path:
-    """
-    Convert URL path to filesystem path.
-    URL: /media/.mediahive/Movies/...
-    Returns: MEDIAROOT/.mediahive/Movies/...
-    """
-    clean_path = url_path.lstrip("/")
-    return _require_media_root() / clean_path
-
-
-def _load_resume_positions() -> dict[str, int]:
-    playback_state_path = _require_media_root() / ".mediahive" / "playback-state.json"
-    try:
-        raw = json.loads(playback_state_path.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-
-    resume_positions = raw.get("resume_positions") if isinstance(raw, dict) else None
-    if not isinstance(resume_positions, dict):
-        return {}
-
-    cleaned: dict[str, int] = {}
-    for key, value in resume_positions.items():
-        if isinstance(key, str) and isinstance(value, (int, float)):
-            cleaned[key] = max(0, int(value))
-    return cleaned
-
-
-def _open_with_default_app(path: Path) -> None:
-    if sys.platform == "win32":
-        os.startfile(str(path))
-        return
-
-    opener = "open" if sys.platform == "darwin" else "xdg-open"
-    subprocess.Popen([opener, str(path)], **_POPEN_KWARGS)
-
-
-# === API Endpoints ===
+# ---------------------------------------------------------------------------
+# API Endpoints
+# ---------------------------------------------------------------------------
 
 
 @app.get("/api/health")
@@ -254,179 +264,120 @@ async def health_check():
 @app.get("/api/config")
 async def get_config():
     """Return current server configuration."""
-    return {"media_folder": MEDIAROOT.as_posix() if MEDIAROOT else None}
-
-
-@app.post("/api/change-folder")
-async def change_folder_endpoint(request: Request):
-    """Switch the media root folder without restarting the server.
-
-    Validates and persists the new folder, then returns immediately.
-    The actual in-memory switch runs as a background task so the HTTP
-    response is not held up by the (potentially slow) scanner teardown.
-    The client should poll /api/config or reload after a short delay.
-    """
-    body = msgspec.json.decode(await request.body(), type=ChangeFolderRequest)
-    new_root = Path(body.folder).resolve()
-    if not new_root.exists() or not new_root.is_dir():
-        raise HTTPException(
-            status_code=400, detail=f"Folder does not exist: {new_root}"
-        )
-
-    # Persist first — if the background switch crashes, the next launch still uses the new path
     cfg = load_config()
-    save_config(msgspec.structs.replace(cfg, media_folder=new_root.as_posix()))
-    logger.info("Config saved: media_folder=%s", new_root)
-
-    # Schedule the in-memory switch without blocking this response
-    asyncio.create_task(_switch_folder(new_root))
-    return {"status": "ok"}
+    return {"roots": cfg.roots}
 
 
-async def _switch_folder(new_root: Path) -> None:
-    global MEDIAROOT, store, _consumer_task, _scan_events, _scanner_active
-
-    async with _folder_switch_lock:
-        try:
-            # Cancel scanner tasks immediately — no need to wait 30 s
-            await stop_scanner()
-            _scanner_active = False
-
-            # Tear down the old event consumer
-            if _consumer_task and not _consumer_task.done():
-                _consumer_task.cancel()
-                try:
-                    await _consumer_task
-                except asyncio.CancelledError:
-                    pass
-
-            # Flush the old index snapshot
-            await store.flush_snapshot()
-
-            # Update env and module globals
-            os.environ["MEDIAHIVE_PATH"] = new_root.as_posix()
-            MEDIAROOT = new_root
-
-            # Fresh event queue — discard any stale events from the old folder
-            _scan_events = asyncio.Queue()
-
-            # Re-initialise the index store
-            snapshot_path = MEDIAROOT / ".mediahive" / "index.json"
-            store = IndexStore(snapshot_path, media_root=MEDIAROOT.as_posix())
-            await store.load_snapshot()
-            logger.info(
-                "Index store ready: %d movies, %d series",
-                len(store.movies),
-                len(store.series),
-            )
-
-            # Restart consumer and scanner
-            _consumer_task = asyncio.create_task(_consume_scan_events())
-            await start_scanner(_send_event)
-            _scanner_active = True
-
-            logger.info("Switched media folder to %s", MEDIAROOT)
-        except Exception:
-            logger.exception("Error switching media folder to %s", new_root)
+# --- Root management ---
 
 
-@app.get("/api/index")
-async def get_index():
-    """Return the full media index from the in-memory store."""
-    return MsgspecResponse(store.get_full_index())
+@app.get("/api/roots")
+async def get_roots():
+    """List all active roots with their status."""
+    return {"roots": supervisor.all_statuses()}
 
 
-@app.get("/api/playback/resume-positions")
-async def playback_resume_positions():
-    """Return saved per-file resume positions under the current media root."""
-    return {"resume_positions": _load_resume_positions()}
+@app.put("/api/roots")
+async def put_roots(request: Request):
+    """Atomically replace the full root set."""
+    body = msgspec.json.decode(await request.body(), type=RootsRequest)
+    accepted, failed = await supervisor.replace_roots(body.roots)
+
+    # Start scanners for newly accepted roots
+    await _attach_scanners()
+
+    return {
+        "status": "ok",
+        "accepted": [
+            {"name": e.name, "path": e.path, "root_id": e.root_id} for e in accepted
+        ],
+        "failed": failed,
+    }
 
 
-# ---------------------------------------------------------------------------
-# Scanning API (active when HIVESCAN_PATHS is configured)
-# ---------------------------------------------------------------------------
+@app.get("/api/roots/{root_id}/index")
+async def get_root_index(root_id: str):
+    """Return the full index for a single root."""
+    ctx = _get_context(root_id)
+    return MsgspecResponse(ctx.store.get_full_index())
 
 
-@app.websocket("/api/ws")
-async def ws_endpoint(ws: WebSocket):
-    """Live index updates and task progress."""
-    await store.connect(ws)
+@app.get("/api/roots/{root_id}/status")
+async def get_root_status(root_id: str):
+    """Return status for a single root."""
+    ctx = _get_context(root_id)
+    scanning = ctx.scanner is not None and ctx.scanner.is_scanning()
+    return {
+        "root_id": ctx.root_id,
+        "path": ctx.root_path.as_posix(),
+        "status": ctx.status,
+        "error": ctx.error,
+        "scanning": scanning,
+        "movies": len(ctx.store.movies),
+        "series": len(ctx.store.series),
+        "showreel_queue": ctx.scanner.showreel_queue_size() if ctx.scanner else 0,
+    }
+
+
+@app.post("/api/roots/{root_id}/scan")
+async def trigger_root_scan(root_id: str):
+    """Trigger a scan for a single root."""
+    ctx = _get_context(root_id)
+    if ctx.scanner is None:
+        raise HTTPException(status_code=503, detail="Scanner not active")
+    started = ctx.scanner.trigger_scan()
+    return {"status": "started" if started else "already_running"}
+
+
+# --- Per-root WebSocket ---
+
+
+@app.websocket("/api/roots/{root_id}/ws")
+async def ws_endpoint(ws: WebSocket, root_id: str):
+    """Live index updates and task progress for a single root."""
+    ctx = supervisor.get(root_id)
+    if ctx is None:
+        await ws.close(code=1008, reason="Unknown root")
+        return
+
+    await ctx.store.connect(ws)
     try:
         while True:
             await ws.receive_text()
     except WebSocketDisconnect:
-        store.disconnect(ws)
+        ctx.store.disconnect(ws)
     except Exception:
-        store.disconnect(ws)
+        ctx.store.disconnect(ws)
 
 
-@app.post("/api/scan")
-async def trigger_scan():
-    """Trigger a new scan. Returns 409 if a scan is already running."""
-    if not _scanner_active:
-        raise HTTPException(status_code=503, detail="Scanner not active yet")
-    from mediahive.hivescan.scanner import trigger_scan as _trigger
-
-    started = _trigger()
-    return {"status": "started" if started else "already_running"}
+# --- Media actions ---
 
 
-@app.get("/api/status")
-async def server_status():
-    """Return current server status."""
-    if _scanner_active:
-        from mediahive.hivescan.scanner import is_scanning, showreel_queue_size
-
-        return MsgspecResponse(
-            StatusResponse(
-                scanning=is_scanning(),
-                movies=len(store.movies),
-                series=len(store.series),
-                showreel_queue=showreel_queue_size(),
-            )
-        )
-    return MsgspecResponse(
-        StatusResponse(
-            movies=len(store.movies),
-            series=len(store.series),
-        )
-    )
-
-
-@app.post("/api/play")
-async def play_media(request: Request):
-    """
-    Open a media file with the system's default player.
-    """
+@app.post("/api/roots/{root_id}/play")
+async def play_media(root_id: str, request: Request):
+    """Open a media file with the system's default player."""
+    ctx = _get_context(root_id)
     req = msgspec.json.decode(await request.body(), type=PlayMediaRequest)
-    print(f"[play] Received path: {req.file_path}")
-    file_path = _require_media_root() / req.file_path
+    file_path = ctx.root_path / req.file_path
 
     if not file_path.exists():
-        print(f"[play] File not found: {file_path}")
         raise HTTPException(status_code=404, detail=f"File not found: {req.file_path}")
 
     try:
         _open_with_default_app(file_path)
-
         return {"status": "ok"}
-
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to play media: {e}")
 
 
-@app.post("/api/open-folder")
-async def open_folder(request: Request):
-    """
-    Open a folder in the system file explorer.
-    If the path is a file, opens the parent folder and selects the file.
-    """
+@app.post("/api/roots/{root_id}/open-folder")
+async def open_folder(root_id: str, request: Request):
+    """Open a folder in the system file explorer."""
+    ctx = _get_context(root_id)
     req = msgspec.json.decode(await request.body(), type=OpenFolderRequest)
-    print(f"[open-folder] Received path: {req.folder_path}")
-    target_path = _require_media_root() / req.folder_path
+    target_path = ctx.root_path / req.folder_path
 
     if not target_path.exists():
-        print(f"[open-folder] Path not found: {target_path}")
         raise HTTPException(
             status_code=404, detail=f"Path not found: {req.folder_path}"
         )
@@ -434,12 +385,10 @@ async def open_folder(request: Request):
     try:
         if sys.platform == "win32":
             if target_path.is_file():
-                # Open parent folder and select the file
                 subprocess.Popen(
                     ["explorer", "/select,", str(target_path)], **_POPEN_KWARGS
                 )
             else:
-                # Open the folder directly
                 subprocess.Popen(["explorer", str(target_path)], **_POPEN_KWARGS)
         elif sys.platform == "darwin":
             if target_path.is_file():
@@ -447,28 +396,22 @@ async def open_folder(request: Request):
             else:
                 subprocess.Popen(["open", str(target_path)])
         else:
-            # Linux - just open the folder (no standard way to select)
             folder = target_path.parent if target_path.is_file() else target_path
             subprocess.Popen(["xdg-open", str(folder)])
 
         return {"status": "ok"}
-
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to open folder: {e}")
 
 
-def _mpcbe_request(path: str, timeout: float = 0.75) -> bool:
-    """Call MPC-BE's local web interface and return True on HTTP success."""
-    if sys.platform != "win32":
-        return False
+@app.get("/api/roots/{root_id}/playback/resume-positions")
+async def root_playback_resume_positions(root_id: str):
+    """Return saved per-file resume positions under a specific root."""
+    ctx = _get_context(root_id)
+    return {"resume_positions": _load_resume_positions(ctx.root_path)}
 
-    url = f"{MPC_BE_BASE_URL}{path}"
-    req = urllib.request.Request(url=url, method="GET")
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return 200 <= resp.status < 300
-    except urllib.error.URLError, TimeoutError, OSError:
-        return False
+
+# --- MPC-BE / Player status ---
 
 
 @app.get("/api/mpcbe/status")
@@ -483,17 +426,32 @@ async def player_status():
     return {"remote": _mpcbe_request("/")}
 
 
-@app.get("/api/media/{file_path:path}")
-async def serve_media_file(file_path: str, request: Request):
-    """
-    Serve a media file asynchronously.
-    """
-    full_path = normalize_path(file_path)
-    media_root = _require_media_root()
+def _mpcbe_request(path: str, timeout: float = 0.75) -> bool:
+    """Call MPC-BE's local web interface and return True on HTTP success."""
+    if sys.platform != "win32":
+        return False
+
+    url = f"{MPC_BE_BASE_URL}{path}"
+    req = urllib.request.Request(url=url, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return 200 <= resp.status < 300
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return False
+
+
+# --- Media file serving ---
+
+
+@app.get("/api/media/{root_id}/{file_path:path}")
+async def serve_media_file(root_id: str, file_path: str, request: Request):
+    """Serve a media file asynchronously, scoped to a root."""
+    ctx = _get_context(root_id)
+    full_path = ctx.root_path / file_path.lstrip("/")
 
     # Security: ensure path doesn't escape base
     try:
-        full_path.resolve().relative_to(media_root.resolve())
+        full_path.resolve().relative_to(ctx.root_path.resolve())
     except ValueError:
         raise HTTPException(status_code=403, detail="Access denied")
 
@@ -505,19 +463,15 @@ async def serve_media_file(file_path: str, request: Request):
 
     file_size = full_path.stat().st_size
 
-    # Guess content type
     content_type, _ = mimetypes.guess_type(str(full_path))
     if content_type is None:
         content_type = "application/octet-stream"
 
-    # For images, use FileResponse which handles caching headers
     if content_type.startswith("image/"):
         return FileResponse(
             full_path,
             media_type=content_type,
-            headers={
-                "Cache-Control": "public, max-age=86400",
-            },
+            headers={"Cache-Control": "public, max-age=86400"},
         )
 
     async def stream_file(start: int, end: int):
