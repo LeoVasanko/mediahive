@@ -4,8 +4,10 @@ import router from './router'
 import './styles/main.css'
 import { installKeyboardNavigation } from './composables/useKeyboardNavigation'
 import { installGamepadNavigation } from './composables/useGamepadNavigation'
+import { installInputModalityTracking } from './composables/useInputModality'
 
 // Install global keyboard navigation handlers immediately
+installInputModalityTracking()
 installKeyboardNavigation()
 installGamepadNavigation()
 

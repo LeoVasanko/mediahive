@@ -312,7 +312,7 @@ function handleActivate(event: MouseEvent | KeyboardEvent) {
   grid-template-columns: minmax(0, 1fr) max-content max-content;
 }
 
-.version-row:hover {
+:global(html[data-mouse-active="true"]) .version-row:hover {
   background: rgba(10, 14, 22, 0.28);
   border-color: rgba(255, 255, 255, 0.2);
 }
@@ -322,7 +322,7 @@ function handleActivate(event: MouseEvent | KeyboardEvent) {
   background: rgba(10, 14, 22, 0.2);
 }
 
-.version-row.version-best:hover {
+:global(html[data-mouse-active="true"]) .version-row.version-best:hover {
   background: rgba(10, 14, 22, 0.28);
   border-color: rgba(255, 255, 255, 0.2);
 }
@@ -533,8 +533,8 @@ function handleActivate(event: MouseEvent | KeyboardEvent) {
   cursor: pointer;
 }
 
-.ctx-btn:hover:not(:disabled),
-.ctx-btn.nav-focused:not(:disabled),
+:global(html[data-mouse-active="true"]) .ctx-btn:hover:not(:disabled),
+:global(html[data-mouse-active="false"]) .ctx-btn.nav-focused:not(:disabled),
 .ctx-btn:focus-visible:not(:disabled) {
   background: rgba(255, 255, 255, 0.16);
   border-color: rgba(255, 255, 255, 0.35);

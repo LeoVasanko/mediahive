@@ -605,8 +605,8 @@ function handleItemClick(item: MediaItem, index: number) {
   pointer-events: none;
 }
 
-.collage-item:hover,
-.collage-item.nav-focused {
+:global(html[data-mouse-active="true"]) .collage-item:hover,
+:global(html[data-mouse-active="false"]) .collage-item.nav-focused {
   z-index: 10;
 }
 
@@ -630,8 +630,8 @@ function handleItemClick(item: MediaItem, index: number) {
 }
 
 /* Show outline on hover and focus */
-.collage-item:hover .hex-focus-outline,
-.collage-item.nav-focused .hex-focus-outline {
+:global(html[data-mouse-active="true"]) .collage-item:hover .hex-focus-outline,
+:global(html[data-mouse-active="false"]) .collage-item.nav-focused .hex-focus-outline {
   opacity: 1;
 }
 
@@ -646,15 +646,15 @@ function handleItemClick(item: MediaItem, index: number) {
 }
 
 /* Brighter outline for keyboard focus */
-.collage-item.nav-focused .hex-focus-outline polygon {
+:global(html[data-mouse-active="false"]) .collage-item.nav-focused .hex-focus-outline polygon {
   stroke: #ffffff;
   stroke-width: 5;
   filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.8));
 }
 
 /* Blinking effect on hover/focus */
-.collage-item:hover .hex-focus-outline,
-.collage-item.nav-focused .hex-focus-outline {
+:global(html[data-mouse-active="true"]) .collage-item:hover .hex-focus-outline,
+:global(html[data-mouse-active="false"]) .collage-item.nav-focused .hex-focus-outline {
   animation: hex-outline-blink 1s ease-in-out infinite;
 }
 
@@ -1035,8 +1035,8 @@ function handleItemClick(item: MediaItem, index: number) {
   white-space: nowrap;
 }
 
-.collage-item:not(.collage-featured):hover .collage-item-hover,
-.collage-item:not(.collage-featured).nav-focused .collage-item-hover {
+:global(html[data-mouse-active="true"]) .collage-item:not(.collage-featured):hover .collage-item-hover,
+:global(html[data-mouse-active="false"]) .collage-item:not(.collage-featured).nav-focused .collage-item-hover {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
 }

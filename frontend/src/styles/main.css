@@ -40,6 +40,11 @@ html, body {
   -ms-hyphens: auto;
 }
 
+html[data-pointer-visible="false"],
+html[data-pointer-visible="false"] * {
+  cursor: none !important;
+}
+
 #app {
   min-height: 100vh;
   position: relative;
@@ -60,7 +65,7 @@ html, body {
   border-radius: 4px;
 }
 
-::-webkit-scrollbar-thumb:hover {
+html[data-mouse-active="true"] ::-webkit-scrollbar-thumb:hover {
   background: var(--text-secondary);
 }
 
@@ -170,13 +175,13 @@ html, body {
   color: rgba(255, 255, 255, 0.78);
 }
 
-.header-nav-item:hover,
+html[data-mouse-active="true"] .header-nav-item:hover,
 .header-nav-item.active {
   color: var(--text-primary);
 }
 
 .header-nav-item:focus,
-.header-nav-item.nav-focused {
+html[data-mouse-active="false"] .header-nav-item.nav-focused {
   color: var(--text-primary);
   outline: none;
   text-decoration: underline;
@@ -207,7 +212,7 @@ html, body {
   transition: color var(--transition-fast);
 }
 
-.header-settings-btn:hover {
+html[data-mouse-active="true"] .header-settings-btn:hover {
   color: var(--text-primary);
 }
 
@@ -355,8 +360,8 @@ html, body {
   color: var(--bg-primary);
 }
 
-.btn-primary:hover,
-.btn-primary.nav-focused {
+html[data-mouse-active="true"] .btn-primary:hover,
+html[data-mouse-active="false"] .btn-primary.nav-focused {
   background: rgba(255, 255, 255, 0.85);
   animation: btn-outline-blink 1s ease-in-out infinite;
 }
@@ -366,8 +371,8 @@ html, body {
   color: var(--text-primary);
 }
 
-.btn-secondary:hover,
-.btn-secondary.nav-focused {
+html[data-mouse-active="true"] .btn-secondary:hover,
+html[data-mouse-active="false"] .btn-secondary.nav-focused {
   background: rgba(109, 109, 110, 0.5);
   animation: btn-outline-blink 1s ease-in-out infinite;
 }
@@ -449,8 +454,8 @@ html, body {
   outline: none;
 }
 
-.media-card:hover,
-.media-card.nav-focused {
+html[data-mouse-active="true"] .media-card:hover,
+html[data-mouse-active="false"] .media-card.nav-focused {
   z-index: 10;
 }
 
@@ -472,7 +477,7 @@ html, body {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
 }
 
-.media-card:hover .media-card-poster {
+html[data-mouse-active="true"] .media-card:hover .media-card-poster {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
 }
 
@@ -518,7 +523,7 @@ html, body {
   transition: opacity var(--transition-fast);
 }
 
-.media-card:hover .media-card-info {
+html[data-mouse-active="true"] .media-card:hover .media-card-info {
   opacity: 1;
 }
 
@@ -622,7 +627,7 @@ html, body {
   transition: background var(--transition-fast);
 }
 
-.modal-close:hover {
+html[data-mouse-active="true"] .modal-close:hover {
   background: var(--bg-card);
 }
 
@@ -718,7 +723,7 @@ html, body {
   transition: background var(--transition-fast);
 }
 
-.release-item:hover {
+html[data-mouse-active="true"] .release-item:hover {
   background: var(--bg-card-hover);
 }
 
