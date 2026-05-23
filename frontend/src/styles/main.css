@@ -414,13 +414,14 @@ html, body {
 }
 
 .media-row {
+  --sync-row-tail: 0px;
   display: flex;
   gap: 6px;
   overflow-x: auto;
   overflow-y: hidden;
   padding-bottom: 8px;
   margin: 0 -2px;
-  padding: 4px 2px 8px;
+  padding: 4px calc(2px + var(--sync-row-tail)) 8px 2px;
   scrollbar-width: none;
   -ms-overflow-style: none;
 }

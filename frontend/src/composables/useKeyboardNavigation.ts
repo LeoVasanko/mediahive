@@ -24,10 +24,12 @@ const SYNC_SCROLL_ROW_ATTR = 'data-sync-scroll-row';
 const SYNC_SCROLL_FIRST_CONTENT_ROW = 2;
 const SYNC_SCROLL_DEADZONE_RATIO = 0.18;
 const SYNC_SCROLL_EASING_MS = 220;
+const SYNC_SCROLL_TAIL_VAR = '--sync-row-tail';
 
 let syncedRowsFrame: number | null = null;
 let syncedRowsCurrentOffset = 0;
 let syncedRowsTargetOffset = 0;
+let syncedRowsTailPx = 0;
 let lastSyncedAnchorCol: number | null = null;
 let lastSyncedRowsAnimationAt: number | null = null;
 
@@ -71,6 +73,34 @@ function clampRowScrollOffset(row: HTMLElement, offset: number): number {
   return Math.min(Math.max(offset, 0), maxOffset);
 }
 
+function getRowMaxOffset(row: HTMLElement): number {
+  return Math.max(0, row.scrollWidth - row.clientWidth);
+}
+
+function getRowNaturalMaxOffset(row: HTMLElement): number {
+  return Math.max(0, getRowMaxOffset(row) - syncedRowsTailPx);
+}
+
+function getTailNeededForOffset(offset: number, rows: HTMLElement[]): number {
+  if (rows.length === 0) return 0;
+
+  let minNaturalMax = Number.POSITIVE_INFINITY;
+  for (const row of rows) {
+    minNaturalMax = Math.min(minNaturalMax, getRowNaturalMaxOffset(row));
+  }
+
+  if (!Number.isFinite(minNaturalMax)) return 0;
+  return Math.max(0, offset - minNaturalMax);
+}
+
+function setSyncedRowsTail(tailPx: number, rows: HTMLElement[] = getSyncedRows()) {
+  const nextTail = Math.max(0, tailPx);
+  syncedRowsTailPx = nextTail;
+  for (const row of rows) {
+    row.style.setProperty(SYNC_SCROLL_TAIL_VAR, `${nextTail}px`);
+  }
+}
+
 function applySyncedRowScroll(offset: number, rows: HTMLElement[] = getSyncedRows()) {
   for (const row of rows) {
     row.scrollLeft = clampRowScrollOffset(row, offset);
@@ -80,6 +110,7 @@ function applySyncedRowScroll(offset: number, rows: HTMLElement[] = getSyncedRow
 function resetSyncedRows(immediate: boolean = false) {
   lastSyncedAnchorCol = null;
   syncedRowsTargetOffset = 0;
+  setSyncedRowsTail(0);
 
   if (immediate) {
     syncedRowsCurrentOffset = 0;
@@ -135,14 +166,17 @@ function animateSyncedRows(now: number) {
   syncedRowsFrame = window.requestAnimationFrame(animateSyncedRows);
 }
 
-function updateSyncedRowTarget(anchorCol: number) {
+function updateSyncedRowTarget(anchorCol: number, anchorRow: HTMLElement | null = null) {
   const rows = getSyncedRows();
   if (rows.length === 0) return;
 
   const metrics = getSyncedRowMetrics(rows);
   if (!metrics) return;
 
-  const currentOffset = rows[0]?.scrollLeft ?? syncedRowsCurrentOffset;
+  const currentOffset = syncedRowsCurrentOffset;
+  const effectiveAnchorOffset = anchorRow
+    ? clampRowScrollOffset(anchorRow, currentOffset)
+    : currentOffset;
   const deadzoneInset = Math.max(
     metrics.paddingLeft,
     (metrics.viewportWidth - metrics.cardWidth) * SYNC_SCROLL_DEADZONE_RATIO,
@@ -153,15 +187,27 @@ function updateSyncedRowTarget(anchorCol: number) {
     metrics.viewportWidth - metrics.cardWidth - deadzoneInset,
   );
   const itemLeft = metrics.paddingLeft + anchorCol * metrics.stride;
-  const viewportLeft = itemLeft - currentOffset;
+  const viewportLeft = itemLeft - effectiveAnchorOffset;
+
+  const desiredOffset = viewportLeft < minVisibleLeft
+    ? Math.max(0, itemLeft - minVisibleLeft)
+    : (viewportLeft > maxVisibleLeft
+      ? Math.max(0, itemLeft - maxVisibleLeft)
+      : currentOffset);
+
+  const neededTail = getTailNeededForOffset(desiredOffset, rows);
+  if (Math.abs(neededTail - syncedRowsTailPx) >= 0.5) {
+    setSyncedRowsTail(neededTail, rows);
+  }
 
   lastSyncedAnchorCol = anchorCol;
-  if (viewportLeft < minVisibleLeft) {
-    syncedRowsTargetOffset = Math.max(0, itemLeft - minVisibleLeft);
-  } else if (viewportLeft > maxVisibleLeft) {
-    syncedRowsTargetOffset = Math.max(0, itemLeft - maxVisibleLeft);
-  } else {
-    syncedRowsTargetOffset = currentOffset;
+  syncedRowsTargetOffset = desiredOffset;
+
+  if (anchorRow) {
+    // Preserve a global virtual offset, bounded by the focused row after tail-space is applied.
+    syncedRowsTargetOffset = Math.min(syncedRowsTargetOffset, getRowMaxOffset(anchorRow));
+  } else if (syncedRowsTailPx > 0) {
+    setSyncedRowsTail(0, rows);
   }
 
   if (syncedRowsFrame === null) {
@@ -189,7 +235,8 @@ function syncRowsToElement(element: HTMLElement) {
 
   const currentCol = parseInt(element.getAttribute(COL_ATTR) || '0', 10);
   const anchorCol = desiredCol.value ?? currentCol;
-  updateSyncedRowTarget(anchorCol);
+  const anchorRow = element.closest<HTMLElement>(`[${SYNC_SCROLL_ROW_ATTR}="true"]`);
+  updateSyncedRowTarget(anchorCol, anchorRow);
 }
 
 function handleSyncedRowResize() {
@@ -197,7 +244,6 @@ function handleSyncedRowResize() {
     resetSyncedRows(true);
     return;
   }
-  syncedRowsCurrentOffset = getSyncedRows()[0]?.scrollLeft ?? syncedRowsCurrentOffset;
   updateSyncedRowTarget(lastSyncedAnchorCol);
 }
 
@@ -315,6 +361,51 @@ function findElementAt(row: number, col: number, useEntryCol: boolean = false): 
   return nearest;
 }
 
+function findElementClosestToLogicalViewportX(
+  row: number,
+  logicalViewportCenterX: number,
+  preferredCol: number,
+  metrics: { cardWidth: number; stride: number; paddingLeft: number } | null,
+): FocusableElement | null {
+  const byRow = getElementsByRow();
+  const rowElements = byRow.get(row);
+  if (!rowElements || rowElements.length === 0) return null;
+
+  let nearest: FocusableElement | null = null;
+  let nearestViewportDist = Number.POSITIVE_INFINITY;
+  let nearestColDist = Number.POSITIVE_INFINITY;
+
+  for (const candidate of rowElements) {
+    let candidateCenterX: number;
+    if (metrics) {
+      // Compare using global synced offset so capped rows do not skew vertical matching.
+      candidateCenterX = (
+        metrics.paddingLeft
+        + candidate.col * metrics.stride
+        - syncedRowsCurrentOffset
+        + metrics.cardWidth / 2
+      );
+    } else {
+      const rect = candidate.element.getBoundingClientRect();
+      candidateCenterX = rect.left + rect.width / 2;
+    }
+
+    const viewportDist = Math.abs(candidateCenterX - logicalViewportCenterX);
+    const colDist = Math.abs(candidate.col - preferredCol);
+
+    if (
+      viewportDist < nearestViewportDist
+      || (Math.abs(viewportDist - nearestViewportDist) < 0.5 && colDist < nearestColDist)
+    ) {
+      nearest = candidate;
+      nearestViewportDist = viewportDist;
+      nearestColDist = colDist;
+    }
+  }
+
+  return nearest;
+}
+
 /**
  * Find next element in direction using row/col indices
  */
@@ -361,9 +452,29 @@ function findNextElement(
       desiredCol.value = currentCol;
     }
 
-    // Use entry column hook for vertical navigation
-    const target = findElementAt(targetRow, targetCol, true);
-    return target?.element || null;
+    // Use entry column hook for vertical navigation when present.
+    const entryTarget = findElementAt(targetRow, targetCol, true);
+    const targetRowElements = byRow.get(targetRow) ?? [];
+    const hasEntryOverride = targetRowElements.some(el => el.element.hasAttribute(ENTRY_COL_ATTR));
+    if (hasEntryOverride) {
+      return entryTarget?.element || null;
+    }
+
+    const syncedRows = getSyncedRows();
+    const metrics = getSyncedRowMetrics(syncedRows);
+    const logicalCurrentCenterX = metrics
+      ? metrics.paddingLeft + currentCol * metrics.stride - syncedRowsCurrentOffset + metrics.cardWidth / 2
+      : (() => {
+        const currentRect = current.getBoundingClientRect();
+        return currentRect.left + currentRect.width / 2;
+      })();
+    const closestByViewport = findElementClosestToLogicalViewportX(
+      targetRow,
+      logicalCurrentCenterX,
+      targetCol,
+      metrics,
+    );
+    return closestByViewport?.element || entryTarget?.element || null;
   }
 }
 
