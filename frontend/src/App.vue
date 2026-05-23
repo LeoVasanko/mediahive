@@ -757,6 +757,15 @@ function normalizeSearchText(value: string): string {
     .replace(/\s+/g, ' ');
 }
 
+function normalizePathSearchText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[\\/]+/g, '/')
+    .replace(/[^a-z0-9/]+/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ');
+}
+
 function getTermMatchScore(term: string, field: string): number {
   const index = field.indexOf(term);
   if (index < 0) return 0;
@@ -765,6 +774,20 @@ function getTermMatchScore(term: string, field: string): number {
 
   const charBefore = field[index - 1];
   if (/\s/.test(charBefore)) return 80;
+
+  if (index < field.length / 2) return 50;
+
+  return 30;
+}
+
+function getPathTermMatchScore(term: string, field: string): number {
+  const index = field.indexOf(term);
+  if (index < 0) return 0;
+
+  if (index === 0) return 100;
+
+  const charBefore = field[index - 1];
+  if (/\s|\//.test(charBefore)) return 80;
 
   if (index < field.length / 2) return 50;
 
@@ -820,6 +843,54 @@ function getRelevanceScore(query: string, field: string): number {
   return bestScore;
 }
 
+function getPathRelevanceScore(query: string, field: string): number {
+  const normalizedField = normalizePathSearchText(field);
+  const normalizedQuery = normalizePathSearchText(query);
+
+  if (!normalizedField || !normalizedQuery) return 0;
+
+  let bestScore = 0;
+  const exactIndex = normalizedField.indexOf(normalizedQuery);
+
+  if (exactIndex >= 0) {
+    if (exactIndex === 0) {
+      bestScore = 110;
+    } else {
+      const charBefore = normalizedField[exactIndex - 1];
+      if (/\s|\//.test(charBefore)) {
+        bestScore = 95;
+      } else if (exactIndex < normalizedField.length / 2) {
+        bestScore = 75;
+      } else {
+        bestScore = 60;
+      }
+    }
+  }
+
+  const terms = normalizedQuery.split(' ');
+  if (terms.length > 1) {
+    let matchedTerms = 0;
+    let termScoreTotal = 0;
+
+    for (const term of terms) {
+      const termScore = getPathTermMatchScore(term, normalizedField);
+      if (termScore > 0) {
+        matchedTerms += 1;
+        termScoreTotal += termScore;
+      }
+    }
+
+    if (matchedTerms > 0) {
+      const coverage = matchedTerms / terms.length;
+      const averageScore = termScoreTotal / matchedTerms;
+      const combinedScore = Math.round(averageScore * (0.6 + (coverage * 0.4)));
+      if (combinedScore > bestScore) bestScore = combinedScore;
+    }
+  }
+
+  return bestScore;
+}
+
 // Get best relevance score from multiple fields
 function getBestScore(query: string, ...fields: (string | null | undefined)[]): number {
   let bestScore = 0;
@@ -828,6 +899,40 @@ function getBestScore(query: string, ...fields: (string | null | undefined)[]): 
       const score = getRelevanceScore(query, field);
       if (score > bestScore) bestScore = score;
     }
+  }
+  return bestScore;
+}
+
+function getMoviePathScore(movie: Movie, query: string): number {
+  const torrentFields: (string | null | undefined)[] = [];
+  for (const torrent of Object.values(movie.torrents || {})) {
+    torrentFields.push(torrent.title, torrent.playable_file);
+  }
+  let bestScore = 0;
+  for (const field of torrentFields) {
+    if (!field) continue;
+    const score = getPathRelevanceScore(query, field);
+    if (score > bestScore) bestScore = score;
+  }
+  return bestScore;
+}
+
+function getSeriesPathScore(series: Series, query: string): number {
+  const torrentFields: (string | null | undefined)[] = [];
+
+  for (const season of series.seasons || []) {
+    for (const episode of season.episodes || []) {
+      for (const torrent of Object.values(episode.torrents || {})) {
+        torrentFields.push(torrent.title, torrent.playable_file);
+      }
+    }
+  }
+
+  let bestScore = 0;
+  for (const field of torrentFields) {
+    if (!field) continue;
+    const score = getPathRelevanceScore(query, field);
+    if (score > bestScore) bestScore = score;
   }
   return bestScore;
 }
@@ -1000,12 +1105,15 @@ function performSearch(query: string) {
     }
 
     // Other metadata matches -> Other category
-    const otherScore = getBestScore(query,
+    const otherScore = Math.max(
+      getBestScore(query,
       movie.info?.genres?.join(' '),
       movie.info?.keywords?.join(' '),
       movie.info?.overview,
       movie.info?.tagline,
       movie.info?.similar?.map(s => s.title).join(' ')
+      ),
+      getMoviePathScore(movie, query)
     );
     if (otherScore > 0) {
       allScored.push({
@@ -1090,13 +1198,16 @@ function performSearch(query: string) {
 
     // Other metadata matches -> Other category
     if (!processedIds.has(series.id)) {
-      const otherScore = getBestScore(query,
+      const otherScore = Math.max(
+        getBestScore(query,
         series.info?.genres?.join(' '),
         series.info?.keywords?.join(' '),
         series.info?.overview,
         series.info?.tagline,
         series.info?.similar?.map(s => s.title).join(' '),
         series.info?.networks?.join(' ')
+        ),
+        getSeriesPathScore(series, query)
       );
       if (otherScore > 0) {
         allScored.push({
