@@ -40,8 +40,8 @@ html, body {
   -ms-hyphens: auto;
 }
 
-html[data-pointer-visible="false"],
-html[data-pointer-visible="false"] * {
+html:not(.pointer-visible),
+html:not(.pointer-visible) * {
   cursor: none !important;
 }
 
@@ -65,7 +65,7 @@ html[data-pointer-visible="false"] * {
   border-radius: 4px;
 }
 
-html[data-mouse-active="true"] ::-webkit-scrollbar-thumb:hover {
+html.mouse-active ::-webkit-scrollbar-thumb:hover {
   background: var(--text-secondary);
 }
 
@@ -175,13 +175,13 @@ html[data-mouse-active="true"] ::-webkit-scrollbar-thumb:hover {
   color: rgba(255, 255, 255, 0.78);
 }
 
-html[data-mouse-active="true"] .header-nav-item:hover,
+html.mouse-active .header-nav-item:hover,
 .header-nav-item.active {
   color: var(--text-primary);
 }
 
 .header-nav-item:focus,
-html[data-mouse-active="false"] .header-nav-item.nav-focused {
+html:not(.mouse-active) .header-nav-item.nav-focused {
   color: var(--text-primary);
   outline: none;
   text-decoration: underline;
@@ -212,7 +212,7 @@ html[data-mouse-active="false"] .header-nav-item.nav-focused {
   transition: color var(--transition-fast);
 }
 
-html[data-mouse-active="true"] .header-settings-btn:hover {
+html.mouse-active .header-settings-btn:hover {
   color: var(--text-primary);
 }
 
@@ -360,8 +360,8 @@ html[data-mouse-active="true"] .header-settings-btn:hover {
   color: var(--bg-primary);
 }
 
-html[data-mouse-active="true"] .btn-primary:hover,
-html[data-mouse-active="false"] .btn-primary.nav-focused {
+html.mouse-active .btn-primary:hover,
+html:not(.mouse-active) .btn-primary.nav-focused {
   background: rgba(255, 255, 255, 0.85);
   animation: btn-outline-blink 1s ease-in-out infinite;
 }
@@ -371,8 +371,8 @@ html[data-mouse-active="false"] .btn-primary.nav-focused {
   color: var(--text-primary);
 }
 
-html[data-mouse-active="true"] .btn-secondary:hover,
-html[data-mouse-active="false"] .btn-secondary.nav-focused {
+html.mouse-active .btn-secondary:hover,
+html:not(.mouse-active) .btn-secondary.nav-focused {
   background: rgba(109, 109, 110, 0.5);
   animation: btn-outline-blink 1s ease-in-out infinite;
 }
@@ -454,8 +454,8 @@ html[data-mouse-active="false"] .btn-secondary.nav-focused {
   outline: none;
 }
 
-html[data-mouse-active="true"] .media-card:hover,
-html[data-mouse-active="false"] .media-card.nav-focused {
+html.mouse-active .media-card:hover,
+html:not(.mouse-active) .media-card.nav-focused {
   z-index: 10;
 }
 
@@ -477,7 +477,7 @@ html[data-mouse-active="false"] .media-card.nav-focused {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
 }
 
-html[data-mouse-active="true"] .media-card:hover .media-card-poster {
+html.mouse-active .media-card:hover .media-card-poster {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
 }
 
@@ -523,7 +523,7 @@ html[data-mouse-active="true"] .media-card:hover .media-card-poster {
   transition: opacity var(--transition-fast);
 }
 
-html[data-mouse-active="true"] .media-card:hover .media-card-info {
+html.mouse-active .media-card:hover .media-card-info {
   opacity: 1;
 }
 
@@ -627,7 +627,7 @@ html[data-mouse-active="true"] .media-card:hover .media-card-info {
   transition: background var(--transition-fast);
 }
 
-html[data-mouse-active="true"] .modal-close:hover {
+html.mouse-active .modal-close:hover {
   background: var(--bg-card);
 }
 
@@ -723,7 +723,7 @@ html[data-mouse-active="true"] .modal-close:hover {
   transition: background var(--transition-fast);
 }
 
-html[data-mouse-active="true"] .release-item:hover {
+html.mouse-active .release-item:hover {
   background: var(--bg-card-hover);
 }
 

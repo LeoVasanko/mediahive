@@ -605,8 +605,8 @@ function handleItemClick(item: MediaItem, index: number) {
   pointer-events: none;
 }
 
-:global(html[data-mouse-active="true"]) .collage-item:hover,
-:global(html[data-mouse-active="false"]) .collage-item.nav-focused {
+html.mouse-active .collage-item:hover,
+html:not(.mouse-active) .collage-item.nav-focused {
   z-index: 10;
 }
 
@@ -630,8 +630,8 @@ function handleItemClick(item: MediaItem, index: number) {
 }
 
 /* Show outline on hover and focus */
-:global(html[data-mouse-active="true"]) .collage-item:hover .hex-focus-outline,
-:global(html[data-mouse-active="false"]) .collage-item.nav-focused .hex-focus-outline {
+html.mouse-active .collage-item:hover .hex-focus-outline,
+html:not(.mouse-active) .collage-item.nav-focused .hex-focus-outline {
   opacity: 1;
 }
 
@@ -646,15 +646,15 @@ function handleItemClick(item: MediaItem, index: number) {
 }
 
 /* Brighter outline for keyboard focus */
-:global(html[data-mouse-active="false"]) .collage-item.nav-focused .hex-focus-outline polygon {
+html:not(.mouse-active) .collage-item.nav-focused .hex-focus-outline polygon {
   stroke: #ffffff;
   stroke-width: 5;
   filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.8));
 }
 
 /* Blinking effect on hover/focus */
-:global(html[data-mouse-active="true"]) .collage-item:hover .hex-focus-outline,
-:global(html[data-mouse-active="false"]) .collage-item.nav-focused .hex-focus-outline {
+html.mouse-active .collage-item:hover .hex-focus-outline,
+html:not(.mouse-active) .collage-item.nav-focused .hex-focus-outline {
   animation: hex-outline-blink 1s ease-in-out infinite;
 }
 
@@ -1035,8 +1035,8 @@ function handleItemClick(item: MediaItem, index: number) {
   white-space: nowrap;
 }
 
-:global(html[data-mouse-active="true"]) .collage-item:not(.collage-featured):hover .collage-item-hover,
-:global(html[data-mouse-active="false"]) .collage-item:not(.collage-featured).nav-focused .collage-item-hover {
+html.mouse-active .collage-item:not(.collage-featured):hover .collage-item-hover,
+html:not(.mouse-active) .collage-item:not(.collage-featured).nav-focused .collage-item-hover {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
 }

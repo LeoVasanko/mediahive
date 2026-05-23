@@ -813,12 +813,12 @@ function handleCastSelect(castName: string) {
 }
 
 .cast-card:focus-visible,
-:global(html[data-mouse-active="false"]) .cast-card.nav-focused {
+html:not(.mouse-active) .cast-card.nav-focused {
   outline: none;
 }
 
 .cast-card:focus-visible::after,
-:global(html[data-mouse-active="false"]) .cast-card.nav-focused::after {
+html:not(.mouse-active) .cast-card.nav-focused::after {
   border-width: 2px;
 }
 
@@ -943,7 +943,7 @@ function handleCastSelect(castName: string) {
   cursor: pointer;
 }
 
-:global(html[data-mouse-active="true"]) .showreel-image:hover {
+html.mouse-active .showreel-image:hover {
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
 }
 
@@ -978,7 +978,7 @@ function handleCastSelect(castName: string) {
   transition: background 0.2s, border-color 0.2s;
 }
 
-:global(html[data-mouse-active="true"]) .version-item:hover {
+html.mouse-active .version-item:hover {
   background: rgba(255, 255, 255, 0.08);
 }
 
@@ -1176,7 +1176,7 @@ function handleCastSelect(castName: string) {
   overflow: hidden;
 }
 
-:global(html[data-mouse-active="true"]) .episode-item:hover {
+html.mouse-active .episode-item:hover {
   background: rgba(255, 255, 255, 0.08);
 }
 
@@ -1291,7 +1291,7 @@ function handleCastSelect(castName: string) {
   border: 1px solid transparent;
 }
 
-:global(html[data-mouse-active="true"]) .release-item:hover {
+html.mouse-active .release-item:hover {
   background: rgba(255, 255, 255, 0.06);
 }
 

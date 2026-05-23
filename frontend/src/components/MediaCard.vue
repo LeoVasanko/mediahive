@@ -211,13 +211,13 @@ const matchedPeople = computed(() => {
   object-fit: cover;
 }
 
-:global(html[data-mouse-active="true"]) .media-card:hover .card-focus-outline,
-:global(html[data-mouse-active="false"]) .media-card.nav-focused .card-focus-outline {
+html.mouse-active .media-card:hover .card-focus-outline,
+html:not(.mouse-active) .media-card.nav-focused .card-focus-outline {
   opacity: 1;
   animation: card-outline-blink 1s ease-in-out infinite;
 }
 
-:global(html[data-mouse-active="false"]) .media-card.nav-focused .card-focus-outline rect {
+html:not(.mouse-active) .media-card.nav-focused .card-focus-outline rect {
   stroke: #ffffff;
   stroke-width: 5;
   filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.8));

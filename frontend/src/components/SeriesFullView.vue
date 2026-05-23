@@ -806,8 +806,8 @@ onUnmounted(() => {
   outline: none;
 }
 
-:global(html[data-mouse-active="true"]) .episode-tile:hover,
-:global(html[data-mouse-active="false"]) .episode-tile.nav-focused {
+html.mouse-active .episode-tile:hover,
+html:not(.mouse-active) .episode-tile.nav-focused {
   z-index: 20;
   transition: z-index 0s;
 }
@@ -850,14 +850,14 @@ onUnmounted(() => {
 }
 
 /* Show outline on hover and focus */
-:global(html[data-mouse-active="true"]) .episode-tile:hover .tile-focus-outline,
-:global(html[data-mouse-active="false"]) .episode-tile.nav-focused .tile-focus-outline {
+html.mouse-active .episode-tile:hover .tile-focus-outline,
+html:not(.mouse-active) .episode-tile.nav-focused .tile-focus-outline {
   opacity: 1;
   animation: tile-outline-blink 1s ease-in-out infinite;
 }
 
 /* Brighter outline for keyboard focus */
-:global(html[data-mouse-active="false"]) .episode-tile.nav-focused .tile-focus-outline rect {
+html:not(.mouse-active) .episode-tile.nav-focused .tile-focus-outline rect {
   stroke: #ffffff;
   stroke-width: 5;
   filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.8));
@@ -884,7 +884,7 @@ onUnmounted(() => {
   display: none;
 }
 
-:global(html[data-mouse-active="true"]) .episode-tile:hover .tile-overlay {
+html.mouse-active .episode-tile:hover .tile-overlay {
   opacity: 0.4;
 }
 
@@ -945,7 +945,7 @@ onUnmounted(() => {
   text-shadow: 0 4px 20px rgba(0, 0, 0, 0.8);
 }
 
-:global(html[data-mouse-active="true"]) .episode-tile:hover .tile-play {
+html.mouse-active .episode-tile:hover .tile-play {
   opacity: 1;
   transform: translate(-50%, -50%) scale(1);
 }
@@ -1081,7 +1081,7 @@ onUnmounted(() => {
   cursor: pointer;
 }
 
-:global(html[data-mouse-active="true"]) .version-action-item:hover:not(:disabled),
+html.mouse-active .version-action-item:hover:not(:disabled),
 .version-action-item:focus-visible:not(:disabled) {
   background: rgba(255, 255, 255, 0.12);
   outline: none;

@@ -24,9 +24,8 @@ function clearMouseIdleTimer() {
 
 function applyInputState(mouseActive: boolean) {
   const root = document.documentElement;
-  root.dataset.inputModality = modality;
-  root.dataset.mouseActive = mouseActive ? 'true' : 'false';
-  root.dataset.pointerVisible = pointerVisible ? 'true' : 'false';
+  root.classList.toggle('mouse-active', mouseActive);
+  root.classList.toggle('pointer-visible', pointerVisible);
 }
 
 function scheduleMouseIdle() {
