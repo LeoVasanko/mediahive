@@ -16,6 +16,7 @@ from mediahive.hivescan.models import ContentType, ParsedContent
 from mediahive.hivescan.scanning import (
     find_cover_image,
     find_episode_files,
+    find_metadata_probe_file,
     find_playable_file,
 )
 from mediahive.hivescan.showreel import (
@@ -56,8 +57,9 @@ async def _build_torrent_info(
     """Build torrent info for a single torrent."""
     playable_file = await find_playable_file(item.path)
     probe_info = None
-    if playable_file and not str(playable_file).endswith(".bdmv"):
-        probe_info = await probe_media_info(str(playable_file))
+    probe_target = await find_metadata_probe_file(playable_file)
+    if probe_target:
+        probe_info = await probe_media_info(str(probe_target))
 
     if item.content_hash and item.content_hash.size == 0:
         item.content_hash.size = await get_directory_size(item.content_hash.path)

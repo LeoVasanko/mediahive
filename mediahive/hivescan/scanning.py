@@ -11,7 +11,6 @@ from mediahive.hivescan.models import ContentType, ParsedContent
 from mediahive.hivescan.parsing import parse_download, parse_episode_from_filename
 from mediahive.hivescan.utils import get_media_folder_path, sanitize_filename
 
-
 # Video file extensions
 VIDEO_EXTENSIONS = {
     ".mkv",
@@ -29,6 +28,7 @@ VIDEO_EXTENSIONS = {
 # Caches for expensive operations
 _episode_files_cache: Dict[str, Dict[Tuple[int, int], List[Tuple[str, int]]]] = {}
 _playable_file_cache: Dict[str, Optional[str]] = {}
+_bluray_probe_file_cache: Dict[str, Optional[str]] = {}
 
 
 async def scan_downloads(base_pattern: str) -> List[ParsedContent]:
@@ -128,7 +128,7 @@ async def find_playable_file(path: Path) -> Optional[str]:
     """
     Find the main playable media file in a directory.
 
-    For Blu-ray discs: Returns BDMV/index.bdmv
+    For Blu-ray discs: Returns BDMV/MovieObject.bdmv (fallback: BDMV/index.bdmv)
     For other content: Returns the largest video file
     """
     cache_key = str(path)
@@ -146,7 +146,15 @@ async def find_playable_file(path: Path) -> Optional[str]:
         return None
 
     # Check for Blu-ray disc structure
-    bdmv_index = path / "BDMV" / "index.bdmv"
+    bdmv_dir = path / "BDMV"
+    bdmv_movieobject = bdmv_dir / "MovieObject.bdmv"
+    bdmv_index = bdmv_dir / "index.bdmv"
+
+    if await AsyncPath(bdmv_movieobject).exists():
+        result = str(bdmv_movieobject)
+        _playable_file_cache[cache_key] = result
+        return result
+
     if await AsyncPath(bdmv_index).exists():
         result = str(bdmv_index)
         _playable_file_cache[cache_key] = result
@@ -156,9 +164,17 @@ async def find_playable_file(path: Path) -> Optional[str]:
     try:
         for subdir in ap.iterdir():
             if await AsyncPath(subdir).is_dir():
-                nested_bdmv = Path(subdir) / "BDMV" / "index.bdmv"
-                if await AsyncPath(nested_bdmv).exists():
-                    result = str(nested_bdmv)
+                nested_bdmv_dir = Path(subdir) / "BDMV"
+                nested_movieobject = nested_bdmv_dir / "MovieObject.bdmv"
+                nested_index = nested_bdmv_dir / "index.bdmv"
+
+                if await AsyncPath(nested_movieobject).exists():
+                    result = str(nested_movieobject)
+                    _playable_file_cache[cache_key] = result
+                    return result
+
+                if await AsyncPath(nested_index).exists():
+                    result = str(nested_index)
                     _playable_file_cache[cache_key] = result
                     return result
     except OSError, PermissionError:
@@ -183,6 +199,56 @@ async def find_playable_file(path: Path) -> Optional[str]:
     video_files.sort(key=lambda x: x[1], reverse=True)
     result = video_files[0][0]
     _playable_file_cache[cache_key] = result
+    return result
+
+
+async def find_metadata_probe_file(playable_path: Optional[str]) -> Optional[str]:
+    """Resolve a path suitable for ffmpeg stream metadata probing.
+
+    For regular files, returns ``playable_path`` unchanged.
+    For Blu-ray control files (``*.bdmv``), returns the largest
+    ``BDMV/STREAM/*.m2ts`` file, which ffmpeg can usually inspect even
+    when direct BDMV probing is unsupported.
+    """
+    if not playable_path:
+        return None
+
+    if not playable_path.lower().endswith(".bdmv"):
+        return playable_path
+
+    cache_key = playable_path
+    if cache_key in _bluray_probe_file_cache:
+        return _bluray_probe_file_cache[cache_key]
+
+    playable = Path(playable_path)
+    bdmv_dir = (
+        playable.parent if playable.parent.name.upper() == "BDMV" else playable.parent
+    )
+    stream_dir = bdmv_dir / "STREAM"
+
+    ap_stream = AsyncPath(stream_dir)
+    if not await ap_stream.exists() or not await ap_stream.is_dir():
+        _bluray_probe_file_cache[cache_key] = None
+        return None
+
+    candidates: List[Tuple[str, int]] = []
+    try:
+        for f in ap_stream.rglob("*.m2ts"):
+            af = AsyncPath(f)
+            if not await af.is_file():
+                continue
+            candidates.append((str(f), (await af.stat()).st_size))
+    except OSError, PermissionError:
+        _bluray_probe_file_cache[cache_key] = None
+        return None
+
+    if not candidates:
+        _bluray_probe_file_cache[cache_key] = None
+        return None
+
+    candidates.sort(key=lambda x: x[1], reverse=True)
+    result = candidates[0][0]
+    _bluray_probe_file_cache[cache_key] = result
     return result
 
 

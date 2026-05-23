@@ -152,13 +152,13 @@ const hasHdr = computed(() => {
 const isDisc = computed(() => {
   if (!props.torrent.playable_file) return false;
   const filename = props.torrent.playable_file.toLowerCase();
-  return filename.endsWith('index.bdmv') || filename.endsWith('.iso');
+  return filename.endsWith('movieobject.bdmv') || filename.endsWith('index.bdmv') || filename.endsWith('.iso');
 });
 
 const showBlurayLogo = computed(() => {
   if (!isDisc.value) return false;
   const filename = (props.torrent.playable_file || '').toLowerCase();
-  if (filename.endsWith('index.bdmv')) return true;
+  if (filename.endsWith('movieobject.bdmv') || filename.endsWith('index.bdmv')) return true;
   return hasAnyTag(
     blurayTagPattern,
     props.torrent.quality,
