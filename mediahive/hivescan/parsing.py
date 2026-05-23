@@ -11,6 +11,16 @@ from mediahive.hivescan.models import ContentHash, ContentType, ParsedContent
 from mediahive.hivescan.utils import normalize_resolution_label
 
 
+_EDGE_NON_ALPHANUMERICS_RE = re.compile(r"^[^0-9A-Za-z]+|[^0-9A-Za-z]+$")
+
+
+def strip_edge_non_alphanumerics(value: Optional[str]) -> Optional[str]:
+    """Remove punctuation from the start and end of PTN scene tags."""
+    if not value:
+        return None
+    return _EDGE_NON_ALPHANUMERICS_RE.sub("", value)
+
+
 def determine_content_type(parsed: dict) -> ContentType:
     """Determine content type based on parsed torrent name info."""
     has_season = "season" in parsed and parsed["season"] is not None
@@ -28,6 +38,7 @@ async def parse_download(path: Path) -> ParsedContent:
     """Parse a downloaded torrent directory/file name."""
     name = path.name
     parsed = PTN.parse(name)
+    parsed["encoder"] = strip_edge_non_alphanumerics(parsed.get("encoder"))
     content_type = determine_content_type(parsed)
     content_hash = ContentHash.from_path(path)
 
