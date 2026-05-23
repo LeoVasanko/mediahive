@@ -45,6 +45,7 @@ export interface Torrent {
   playable_file: string | null;
   resolution: string | null;
   quality: string | null;
+  network: string | null;
   codec: string | null;
   audio: string | null;
   audio_languages: string[] | null;

@@ -41,6 +41,7 @@ class ParsedContent:
     year: Optional[int] = None
     resolution: Optional[str] = None
     quality: Optional[str] = None
+    network: Optional[str] = None
     codec: Optional[str] = None
     audio: Optional[str] = None
     season: Optional[int] = None

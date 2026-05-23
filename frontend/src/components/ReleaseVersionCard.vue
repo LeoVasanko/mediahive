@@ -18,6 +18,13 @@
     <div class="version-main">
       <div class="version-badges">
         <span v-if="torrent.resolution" class="v-badge res">{{ torrent.resolution }}</span>
+        <img
+          v-if="streamingServiceLogo"
+          class="v-service-logo"
+          :src="streamingServiceLogo.src"
+          :alt="streamingServiceLogo.alt"
+          :title="streamingServiceLogo.alt"
+        >
         <span v-if="displayQualityBadge" class="v-badge qual">{{ displayQualityBadge }}</span>
         <span v-if="displayCodecBadge" class="v-badge codec">{{ displayCodecBadge }}</span>
         <span v-if="showHdrBadge" class="v-badge hdr">HDR</span>
@@ -77,6 +84,11 @@ import DolbyBadges from './DolbyBadges.vue';
 import { buildLanguageFlags } from '../utils/languageFlags';
 import blurayLogoUrl from '../assets/bluray.webp';
 import dvdLogoUrl from '../assets/dvd.webp';
+import amazonLogoUrl from '../assets/service-amazon.webp';
+import appleTvLogoUrl from '../assets/service-apple-tv.webp';
+import netflixLogoUrl from '../assets/service-netflix.webp';
+import hboMaxLogoUrl from '../assets/service-hbo-max.webp';
+import huluLogoUrl from '../assets/service-hulu.webp';
 
 defineOptions({
   inheritAttrs: false,
@@ -116,6 +128,15 @@ const hdrPattern = /\bhdr\b|smpte\s*2084|bt\s*2020|hlg/i;
 const blurayTagPattern = /\bblu[\s.-]*ray\b/i;
 const blurayPlayablePattern = /(?:^|[\\/])(movieobject|index)\.bdmv$/i;
 const dvdPlayablePattern = /(?:^|[\\/])video_ts\.ifo$/i;
+const webQualityPattern = /^web(?:[ .-]?dl|[ .-]?rip)$/i;
+
+const serviceLogoMap: Array<{ aliases: string[]; src: string; alt: string }> = [
+  { aliases: ['amazon studios', 'amazon prime video', 'prime video', 'amazon', 'amzn'], src: amazonLogoUrl, alt: 'Amazon Prime Video' },
+  { aliases: ['apple tv+', 'apple tv plus', 'apple tv', 'atvp'], src: appleTvLogoUrl, alt: 'Apple TV+' },
+  { aliases: ['netflix', 'nf', 'nflx'], src: netflixLogoUrl, alt: 'Netflix' },
+  { aliases: ['hbo max', 'max', 'hmax'], src: hboMaxLogoUrl, alt: 'HBO Max' },
+  { aliases: ['hulu'], src: huluLogoUrl, alt: 'Hulu' },
+];
 
 function hasDolbyTag(value: string | null | undefined): boolean {
   return Boolean(value && dolbyTagPattern.test(value));
@@ -135,6 +156,10 @@ function hasLanguageDisplay(codes: string[] | null | undefined): boolean {
 
 function hasHdrTag(value: string | null | undefined): boolean {
   return Boolean(value && hdrPattern.test(value));
+}
+
+function normalizeProviderName(value: string | null | undefined): string {
+  return (value || '').toLowerCase().replace(/[^a-z0-9+]+/g, ' ').trim();
 }
 
 const hasDolbyVision = computed(() => {
@@ -158,12 +183,6 @@ const hasHdr = computed(() => {
   );
 });
 
-const isDisc = computed(() => {
-  if (!props.torrent.playable_file) return false;
-  const filename = props.torrent.playable_file;
-  return blurayPlayablePattern.test(filename) || dvdPlayablePattern.test(filename) || filename.toLowerCase().endsWith('.iso');
-});
-
 const isBlurayDisc = computed(() => {
   if (!props.torrent.playable_file) return false;
   return blurayPlayablePattern.test(props.torrent.playable_file);
@@ -182,8 +201,21 @@ const showDvdLogo = computed(() => {
   return isDvdDisc.value;
 });
 
+const streamingServiceLogo = computed(() => {
+  if (!props.torrent.quality || !webQualityPattern.test(props.torrent.quality)) {
+    return null;
+  }
+
+  const network = normalizeProviderName(props.torrent.network);
+  if (!network) return null;
+
+  const found = serviceLogoMap.find((entry) => entry.aliases.includes(network));
+  return found ? { src: found.src, alt: found.alt } : null;
+});
+
 const displayQualityBadge = computed(() => {
   if (!props.torrent.quality || hasDolbyTag(props.torrent.quality)) return null;
+  if (streamingServiceLogo.value) return null;
   if (blurayTagPattern.test(props.torrent.quality)) return null;
   return props.torrent.quality;
 });
@@ -322,6 +354,14 @@ function handleActivate(event: MouseEvent | KeyboardEvent) {
   border-radius: 4px;
   font-weight: 600;
   text-transform: uppercase;
+}
+
+.v-service-logo {
+  align-self: center;
+  width: auto;
+  height: 16px;
+  object-fit: contain;
+  margin-right: 2px;
 }
 
 .v-badge.res {

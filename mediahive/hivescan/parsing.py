@@ -39,6 +39,7 @@ async def parse_download(path: Path) -> ParsedContent:
         year=parsed.get("year"),
         resolution=normalize_resolution_label(parsed.get("resolution")),
         quality=parsed.get("quality"),
+        network=parsed.get("network"),
         codec=parsed.get("codec"),
         audio=parsed.get("audio"),
         season=parsed.get("season"),

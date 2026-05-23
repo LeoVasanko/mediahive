@@ -22,6 +22,7 @@ class Torrent(msgspec.Struct):
     playable_file: str | None = None
     resolution: str | None = None
     quality: str | None = None
+    network: str | None = None
     codec: str | None = None
     audio: str | None = None
     audio_languages: list[str] | None = None
