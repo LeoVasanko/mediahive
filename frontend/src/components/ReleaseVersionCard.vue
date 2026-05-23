@@ -18,13 +18,6 @@
     <div class="version-main">
       <div class="version-badges">
         <span v-if="torrent.resolution" class="v-badge res">{{ torrent.resolution }}</span>
-        <img
-          v-if="streamingServiceLogo"
-          class="v-service-logo"
-          :src="streamingServiceLogo.src"
-          :alt="streamingServiceLogo.alt"
-          :title="streamingServiceLogo.alt"
-        >
         <span v-if="displayQualityBadge" class="v-badge qual">{{ displayQualityBadge }}</span>
         <span v-if="displayCodecBadge" class="v-badge codec">{{ displayCodecBadge }}</span>
         <span v-if="showHdrBadge" class="v-badge hdr">HDR</span>
@@ -52,12 +45,19 @@
         :src="dvdLogoUrl"
         alt="DVD"
       >
-      <DolbyBadges
-        class="version-dolby"
-        :has-dolby-vision="hasDolbyVision"
-        :has-dolby-atmos="hasDolbyAtmos"
-        :is-hdr="hasHdr"
-      />
+      <img
+        v-if="streamingServiceLogo"
+        class="version-service-logo"
+        :src="streamingServiceLogo.src"
+        :alt="streamingServiceLogo.alt"
+        :title="streamingServiceLogo.alt"
+      >
+        <DolbyBadges
+          class="version-dolby"
+          :has-dolby-vision="hasDolbyVision"
+          :has-dolby-atmos="hasDolbyAtmos"
+          :is-hdr="hasHdr"
+        />
     </div>
     <div v-if="showActions" class="version-actions">
       <button
@@ -89,6 +89,8 @@ import appleTvLogoUrl from '../assets/service-apple-tv.webp';
 import netflixLogoUrl from '../assets/service-netflix.webp';
 import hboMaxLogoUrl from '../assets/service-hbo-max.webp';
 import huluLogoUrl from '../assets/service-hulu.webp';
+import disneyLogoUrl from '../assets/service-disney.svg';
+import itunesLogoUrl from '../assets/service-itunes.png';
 
 defineOptions({
   inheritAttrs: false,
@@ -133,8 +135,10 @@ const webQualityPattern = /^web(?:[ .-]?dl|[ .-]?rip)$/i;
 const serviceLogoMap: Array<{ aliases: string[]; src: string; alt: string }> = [
   { aliases: ['amazon studios', 'amazon prime video', 'prime video', 'amazon', 'amzn'], src: amazonLogoUrl, alt: 'Amazon Prime Video' },
   { aliases: ['apple tv+', 'apple tv plus', 'apple tv', 'atvp'], src: appleTvLogoUrl, alt: 'Apple TV+' },
+  { aliases: ['itunes', 'it'], src: itunesLogoUrl, alt: 'iTunes' },
   { aliases: ['netflix', 'nf', 'nflx'], src: netflixLogoUrl, alt: 'Netflix' },
   { aliases: ['hbo max', 'max', 'hmax'], src: hboMaxLogoUrl, alt: 'HBO Max' },
+  { aliases: ['disney plus', 'disney+', 'disney plus hotstar', 'dsnp'], src: disneyLogoUrl, alt: 'Disney+' },
   { aliases: ['hulu'], src: huluLogoUrl, alt: 'Hulu' },
 ];
 
@@ -160,6 +164,27 @@ function hasHdrTag(value: string | null | undefined): boolean {
 
 function normalizeProviderName(value: string | null | undefined): string {
   return (value || '').toLowerCase().replace(/[^a-z0-9+]+/g, ' ').trim();
+}
+
+function normalizeQualityBadge(value: string): string {
+  const normalized = value.toLowerCase().replace(/[^a-z0-9]+/g, '');
+
+  if (normalized === 'hdtv' || normalized === 'pdtv' || normalized === 'tvrip' || normalized === 'sdtv') {
+    return 'TV';
+  }
+
+  if (
+    normalized.includes('cam')
+    || normalized === 'telesync'
+    || normalized === 'ts'
+    || normalized === 'hdts'
+    || normalized === 'telecine'
+    || normalized === 'tc'
+  ) {
+    return 'CAM';
+  }
+
+  return value;
 }
 
 const hasDolbyVision = computed(() => {
@@ -217,7 +242,7 @@ const displayQualityBadge = computed(() => {
   if (!props.torrent.quality || hasDolbyTag(props.torrent.quality)) return null;
   if (streamingServiceLogo.value) return null;
   if (blurayTagPattern.test(props.torrent.quality)) return null;
-  return props.torrent.quality;
+  return normalizeQualityBadge(props.torrent.quality);
 });
 
 const displayCodecBadge = computed(() => {
@@ -321,20 +346,24 @@ function handleActivate(event: MouseEvent | KeyboardEvent) {
 .version-dolby-cell {
   grid-column: 2;
   display: flex;
-  align-items: stretch;
+  align-items: center;
   justify-content: flex-end;
   gap: 6px;
+  height: 36px;
   min-width: 0;
 }
 
 .version-dolby {
   align-self: stretch;
+  height: 100%;
 }
 
 .version-disc-logo {
-  align-self: center;
+  align-self: stretch;
+  display: block;
   width: auto;
-  height: 22px;
+  height: 100%;
+  max-height: 100%;
   object-fit: contain;
   filter: drop-shadow(0 0 0.4px rgba(0, 0, 0, 0.5));
 }
@@ -356,12 +385,13 @@ function handleActivate(event: MouseEvent | KeyboardEvent) {
   text-transform: uppercase;
 }
 
-.v-service-logo {
-  align-self: center;
+.version-service-logo {
+  align-self: stretch;
+  display: block;
   width: auto;
-  height: 16px;
+  height: 100%;
+  max-height: 100%;
   object-fit: contain;
-  margin-right: 2px;
 }
 
 .v-badge.res {
