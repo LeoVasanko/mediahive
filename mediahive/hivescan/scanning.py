@@ -2,6 +2,7 @@
 
 import asyncio
 import glob
+from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -160,6 +161,15 @@ async def find_playable_file(path: Path) -> Optional[str]:
         _playable_file_cache[cache_key] = result
         return result
 
+    # Check for DVD disc structure
+    video_ts_dir = path / "VIDEO_TS"
+    video_ts_ifo = video_ts_dir / "VIDEO_TS.IFO"
+
+    if await AsyncPath(video_ts_ifo).exists():
+        result = str(video_ts_ifo)
+        _playable_file_cache[cache_key] = result
+        return result
+
     # Check nested Blu-ray structure (e.g., MovieName/DISC1/BDMV/)
     try:
         for subdir in ap.iterdir():
@@ -175,6 +185,14 @@ async def find_playable_file(path: Path) -> Optional[str]:
 
                 if await AsyncPath(nested_index).exists():
                     result = str(nested_index)
+                    _playable_file_cache[cache_key] = result
+                    return result
+
+                nested_video_ts_dir = Path(subdir) / "VIDEO_TS"
+                nested_video_ts_ifo = nested_video_ts_dir / "VIDEO_TS.IFO"
+
+                if await AsyncPath(nested_video_ts_ifo).exists():
+                    result = str(nested_video_ts_ifo)
                     _playable_file_cache[cache_key] = result
                     return result
     except OSError, PermissionError:
@@ -209,11 +227,61 @@ async def find_metadata_probe_file(playable_path: Optional[str]) -> Optional[str
     For Blu-ray control files (``*.bdmv``), returns the largest
     ``BDMV/STREAM/*.m2ts`` file, which ffmpeg can usually inspect even
     when direct BDMV probing is unsupported.
+    For DVD control files (``*.ifo``), returns a ``concat:`` URI that
+    covers all VOBs of the largest title set, giving ffmpeg the full
+    main feature to probe.
     """
     if not playable_path:
         return None
 
     if not playable_path.lower().endswith(".bdmv"):
+        # For DVD control files, build a concat URI covering the main title set
+        if playable_path.lower().endswith(".ifo"):
+            cache_key = playable_path
+            if cache_key in _bluray_probe_file_cache:
+                return _bluray_probe_file_cache[cache_key]
+
+            playable = Path(playable_path)
+            video_ts_dir = (
+                playable.parent
+                if playable.parent.name.upper() == "VIDEO_TS"
+                else playable.parent
+            )
+
+            # Group VOBs by title set (VTS_XX_Y.VOB)
+            title_sets: Dict[str, List[Tuple[str, int]]] = defaultdict(list)
+            try:
+                for f in AsyncPath(video_ts_dir).glob("*.vob"):
+                    af = AsyncPath(f)
+                    if not await af.is_file():
+                        continue
+                    name = Path(f).name.upper()
+                    if name.startswith("VTS_") and len(name) >= 10:
+                        ts_num = name[4:6]
+                        size = (await af.stat()).st_size
+                        title_sets[ts_num].append((str(f), size))
+            except OSError, PermissionError:
+                _bluray_probe_file_cache[cache_key] = None
+                return None
+
+            if not title_sets:
+                _bluray_probe_file_cache[cache_key] = None
+                return None
+
+            # Pick the title set with the largest total size (main feature)
+            best_ts = max(
+                title_sets.keys(),
+                key=lambda ts: sum(size for _, size in title_sets[ts]),
+            )
+            best_vobs = sorted(
+                title_sets[best_ts], key=lambda x: x[0].upper()
+            )
+            concat_uri = "concat:" + "|".join(
+                path for path, _ in best_vobs
+            )
+            _bluray_probe_file_cache[cache_key] = concat_uri
+            return concat_uri
+
         return playable_path
 
     cache_key = playable_path

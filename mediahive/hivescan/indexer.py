@@ -240,7 +240,7 @@ def _build_episodes_data(
         reel_sources = None
         if generate_showreels and episode_files:
             best_file = episode_files[0]["path"]
-            if best_file and not best_file.endswith(".bdmv"):
+            if best_file and not best_file.endswith((".bdmv", ".ifo")):
                 reel_sources = get_existing_episode_reel_sources(
                     series_folder,
                     season_num,
@@ -510,7 +510,9 @@ async def _process_movies(
                 ),
             )
             best_version = torrents[best_relpath]
-            if best_version.playable_file:
+            if best_version.playable_file and not best_version.playable_file.endswith(
+                ".ifo"
+            ):
                 abs_playable = (
                     str(Path(media_root) / best_version.playable_file)
                     if media_root
@@ -584,7 +586,7 @@ async def _process_movies(
             )
             best_version = torrents[best_relpath]
             if best_version.playable_file and not best_version.playable_file.endswith(
-                ".bdmv"
+                (".bdmv", ".ifo")
             ):
                 abs_playable = (
                     str(Path(media_root) / best_version.playable_file)
