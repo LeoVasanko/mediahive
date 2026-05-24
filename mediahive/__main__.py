@@ -15,10 +15,14 @@ def _configure_windows_event_loop_policy() -> None:
     """Ensure Windows uses Proactor loop so asyncio subprocess APIs are available."""
     if sys.platform != "win32":
         return
-    policy_cls = getattr(asyncio, "WindowsProactorEventLoopPolicy", None)
-    if policy_cls is None:
-        return
-    asyncio.set_event_loop_policy(policy_cls())
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        policy_cls = getattr(asyncio, "WindowsProactorEventLoopPolicy", None)
+        if policy_cls is None:
+            return
+        asyncio.set_event_loop_policy(policy_cls())
 
 
 def _derive_name(path: str) -> str:
@@ -64,7 +68,7 @@ def main():
             roots[name] = p.as_posix()
         os.environ["MEDIAHIVE_ROOTS"] = json.dumps(roots)
 
-    dev = {"reload": True, "reload_dirs": ["mediahive"]}
+    dev = {"reload": True, "reload_dirs": ["mediahive"], "loop": "none"}
     server.run(
         "mediahive.server:app",
         listen=args.listen,
