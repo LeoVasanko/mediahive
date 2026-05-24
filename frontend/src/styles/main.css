@@ -33,11 +33,18 @@ html, body {
   color: var(--text-primary);
   min-height: 100vh;
   overflow-x: hidden;
+  overflow-y: auto;
   -webkit-font-smoothing: antialiased;
   text-align: justify;
   hyphens: auto;
   -webkit-hyphens: auto;
   -ms-hyphens: auto;
+}
+
+html::-webkit-scrollbar,
+body::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
 
 html:not(.pointer-visible),
