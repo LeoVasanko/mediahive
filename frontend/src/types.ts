@@ -56,6 +56,7 @@ export interface Torrent {
   encoder: string | null;
   size: number | null;
   added_at: number | null;
+  root_id?: string | null;
 }
 
 export interface Movie {

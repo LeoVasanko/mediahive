@@ -1,5 +1,5 @@
 import { ref, readonly, onUnmounted } from 'vue';
-import type { Movie, Series, MediaIndex, TaskInfo, WsMessage } from '../types';
+import type { Movie, Series, Episode, Season, Torrent, MediaIndex, TaskInfo, WsMessage } from '../types';
 
 interface RootState {
   rootId: string;
@@ -34,52 +34,138 @@ export function useMediaWebSocket() {
     return itemId.split(':').pop() || itemId;
   }
 
-  function movieQualityScore(m: Movie): number {
+  function torrentQualityScore(t: Torrent): number {
     let score = 0;
-    if (m.info) score += 10;
-    if (m.cover_path) score += 5;
-    if (m.backdrop_path) score += 3;
-    if (m.showreel_images?.length) score += 3;
-    score += Object.keys(m.torrents || {}).length;
+    const res = (t.resolution || '').toLowerCase();
+    if (res.includes('2160') || res.includes('4k') || res.includes('uhd')) score += 100;
+    else if (res.includes('1080') || res.includes('fhd')) score += 80;
+    else if (res.includes('720') || res === 'hd') score += 60;
+    else if (res.includes('480') || res === 'sd') score += 40;
+    else if (res.includes('360')) score += 20;
+    if (t.has_dolby_vision) score += 15;
+    if (t.is_hdr) score += 10;
+    if (t.has_dolby_atmos) score += 5;
     return score;
   }
 
-  function seriesQualityScore(s: Series): number {
-    let score = 0;
-    if (s.info) score += 10;
-    if (s.cover_path) score += 5;
-    if (s.backdrop_path) score += 3;
-    const seasons = s.seasons || [];
-    for (const season of seasons) {
-      for (const ep of season.episodes || []) {
-        score += Object.keys(ep.torrents || {}).length;
-      }
-    }
-    return score;
+  function annotateTorrents(torrents: { [key: string]: Torrent }, rootId: string | null): { [key: string]: Torrent } {
+    return Object.fromEntries(
+      Object.entries(torrents || {}).map(([k, t]) => [k, { ...t, root_id: t.root_id || rootId }])
+    );
   }
 
-  function deduplicateMovies(items: Movie[]): Movie[] {
-    const map = new Map<string, Movie>();
-    for (const m of items) {
-      const hash = getContentHash(m.id);
-      const existing = map.get(hash);
-      if (!existing || movieQualityScore(m) > movieQualityScore(existing)) {
-        map.set(hash, m);
-      }
+  function mergeTorrentDicts(a: { [key: string]: Torrent }, b: { [key: string]: Torrent }): { [key: string]: Torrent } {
+    const merged: { [key: string]: Torrent } = { ...a };
+    for (const [k, t] of Object.entries(b)) {
+      const uniqueKey = merged[k] ? `${t.root_id || 'unknown'}:${k}` : k;
+      merged[uniqueKey] = t;
     }
-    return Array.from(map.values());
+    const sorted = Object.entries(merged).sort(([, t1], [, t2]) => {
+      const s1 = torrentQualityScore(t1);
+      const s2 = torrentQualityScore(t2);
+      if (s2 !== s1) return s2 - s1;
+      return (t2.size || 0) - (t1.size || 0);
+    });
+    return Object.fromEntries(sorted);
   }
 
-  function deduplicateSeries(items: Series[]): Series[] {
-    const map = new Map<string, Series>();
-    for (const s of items) {
-      const hash = getContentHash(s.id);
-      const existing = map.get(hash);
-      if (!existing || seriesQualityScore(s) > seriesQualityScore(existing)) {
-        map.set(hash, s);
+  function mergeMovies(a: Movie, b: Movie): Movie {
+    const torrentsA = annotateTorrents(a.torrents, a.root_id);
+    const torrentsB = annotateTorrents(b.torrents, b.root_id);
+    return {
+      ...a,
+      torrents: mergeTorrentDicts(torrentsA, torrentsB),
+      info: a.info || b.info,
+      cover_path: a.cover_path || b.cover_path,
+      backdrop_path: a.backdrop_path || b.backdrop_path,
+      showreel_images: a.showreel_images?.length ? a.showreel_images : b.showreel_images,
+      showreel_source_sets: a.showreel_source_sets?.length ? a.showreel_source_sets : b.showreel_source_sets,
+    };
+  }
+
+  function mergeEpisodes(a: Episode, b: Episode, rootIdA: string | null, rootIdB: string | null): Episode {
+    const torrentsA = annotateTorrents(a.torrents, rootIdA);
+    const torrentsB = annotateTorrents(b.torrents, rootIdB);
+    return {
+      ...a,
+      torrents: mergeTorrentDicts(torrentsA, torrentsB),
+      reel_image: a.reel_image || b.reel_image,
+      reel_sources: a.reel_sources?.length ? a.reel_sources : b.reel_sources,
+    };
+  }
+
+  function mergeSeasons(a: Season, b: Season, rootIdA: string | null, rootIdB: string | null): Season {
+    const episodeMap = new Map<number, Episode>();
+    for (const ep of a.episodes) {
+      episodeMap.set(ep.episode_number, ep);
+    }
+    for (const ep of b.episodes) {
+      const existing = episodeMap.get(ep.episode_number);
+      if (existing) {
+        episodeMap.set(ep.episode_number, mergeEpisodes(existing, ep, rootIdA, rootIdB));
+      } else {
+        episodeMap.set(ep.episode_number, {
+          ...ep,
+          torrents: annotateTorrents(ep.torrents, rootIdB),
+        });
       }
     }
-    return Array.from(map.values());
+    return {
+      ...a,
+      episodes: Array.from(episodeMap.values()).sort((a, b) => a.episode_number - b.episode_number),
+      poster_path: a.poster_path || b.poster_path,
+    };
+  }
+
+  function mergeSeries(a: Series, b: Series): Series {
+    const seasonMap = new Map<number, Season>();
+    for (const season of a.seasons || []) {
+      seasonMap.set(season.season_number, { ...season, episodes: season.episodes.map(ep => ({ ...ep, torrents: annotateTorrents(ep.torrents, a.root_id) })) });
+    }
+    for (const season of b.seasons || []) {
+      const existing = seasonMap.get(season.season_number);
+      if (existing) {
+        seasonMap.set(season.season_number, mergeSeasons(existing, season, a.root_id, b.root_id));
+      } else {
+        seasonMap.set(season.season_number, {
+          ...season,
+          episodes: season.episodes.map(ep => ({ ...ep, torrents: annotateTorrents(ep.torrents, b.root_id) })),
+        });
+      }
+    }
+    return {
+      ...a,
+      seasons: Array.from(seasonMap.values()).sort((a, b) => a.season_number - b.season_number),
+      info: a.info || b.info,
+      cover_path: a.cover_path || b.cover_path,
+      backdrop_path: a.backdrop_path || b.backdrop_path,
+    };
+  }
+
+  function mergeItemsByHash<T extends Movie | Series>(
+    items: T[],
+    mergeFn: (a: T, b: T) => T
+  ): T[] {
+    const map = new Map<string, T[]>();
+    for (const item of items) {
+      const hash = getContentHash(item.id);
+      const arr = map.get(hash) || [];
+      arr.push(item);
+      map.set(hash, arr);
+    }
+    const merged: T[] = [];
+    for (const [, group] of map) {
+      if (group.length === 1) {
+        merged.push(group[0]);
+      } else {
+        let result = group[0];
+        for (let i = 1; i < group.length; i++) {
+          result = mergeFn(result, group[i]);
+        }
+        merged.push(result);
+      }
+    }
+    return merged;
   }
 
   function buildIndex(): MediaIndex {
@@ -89,17 +175,17 @@ export function useMediaWebSocket() {
       movies.push(...state.movieMap.values());
       series.push(...state.seriesMap.values());
     }
-    const dedupedMovies = deduplicateMovies(movies);
-    const dedupedSeries = deduplicateSeries(series);
+    const mergedMovies = mergeItemsByHash(movies, mergeMovies);
+    const mergedSeries = mergeItemsByHash(series, mergeSeries);
     return {
       version: 0,
       generated_at: new Date().toISOString(),
       stats: {
-        total_movies: dedupedMovies.length,
-        total_series: dedupedSeries.length,
+        total_movies: mergedMovies.length,
+        total_series: mergedSeries.length,
       },
-      movies: dedupedMovies,
-      series: dedupedSeries,
+      movies: mergedMovies,
+      series: mergedSeries,
     };
   }
 

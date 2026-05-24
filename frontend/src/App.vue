@@ -1478,14 +1478,18 @@ function findRootIdForPath(filePath: string): string | null {
   if (!mediaIndex.value) return null;
   for (const movie of mediaIndex.value.movies) {
     for (const torrent of Object.values(movie.torrents || {})) {
-      if (torrent.playable_file === filePath) return movie.root_id;
+      if (torrent.playable_file === filePath) {
+        return torrent.root_id || movie.root_id;
+      }
     }
   }
   for (const series of mediaIndex.value.series) {
     for (const season of series.seasons || []) {
       for (const episode of season.episodes || []) {
         for (const torrent of Object.values(episode.torrents || {})) {
-          if (torrent.playable_file === filePath) return series.root_id;
+          if (torrent.playable_file === filePath) {
+            return torrent.root_id || series.root_id;
+          }
         }
       }
     }
