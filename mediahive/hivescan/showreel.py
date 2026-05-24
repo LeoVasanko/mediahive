@@ -51,8 +51,16 @@ def _log_ffmpeg_not_found_once(cmd: list[str]) -> None:
     )
 
 
-async def _run_ffmpeg(cmd: list[str], timeout: float) -> tuple[bytes, bytes] | None:
-    """Run ffmpeg with consistent timeout/crash/not-found handling and logging."""
+async def _run_ffmpeg(
+    cmd: list[str],
+    timeout: float,
+    allow_nonzero_exit: bool = False,
+) -> tuple[bytes, bytes] | None:
+    """Run ffmpeg with consistent timeout/crash/not-found handling and logging.
+
+    Set ``allow_nonzero_exit`` for probe-style commands where ffmpeg may return
+    a non-zero code while still emitting useful metadata on stderr.
+    """
     proc: asyncio.subprocess.Process | None = None
     try:
         logger.debug("    $ %s", shlex.join(cmd))
@@ -77,6 +85,13 @@ async def _run_ffmpeg(cmd: list[str], timeout: float) -> tuple[bytes, bytes] | N
             return None
 
         if proc.returncode != 0:
+            if allow_nonzero_exit:
+                logger.debug(
+                    "ffmpeg command exited non-zero as expected for probe. cmd=%s returncode=%s",
+                    shlex.join(cmd),
+                    proc.returncode,
+                )
+                return stdout, stderr
             logger.error(
                 "ffmpeg command failed. cmd=%s stderr=%s",
                 shlex.join(cmd),
@@ -428,7 +443,7 @@ async def probe_media_info(video_path: str) -> MediaProbeInfo:
 
     info = MediaProbeInfo()
     cmd = ["ffmpeg", "-hide_banner", "-i", video_path]
-    ffmpeg_result = await _run_ffmpeg(cmd, timeout=30)
+    ffmpeg_result = await _run_ffmpeg(cmd, timeout=30, allow_nonzero_exit=True)
     if ffmpeg_result is None:
         _media_probe_cache[video_path] = info
         return info
