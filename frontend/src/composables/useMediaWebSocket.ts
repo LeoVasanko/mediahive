@@ -30,6 +30,58 @@ export function useMediaWebSocket() {
   const roots = ref<Map<string, RootState>>(new Map());
   let disposed = false;
 
+  function getContentHash(itemId: string): string {
+    return itemId.split(':').pop() || itemId;
+  }
+
+  function movieQualityScore(m: Movie): number {
+    let score = 0;
+    if (m.info) score += 10;
+    if (m.cover_path) score += 5;
+    if (m.backdrop_path) score += 3;
+    if (m.showreel_images?.length) score += 3;
+    score += Object.keys(m.torrents || {}).length;
+    return score;
+  }
+
+  function seriesQualityScore(s: Series): number {
+    let score = 0;
+    if (s.info) score += 10;
+    if (s.cover_path) score += 5;
+    if (s.backdrop_path) score += 3;
+    const seasons = s.seasons || [];
+    for (const season of seasons) {
+      for (const ep of season.episodes || []) {
+        score += Object.keys(ep.torrents || {}).length;
+      }
+    }
+    return score;
+  }
+
+  function deduplicateMovies(items: Movie[]): Movie[] {
+    const map = new Map<string, Movie>();
+    for (const m of items) {
+      const hash = getContentHash(m.id);
+      const existing = map.get(hash);
+      if (!existing || movieQualityScore(m) > movieQualityScore(existing)) {
+        map.set(hash, m);
+      }
+    }
+    return Array.from(map.values());
+  }
+
+  function deduplicateSeries(items: Series[]): Series[] {
+    const map = new Map<string, Series>();
+    for (const s of items) {
+      const hash = getContentHash(s.id);
+      const existing = map.get(hash);
+      if (!existing || seriesQualityScore(s) > seriesQualityScore(existing)) {
+        map.set(hash, s);
+      }
+    }
+    return Array.from(map.values());
+  }
+
   function buildIndex(): MediaIndex {
     const movies: Movie[] = [];
     const series: Series[] = [];
@@ -37,15 +89,17 @@ export function useMediaWebSocket() {
       movies.push(...state.movieMap.values());
       series.push(...state.seriesMap.values());
     }
+    const dedupedMovies = deduplicateMovies(movies);
+    const dedupedSeries = deduplicateSeries(series);
     return {
       version: 0,
       generated_at: new Date().toISOString(),
       stats: {
-        total_movies: movies.length,
-        total_series: series.length,
+        total_movies: dedupedMovies.length,
+        total_series: dedupedSeries.length,
       },
-      movies,
-      series,
+      movies: dedupedMovies,
+      series: dedupedSeries,
     };
   }
 
