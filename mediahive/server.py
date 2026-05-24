@@ -9,6 +9,7 @@ pipeline with live WebSocket updates.  Excluded paths are controlled by
 from __future__ import annotations
 
 import asyncio
+import ctypes
 import json
 import logging
 import mimetypes
@@ -57,6 +58,9 @@ supervisor = Supervisor()
 
 _RANGE_RE = re.compile(r"bytes=(\d*)-(\d*)$")
 
+if sys.platform == "win32":
+    from ctypes import wintypes
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -95,6 +99,93 @@ def _open_with_default_app(path: Path) -> None:
 
     opener = "open" if sys.platform == "darwin" else "xdg-open"
     subprocess.Popen([opener, str(path)], **_POPEN_KWARGS)
+
+
+def _select_file_in_windows_explorer(path: Path) -> bool:
+    """Select a file in Explorer using Shell APIs to avoid CLI parsing issues."""
+    if sys.platform != "win32":
+        return False
+
+    if not path.exists() or not path.is_file():
+        return False
+
+    # Use shell32 APIs directly; this avoids explorer.exe argument parsing edge cases.
+    ole32 = ctypes.OleDLL("ole32")
+    shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+
+    pidl_folder = wintypes.LPVOID()
+    pidl_file = wintypes.LPVOID()
+
+    sh_parse_display_name = shell32.SHParseDisplayName
+    sh_parse_display_name.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.LPVOID,
+        ctypes.POINTER(wintypes.LPVOID),
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    sh_parse_display_name.restype = ctypes.c_long
+
+    sh_open_folder_and_select_items = shell32.SHOpenFolderAndSelectItems
+    sh_open_folder_and_select_items.argtypes = [
+        wintypes.LPVOID,
+        wintypes.UINT,
+        ctypes.POINTER(wintypes.LPVOID),
+        wintypes.DWORD,
+    ]
+    sh_open_folder_and_select_items.restype = ctypes.c_long
+
+    co_initialize = ole32.CoInitialize
+    co_initialize.argtypes = [wintypes.LPVOID]
+    co_initialize.restype = ctypes.c_long
+
+    co_uninitialize = ole32.CoUninitialize
+    co_uninitialize.argtypes = []
+    co_uninitialize.restype = None
+
+    co_task_mem_free = ole32.CoTaskMemFree
+    co_task_mem_free.argtypes = [wintypes.LPVOID]
+    co_task_mem_free.restype = None
+
+    hr = co_initialize(None)
+    if hr < 0:
+        return False
+
+    try:
+        attrs = wintypes.DWORD(0)
+        folder_path = str(path.parent)
+        hr = sh_parse_display_name(
+            folder_path,
+            None,
+            ctypes.byref(pidl_folder),
+            0,
+            ctypes.byref(attrs),
+        )
+        if hr < 0:
+            return False
+
+        attrs2 = wintypes.DWORD(0)
+        file_path = str(path)
+        hr = sh_parse_display_name(
+            file_path,
+            None,
+            ctypes.byref(pidl_file),
+            0,
+            ctypes.byref(attrs2),
+        )
+        if hr < 0:
+            return False
+
+        item_array = (wintypes.LPVOID * 1)()
+        item_array[0] = pidl_file
+        hr = sh_open_folder_and_select_items(pidl_folder, 1, item_array, 0)
+        return hr >= 0
+    finally:
+        if pidl_file:
+            co_task_mem_free(pidl_file)
+        if pidl_folder:
+            co_task_mem_free(pidl_folder)
+        co_uninitialize()
 
 
 def _parse_range_header(range_header: str, file_size: int) -> tuple[int, int]:
@@ -399,11 +490,13 @@ async def open_folder(root_id: str, request: Request):
         if sys.platform == "win32":
             native_path = str(target_path).replace("/", "\\")
             if target_path.is_file():
-                subprocess.Popen(
-                    ["explorer", "/select,", native_path], **_POPEN_KWARGS
-                )
+                if not _select_file_in_windows_explorer(target_path):
+                    select_arg = f'/n,/select,"{native_path}"'
+                    subprocess.Popen(
+                        ["explorer.exe", select_arg], **_POPEN_KWARGS
+                    )
             else:
-                subprocess.Popen(["explorer", native_path], **_POPEN_KWARGS)
+                subprocess.Popen(["explorer.exe", native_path], **_POPEN_KWARGS)
         elif sys.platform == "darwin":
             if target_path.is_file():
                 subprocess.Popen(["open", "-R", str(target_path)])
