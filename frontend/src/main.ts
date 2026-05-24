@@ -11,10 +11,13 @@ installInputModalityTracking()
 installKeyboardNavigation()
 installGamepadNavigation()
 
-if ('serviceWorker' in navigator && !navigator.serviceWorker.controller) {
-	navigator.serviceWorker.addEventListener('controllerchange', () => {
-		window.location.reload()
-	}, { once: true })
+// Unregister any legacy service workers — MediaHive no longer uses a PWA/SW.
+if ('serviceWorker' in navigator) {
+	navigator.serviceWorker.getRegistrations().then((registrations) => {
+		for (const registration of registrations) {
+			registration.unregister()
+		}
+	})
 }
 
 createApp(App).use(router).mount('#app')

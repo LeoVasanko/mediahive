@@ -86,83 +86,88 @@ class IndexStore:
             logger.info("No snapshot found at %s, starting fresh", self.snapshot_path)
             return
         try:
-            data = msgspec.json.decode(await ap.read_bytes(), type=IndexSnapshot)
-            for m in data.movies:
-                if m.showreel_source_sets:
-                    filtered_source_sets = []
-                    for source_set in m.showreel_source_sets:
-                        filtered_sources = [
-                            p
-                            for p in source_set
-                            if (
-                                Path(self.media_root, p).exists()
-                                if self.media_root
-                                else Path(p).exists()
-                            )
-                        ]
-                        if filtered_sources:
-                            filtered_source_sets.append(filtered_sources)
-                    m.showreel_source_sets = filtered_source_sets or None
-                    m.showreel_images = (
-                        [source_set[0] for source_set in filtered_source_sets]
-                        if filtered_source_sets
-                        else None
-                    )
-                elif m.showreel_images:
-                    filtered_images = [
+            raw = await ap.read_bytes()
+            await asyncio.to_thread(self._load_snapshot_sync, raw)
+        except Exception:
+            logger.exception("Failed to load snapshot from %s", self.snapshot_path)
+
+    def _load_snapshot_sync(self, raw: bytes) -> None:
+        """Synchronous snapshot parsing (runs in thread pool)."""
+        data = msgspec.json.decode(raw, type=IndexSnapshot)
+        for m in data.movies:
+            if m.showreel_source_sets:
+                filtered_source_sets = []
+                for source_set in m.showreel_source_sets:
+                    filtered_sources = [
                         p
-                        for p in m.showreel_images
+                        for p in source_set
                         if (
                             Path(self.media_root, p).exists()
                             if self.media_root
                             else Path(p).exists()
                         )
                     ]
-                    m.showreel_images = filtered_images or None
-                    m.showreel_source_sets = (
-                        [[p] for p in filtered_images] if filtered_images else None
+                    if filtered_sources:
+                        filtered_source_sets.append(filtered_sources)
+                m.showreel_source_sets = filtered_source_sets or None
+                m.showreel_images = (
+                    [source_set[0] for source_set in filtered_source_sets]
+                    if filtered_source_sets
+                    else None
+                )
+            elif m.showreel_images:
+                filtered_images = [
+                    p
+                    for p in m.showreel_images
+                    if (
+                        Path(self.media_root, p).exists()
+                        if self.media_root
+                        else Path(p).exists()
                     )
-                m.id = self._maybe_migrate_id(m.id)
-                m.root_id = self.root_id
-                self.movies[m.id] = m
-            for s in data.series:
-                for season in s.seasons:
-                    for ep in season.episodes:
-                        if ep.reel_sources:
-                            filtered_sources = [
-                                p
-                                for p in ep.reel_sources
-                                if (
-                                    Path(self.media_root, p).exists()
-                                    if self.media_root
-                                    else Path(p).exists()
-                                )
-                            ]
-                            ep.reel_sources = filtered_sources or None
-                            ep.reel_image = (
-                                filtered_sources[0] if filtered_sources else None
-                            )
-                        elif ep.reel_image:
-                            full = (
-                                Path(self.media_root, ep.reel_image)
+                ]
+                m.showreel_images = filtered_images or None
+                m.showreel_source_sets = (
+                    [[p] for p in filtered_images] if filtered_images else None
+                )
+            m.id = self._maybe_migrate_id(m.id)
+            m.root_id = self.root_id
+            self.movies[m.id] = m
+        for s in data.series:
+            for season in s.seasons:
+                for ep in season.episodes:
+                    if ep.reel_sources:
+                        filtered_sources = [
+                            p
+                            for p in ep.reel_sources
+                            if (
+                                Path(self.media_root, p).exists()
                                 if self.media_root
-                                else Path(ep.reel_image)
+                                else Path(p).exists()
                             )
-                            if full.exists():
-                                ep.reel_sources = [ep.reel_image]
-                            else:
-                                ep.reel_image = None
-                                ep.reel_sources = None
-                s.id = self._maybe_migrate_id(s.id)
-                s.root_id = self.root_id
-                self.series[s.id] = s
-            logger.info(
-                "Loaded snapshot: %d movies, %d series",
-                len(self.movies),
-                len(self.series),
-            )
-        except Exception:
-            logger.exception("Failed to load snapshot from %s", self.snapshot_path)
+                        ]
+                        ep.reel_sources = filtered_sources or None
+                        ep.reel_image = (
+                            filtered_sources[0] if filtered_sources else None
+                        )
+                    elif ep.reel_image:
+                        full = (
+                            Path(self.media_root, ep.reel_image)
+                            if self.media_root
+                            else Path(ep.reel_image)
+                        )
+                        if full.exists():
+                            ep.reel_sources = [ep.reel_image]
+                        else:
+                            ep.reel_image = None
+                            ep.reel_sources = None
+            s.id = self._maybe_migrate_id(s.id)
+            s.root_id = self.root_id
+            self.series[s.id] = s
+        logger.info(
+            "Loaded snapshot: %d movies, %d series",
+            len(self.movies),
+            len(self.series),
+        )
 
     async def _write_snapshot(self) -> None:
         """Write current index to disk (called from debounce task)."""

@@ -182,7 +182,8 @@ class RootScanner:
             is_media_container = False
 
             try:
-                for item_async in ap.iterdir():
+                entries = await asyncio.to_thread(lambda: list(ap.iterdir()))
+                for item_async in entries:
                     item = Path(item_async)
                     if item.name.startswith("."):
                         continue
@@ -249,7 +250,7 @@ class RootScanner:
 
         root_ap = AsyncPath(self.media_root)
         try:
-            root_children = list(root_ap.iterdir())
+            root_children = await asyncio.to_thread(lambda: list(root_ap.iterdir()))
         except (OSError, PermissionError):
             logger.error("Cannot list media root: %s", self.media_root)
             return downloads

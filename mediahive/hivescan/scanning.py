@@ -174,7 +174,8 @@ async def find_playable_file(path: Path) -> Optional[str]:
 
     # Check nested Blu-ray structure (e.g., MovieName/DISC1/BDMV/)
     try:
-        for subdir in ap.iterdir():
+        entries = await asyncio.to_thread(lambda: list(ap.iterdir()))
+        for subdir in entries:
             if await AsyncPath(subdir).is_dir():
                 nested_bdmv_dir = Path(subdir) / "BDMV"
                 nested_movieobject = nested_bdmv_dir / "MovieObject.bdmv"
