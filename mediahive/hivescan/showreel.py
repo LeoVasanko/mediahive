@@ -22,6 +22,7 @@ from aiopathlib import AsyncPath
 from mediahive.hivescan.utils import classify_resolution_from_dimensions
 
 logger = logging.getLogger("hivescan.showreel")
+_ffmpeg_not_found_logged = False
 
 
 # Suppress console windows when spawning subprocesses on Windows
@@ -30,6 +31,69 @@ async def _subprocess_exec(*args, **kwargs):
     if sys.platform == "win32":
         kwargs.setdefault("creationflags", subprocess.CREATE_NO_WINDOW)
     return await asyncio.create_subprocess_exec(*args, **kwargs)
+
+
+def _decode_stderr(stderr: bytes | None) -> str:
+    if not stderr:
+        return "(no stderr output)"
+    text = stderr.decode("utf-8", errors="replace").strip()
+    return text[:1500] if text else "(no stderr output)"
+
+
+def _log_ffmpeg_not_found_once(cmd: list[str]) -> None:
+    global _ffmpeg_not_found_logged
+    if _ffmpeg_not_found_logged:
+        return
+    _ffmpeg_not_found_logged = True
+    logger.error(
+        "ffmpeg executable was not found on PATH. Install ffmpeg and restart MediaHive. Command: %s",
+        shlex.join(cmd),
+    )
+
+
+async def _run_ffmpeg(cmd: list[str], timeout: float) -> tuple[bytes, bytes] | None:
+    """Run ffmpeg with consistent timeout/crash/not-found handling and logging."""
+    proc: asyncio.subprocess.Process | None = None
+    try:
+        logger.debug("    $ %s", shlex.join(cmd))
+        proc = await _subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except asyncio.TimeoutError:
+            await _kill_proc(proc)
+            try:
+                stdout, stderr = await proc.communicate()
+            except Exception:
+                stdout, stderr = b"", b""
+            logger.error(
+                "ffmpeg command timed out. cmd=%s stderr=%s",
+                shlex.join(cmd),
+                _decode_stderr(stderr),
+            )
+            return None
+
+        if proc.returncode != 0:
+            logger.error(
+                "ffmpeg command failed. cmd=%s stderr=%s",
+                shlex.join(cmd),
+                _decode_stderr(stderr),
+            )
+            return None
+
+        return stdout, stderr
+    except FileNotFoundError:
+        _log_ffmpeg_not_found_once(cmd)
+        return None
+    except asyncio.CancelledError:
+        await _kill_proc(proc)
+        raise
+    except Exception:
+        logger.exception("Unexpected error running ffmpeg command: %s", shlex.join(cmd))
+        return None
 
 
 async def _kill_proc(proc: asyncio.subprocess.Process | None) -> None:
@@ -282,18 +346,11 @@ async def get_av1_encoder() -> str:
         return _av1_encoder_cache
 
     # Check for NVIDIA AV1 encoder
-    try:
-        proc = await _subprocess_exec(
-            "ffmpeg",
-            "-hide_banner",
-            "-encoders",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
-        if b"av1_nvenc" in stdout:
-            # Verify it actually works (driver support)
-            test_proc = await _subprocess_exec(
+    encoders = await _run_ffmpeg(["ffmpeg", "-hide_banner", "-encoders"], timeout=10)
+    if encoders and b"av1_nvenc" in encoders[0]:
+        # Verify it actually works (driver support)
+        test_run = await _run_ffmpeg(
+            [
                 "ffmpeg",
                 "-f",
                 "lavfi",
@@ -304,15 +361,12 @@ async def get_av1_encoder() -> str:
                 "-f",
                 "null",
                 "-",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            await asyncio.wait_for(test_proc.communicate(), timeout=10)
-            if test_proc.returncode == 0:
-                _av1_encoder_cache = "av1_nvenc"
-                return _av1_encoder_cache
-    except Exception:
-        pass
+            ],
+            timeout=10,
+        )
+        if test_run is not None:
+            _av1_encoder_cache = "av1_nvenc"
+            return _av1_encoder_cache
 
     # Default to libsvtav1
     _av1_encoder_cache = "libsvtav1"
@@ -373,74 +427,70 @@ async def probe_media_info(video_path: str) -> MediaProbeInfo:
         return cached
 
     info = MediaProbeInfo()
-    try:
-        cmd = ["ffmpeg", "-hide_banner", "-i", video_path]
-        logger.debug("    $ %s", shlex.join(cmd))
-        proc = await _subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
-        text = (stderr + stdout).decode("utf-8", errors="replace")
-        lower_text = text.lower()
+    cmd = ["ffmpeg", "-hide_banner", "-i", video_path]
+    ffmpeg_result = await _run_ffmpeg(cmd, timeout=30)
+    if ffmpeg_result is None:
+        _media_probe_cache[video_path] = info
+        return info
 
-        duration_match = _duration_re.search(text)
-        if duration_match:
-            hours = int(duration_match.group(1))
-            minutes = int(duration_match.group(2))
-            seconds = float(duration_match.group(3))
-            info.duration = hours * 3600 + minutes * 60 + seconds
+    stdout, stderr = ffmpeg_result
+    text = (stderr + stdout).decode("utf-8", errors="replace")
+    lower_text = text.lower()
 
-        video_line = None
-        for line in text.splitlines():
-            if "Stream #" in line and "Video:" in line:
-                video_line = line
-                break
-        if video_line:
-            dim_match = _dimension_re.search(video_line)
-            if dim_match:
-                info.width = int(dim_match.group(1))
-                info.height = int(dim_match.group(2))
-                info.resolution = classify_resolution_from_dimensions(
-                    info.width, info.height
-                )
+    duration_match = _duration_re.search(text)
+    if duration_match:
+        hours = int(duration_match.group(1))
+        minutes = int(duration_match.group(2))
+        seconds = float(duration_match.group(3))
+        info.duration = hours * 3600 + minutes * 60 + seconds
 
-        info.is_hdr = (
-            "smpte2084" in lower_text
-            or "arib-std-b67" in lower_text
-            or "bt2020" in lower_text
-        )
+    video_line = None
+    for line in text.splitlines():
+        if "Stream #" in line and "Video:" in line:
+            video_line = line
+            break
+    if video_line:
+        dim_match = _dimension_re.search(video_line)
+        if dim_match:
+            info.width = int(dim_match.group(1))
+            info.height = int(dim_match.group(2))
+            info.resolution = classify_resolution_from_dimensions(
+                info.width, info.height
+            )
 
-        dovi_match = _dovi_profile_re.search(text)
-        if dovi_match:
-            info.dovi_profile = int(dovi_match.group(1))
-        elif "dvhe" in lower_text or "dvh1" in lower_text or "dav1" in lower_text:
-            info.dovi_profile = 7
-        info.has_dolby_vision = info.dovi_profile is not None
+    info.is_hdr = (
+        "smpte2084" in lower_text
+        or "arib-std-b67" in lower_text
+        or "bt2020" in lower_text
+    )
 
-        audio_languages: list[str] = []
-        for line in text.splitlines():
-            if "Stream #" not in line or "Audio:" not in line:
-                continue
-            match = _audio_stream_re.search(line)
-            if not match:
-                continue
-            lang = _lang_code(match.group(1))
-            if lang and lang not in audio_languages:
-                audio_languages.append(lang)
-            if "atmos" in line.lower():
-                info.has_dolby_atmos = True
-        info.audio_languages = audio_languages or None
+    dovi_match = _dovi_profile_re.search(text)
+    if dovi_match:
+        info.dovi_profile = int(dovi_match.group(1))
+    elif "dvhe" in lower_text or "dvh1" in lower_text or "dav1" in lower_text:
+        info.dovi_profile = 7
+    info.has_dolby_vision = info.dovi_profile is not None
 
-        subtitle_languages: list[str] = []
-        for match in _subtitle_stream_re.finditer(text):
-            lang = _lang_code(match.group(1))
-            if lang and lang not in subtitle_languages:
-                subtitle_languages.append(lang)
-        info.subtitle_languages = subtitle_languages or None
-    except Exception as e:
-        logger.warning("    ffmpeg probe error: %s", e)
+    audio_languages: list[str] = []
+    for line in text.splitlines():
+        if "Stream #" not in line or "Audio:" not in line:
+            continue
+        match = _audio_stream_re.search(line)
+        if not match:
+            continue
+        lang = _lang_code(match.group(1))
+        if lang and lang not in audio_languages:
+            audio_languages.append(lang)
+        if "atmos" in line.lower():
+            info.has_dolby_atmos = True
+    info.audio_languages = audio_languages or None
+
+    subtitle_languages: list[str] = []
+    for match in _subtitle_stream_re.finditer(text):
+        lang = _lang_code(match.group(1))
+        if lang and lang not in subtitle_languages:
+            subtitle_languages.append(lang)
+    info.subtitle_languages = subtitle_languages or None
 
     _media_probe_cache[video_path] = info
     return info
@@ -507,116 +557,108 @@ async def detect_crop(video_path: str) -> Optional[str]:
         Crop filter string like "crop=1920:800:0:140" if black bars detected,
         or None if no cropping needed or detection failed.
     """
-    try:
-        # First, get source video dimensions to check if it's 16:9
-        probe_info = await probe_media_info(video_path)
-        if not probe_info.width or not probe_info.height:
-            return None
-        src_width, src_height = probe_info.width, probe_info.height
-
-        # Check if source is 16:9 (allow small tolerance for weird resolutions)
-        # 16:9 = 1.777..., typical: 1920x1080, 3840x2160, 1280x720
-        aspect_ratio = src_width / src_height
-        if not (1.7 <= aspect_ratio <= 1.85):
-            # Not 16:9, skip crop detection (already correctly framed)
-            return None
-
-        # Use ffmpeg to run cropdetect on just 2 seconds at 5-minute mark
-        # This is much faster than scanning a long window with lavfi analysis.
-        cmd = [
-            "ffmpeg",
-            "-hide_banner",
-            "-ss",
-            "300",
-            "-i",
-            video_path,
-            "-t",
-            "2",
-            "-vf",
-            "cropdetect=limit=24:round=2:reset=0",
-            "-f",
-            "null",
-            "-",
-        ]
-        logger.debug("    $ %s", shlex.join(cmd))
-        proc = await _subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        _, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=60)
-        stderr_text = stderr_bytes.decode("utf-8", errors="replace")
-
-        # cropdetect outputs to stderr like: [Parsed_cropdetect_0 @ ...] x1:0 x2:1919 y1:138 y2:941 w:1920 h:800 ...
-        # We need to parse the crop values from stderr
-        crop_pattern = re.compile(r"crop=(\d+):(\d+):(\d+):(\d+)")
-        crop_values = []
-        for line in stderr_text.split("\n"):
-            match = crop_pattern.search(line)
-            if match:
-                w, h, x, y = (
-                    int(match.group(1)),
-                    int(match.group(2)),
-                    int(match.group(3)),
-                    int(match.group(4)),
-                )
-                if w > 0 and h > 0 and x >= 0 and y >= 0:
-                    crop_values.append((w, h, x, y))
-
-        if not crop_values:
-            return None
-
-        # Use the most common crop values (mode) for stability
-        most_common = Counter(crop_values).most_common(1)
-        if not most_common:
-            return None
-
-        w, h, x, y = most_common[0][0]
-
-        # Only crop if there's meaningful black bar removal (at least 8 pixels offset)
-        if x < 8 and y < 8:
-            return None
-
-        # Validate symmetry: trust only if cropping is symmetric in one direction
-        # (same top/bottom for letterbox, OR same left/right for pillarbox)
-        # Allow up to 4 pixels of rounding error
-        left_crop = x
-        right_crop = src_width - (x + w)
-        top_crop = y
-        bottom_crop = src_height - (y + h)
-
-        horizontal_symmetric = abs(left_crop - right_crop) <= 4
-        vertical_symmetric = abs(top_crop - bottom_crop) <= 4
-
-        # Must be symmetric in at least one direction, but not require both
-        # (letterbox = vertical symmetric, pillarbox = horizontal symmetric)
-        if not (horizontal_symmetric or vertical_symmetric):
-            return None
-
-        # If cropping in both directions, both must be symmetric
-        if x >= 8 and y >= 8:
-            if not (horizontal_symmetric and vertical_symmetric):
-                return None
-
-        # Align all coordinates to 8 pixels (shrink content area if needed)
-        # x and y: round UP to next multiple of 8
-        x_aligned = ((x + 7) // 8) * 8
-        y_aligned = ((y + 7) // 8) * 8
-        # w and h: round DOWN to multiple of 8, accounting for adjusted x/y
-        w_aligned = ((w - (x_aligned - x)) // 8) * 8
-        h_aligned = ((h - (y_aligned - y)) // 8) * 8
-
-        # Ensure we still have valid dimensions
-        if w_aligned <= 0 or h_aligned <= 0:
-            return None
-
-        crop_result = f"crop={w_aligned}:{h_aligned}:{x_aligned}:{y_aligned}"
-        logger.debug("    Detected crop: %s", crop_result)
-        return crop_result
-
-    except Exception as e:
-        logger.warning("    Crop detection error: %s", e)
+    # First, get source video dimensions to check if it's 16:9
+    probe_info = await probe_media_info(video_path)
+    if not probe_info.width or not probe_info.height:
         return None
+    src_width, src_height = probe_info.width, probe_info.height
+
+    # Check if source is 16:9 (allow small tolerance for weird resolutions)
+    # 16:9 = 1.777..., typical: 1920x1080, 3840x2160, 1280x720
+    aspect_ratio = src_width / src_height
+    if not (1.7 <= aspect_ratio <= 1.85):
+        # Not 16:9, skip crop detection (already correctly framed)
+        return None
+
+    # Use ffmpeg to run cropdetect on just 2 seconds at 5-minute mark
+    # This is much faster than scanning a long window with lavfi analysis.
+    cmd = [
+        "ffmpeg",
+        "-hide_banner",
+        "-ss",
+        "300",
+        "-i",
+        video_path,
+        "-t",
+        "2",
+        "-vf",
+        "cropdetect=limit=24:round=2:reset=0",
+        "-f",
+        "null",
+        "-",
+    ]
+    ffmpeg_result = await _run_ffmpeg(cmd, timeout=60)
+    if ffmpeg_result is None:
+        return None
+    _, stderr_bytes = ffmpeg_result
+    stderr_text = stderr_bytes.decode("utf-8", errors="replace")
+
+    # cropdetect outputs to stderr like: [Parsed_cropdetect_0 @ ...] x1:0 x2:1919 y1:138 y2:941 w:1920 h:800 ...
+    # We need to parse the crop values from stderr
+    crop_pattern = re.compile(r"crop=(\d+):(\d+):(\d+):(\d+)")
+    crop_values = []
+    for line in stderr_text.split("\n"):
+        match = crop_pattern.search(line)
+        if match:
+            w, h, x, y = (
+                int(match.group(1)),
+                int(match.group(2)),
+                int(match.group(3)),
+                int(match.group(4)),
+            )
+            if w > 0 and h > 0 and x >= 0 and y >= 0:
+                crop_values.append((w, h, x, y))
+
+    if not crop_values:
+        return None
+
+    # Use the most common crop values (mode) for stability
+    most_common = Counter(crop_values).most_common(1)
+    if not most_common:
+        return None
+
+    w, h, x, y = most_common[0][0]
+
+    # Only crop if there's meaningful black bar removal (at least 8 pixels offset)
+    if x < 8 and y < 8:
+        return None
+
+    # Validate symmetry: trust only if cropping is symmetric in one direction
+    # (same top/bottom for letterbox, OR same left/right for pillarbox)
+    # Allow up to 4 pixels of rounding error
+    left_crop = x
+    right_crop = src_width - (x + w)
+    top_crop = y
+    bottom_crop = src_height - (y + h)
+
+    horizontal_symmetric = abs(left_crop - right_crop) <= 4
+    vertical_symmetric = abs(top_crop - bottom_crop) <= 4
+
+    # Must be symmetric in at least one direction, but not require both
+    # (letterbox = vertical symmetric, pillarbox = horizontal symmetric)
+    if not (horizontal_symmetric or vertical_symmetric):
+        return None
+
+    # If cropping in both directions, both must be symmetric
+    if x >= 8 and y >= 8:
+        if not (horizontal_symmetric and vertical_symmetric):
+            return None
+
+    # Align all coordinates to 8 pixels (shrink content area if needed)
+    # x and y: round UP to next multiple of 8
+    x_aligned = ((x + 7) // 8) * 8
+    y_aligned = ((y + 7) // 8) * 8
+    # w and h: round DOWN to multiple of 8, accounting for adjusted x/y
+    w_aligned = ((w - (x_aligned - x)) // 8) * 8
+    h_aligned = ((h - (y_aligned - y)) // 8) * 8
+
+    # Ensure we still have valid dimensions
+    if w_aligned <= 0 or h_aligned <= 0:
+        return None
+
+    crop_result = f"crop={w_aligned}:{h_aligned}:{x_aligned}:{y_aligned}"
+    logger.debug("    Detected crop: %s", crop_result)
+    return crop_result
 
 
 async def get_video_duration(video_path: str) -> Optional[float]:
@@ -633,7 +675,7 @@ async def generate_showreel_images(
     video_path: str,
     media_folder: Path,
     timestamps: list[int] = SHOWREEL_TIMESTAMPS,
-    title: str = None,
+    title: str | None = None,
     on_progress=None,
 ) -> list[str]:
     """
@@ -770,49 +812,28 @@ async def generate_showreel_images(
             output_path.as_posix(),
         ]
 
-        logger.debug("    $ %s", shlex.join(cmd))
-        proc = None
-        try:
-            proc = await _subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
-
-            if proc.returncode == 0 and await AsyncPath(output_path).exists():
-                generated_paths.append(output_path.as_posix())
-                logger.info(
-                    "    Showreel reel%d generated for %s",
-                    reel_num,
-                    title or "unknown",
-                )
-                if on_progress:
-                    on_progress(reel_num)
-            else:
-                stderr_text = stderr.decode(errors="replace").strip() if stderr else ""
-                logger.error(
-                    "    Showreel reel%d failed (rc=%s) for %s: %s",
-                    reel_num,
-                    proc.returncode,
-                    title or "unknown",
-                    stderr_text[:500] if stderr_text else "(no output)",
-                )
-                await AsyncPath(output_path).unlink(missing_ok=True)
-                # Abort remaining reels - if first one fails, others likely will too
-                break
-        except BaseException as e:
-            await _kill_proc(proc)
+        ffmpeg_result = await _run_ffmpeg(cmd, timeout=120)
+        if ffmpeg_result is None:
             await AsyncPath(output_path).unlink(missing_ok=True)
-            if isinstance(e, (KeyboardInterrupt, SystemExit, asyncio.CancelledError)):
-                raise
-            logger.error(
-                "Error generating showreel for %s at %ds: %s",
+            break
+
+        if await AsyncPath(output_path).exists():
+            generated_paths.append(output_path.as_posix())
+            logger.info(
+                "    Showreel reel%d generated for %s",
+                reel_num,
                 title or "unknown",
-                timestamp,
-                e,
             )
-            # Abort remaining reels
+            if on_progress:
+                on_progress(reel_num)
+        else:
+            logger.error(
+                "    Showreel reel%d failed for %s: output file was not created. cmd=%s",
+                reel_num,
+                title or "unknown",
+                shlex.join(cmd),
+            )
+            await AsyncPath(output_path).unlink(missing_ok=True)
             break
 
     if generated_paths:
@@ -939,33 +960,19 @@ async def generate_episode_reel(
         output_path.as_posix(),
     ]
 
-    logger.debug("    $ %s", shlex.join(cmd))
-    proc = None
-    try:
-        proc = await _subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
-
-        if proc.returncode == 0 and await AsyncPath(output_path).exists():
-            logger.info("    Episode reel generated: %s", ep_code)
-            return output_path.as_posix()
-        else:
-            stderr_text = stderr.decode(errors="replace").strip() if stderr else ""
-            logger.error(
-                "    Episode reel %s failed (rc=%s): %s",
-                ep_code,
-                proc.returncode,
-                stderr_text[:500] if stderr_text else "(no output)",
-            )
-            await AsyncPath(output_path).unlink(missing_ok=True)
-            return None
-    except BaseException as e:
-        await _kill_proc(proc)
+    ffmpeg_result = await _run_ffmpeg(cmd, timeout=120)
+    if ffmpeg_result is None:
         await AsyncPath(output_path).unlink(missing_ok=True)
-        if isinstance(e, (KeyboardInterrupt, SystemExit, asyncio.CancelledError)):
-            raise
-        logger.error("Error generating episode reel for %s: %s", ep_code, e)
         return None
+
+    if await AsyncPath(output_path).exists():
+        logger.info("    Episode reel generated: %s", ep_code)
+        return output_path.as_posix()
+
+    logger.error(
+        "    Episode reel %s failed: output file was not created. cmd=%s",
+        ep_code,
+        shlex.join(cmd),
+    )
+    await AsyncPath(output_path).unlink(missing_ok=True)
+    return None

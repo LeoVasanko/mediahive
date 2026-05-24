@@ -5,6 +5,7 @@ Or from PyInstaller: MediaHive.exe [media_folder]
 """
 
 import argparse
+import asyncio
 import ctypes
 import html
 import json
@@ -752,7 +753,19 @@ def _reserve_backend_port() -> int:
         return int(sock.getsockname()[1])
 
 
+def _configure_windows_event_loop_policy() -> None:
+    """Ensure Windows uses Proactor loop so asyncio subprocess APIs are available."""
+    if sys.platform != "win32":
+        return
+    policy_cls = getattr(asyncio, "WindowsProactorEventLoopPolicy", None)
+    if policy_cls is None:
+        return
+    asyncio.set_event_loop_policy(policy_cls())
+
+
 def winmain() -> None:
+    _configure_windows_event_loop_policy()
+
     parser = argparse.ArgumentParser(description="MediaHive")
     parser.add_argument(
         "media_folder",

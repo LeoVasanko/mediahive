@@ -1,11 +1,25 @@
 import argparse
+import asyncio
 import json
 import logging
 import os
+import sys
 from pathlib import Path
 
 
+def _configure_windows_event_loop_policy() -> None:
+    """Ensure Windows uses Proactor loop so asyncio subprocess APIs are available."""
+    if sys.platform != "win32":
+        return
+    policy_cls = getattr(asyncio, "WindowsProactorEventLoopPolicy", None)
+    if policy_cls is None:
+        return
+    asyncio.set_event_loop_policy(policy_cls())
+
+
 def main():
+    _configure_windows_event_loop_policy()
+
     parser = argparse.ArgumentParser(
         description="Hivescan server — continuous media scanning with live WS updates.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
