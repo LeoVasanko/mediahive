@@ -27,7 +27,7 @@ import aiofiles
 import msgspec
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi_vue import Frontend
 
 from mediahive.__main__ import DEVMODE
@@ -228,6 +228,32 @@ def _parse_range_header(range_header: str, file_size: int) -> tuple[int, int]:
         )
 
     return start, min(end, file_size - 1)
+
+
+def _build_file_etag(file_size: int, mtime_ns: int) -> str:
+    """Build a weak ETag from file metadata for cache validation."""
+    return f'W/"{file_size:x}-{mtime_ns:x}"'
+
+
+def _etag_matches_if_none_match(if_none_match: str | None, etag: str) -> bool:
+    """Return True when the request If-None-Match header matches the resource ETag."""
+    if not if_none_match:
+        return False
+
+    if if_none_match.strip() == "*":
+        return True
+
+    def normalize(value: str) -> str:
+        v = value.strip()
+        if v.startswith("W/"):
+            v = v[2:].strip()
+        return v
+
+    wanted = normalize(etag)
+    for candidate in if_none_match.split(","):
+        if normalize(candidate) == wanted:
+            return True
+    return False
 
 
 def _validate_root_paths(roots: dict[str, str]) -> dict[str, str]:
@@ -568,7 +594,19 @@ async def serve_media_file(root_id: str, file_path: str, request: Request):
     if not full_path.is_file():
         raise HTTPException(status_code=400, detail="Not a file")
 
-    file_size = full_path.stat().st_size
+    file_stat = full_path.stat()
+    file_size = file_stat.st_size
+    etag = _build_file_etag(file_size, file_stat.st_mtime_ns)
+    cache_control = "public, max-age=600"
+
+    range_header = request.headers.get("range")
+    if not range_header and _etag_matches_if_none_match(
+        request.headers.get("if-none-match"), etag
+    ):
+        return Response(
+            status_code=304,
+            headers={"Cache-Control": cache_control, "ETag": etag},
+        )
 
     content_type, _ = mimetypes.guess_type(str(full_path))
     if content_type is None:
@@ -578,7 +616,7 @@ async def serve_media_file(root_id: str, file_path: str, request: Request):
         return FileResponse(
             full_path,
             media_type=content_type,
-            headers={"Cache-Control": "public, max-age=86400"},
+            headers={"Cache-Control": cache_control, "ETag": etag},
         )
 
     async def stream_file(start: int, end: int):
@@ -593,11 +631,11 @@ async def serve_media_file(root_id: str, file_path: str, request: Request):
                 yield chunk
 
     headers = {
-        "Cache-Control": "public, max-age=86400",
+        "Cache-Control": cache_control,
+        "ETag": etag,
         "Accept-Ranges": "bytes",
     }
 
-    range_header = request.headers.get("range")
     if range_header:
         start, end = _parse_range_header(range_header, file_size)
         headers["Content-Range"] = f"bytes {start}-{end}/{file_size}"
