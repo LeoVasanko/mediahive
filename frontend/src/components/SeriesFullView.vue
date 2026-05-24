@@ -150,26 +150,16 @@
           No versions available
         </div>
       </div>
-      <div
-        v-if="versionActionMenu.visible && versionActionMenu.torrent"
-        class="version-action-menu"
-        :style="{ left: versionActionMenu.x + 'px', top: versionActionMenu.y + 'px' }"
-      >
-        <button
-          class="version-action-item"
-          :disabled="!versionActionMenu.torrent.playable_file"
-          @click="handlePlayVersion(versionActionMenu.torrent.playable_file)"
-        >
-          {{ getPlayLabel(versionActionMenu.torrent.playable_file) }}
-        </button>
-        <button
-          class="version-action-item"
-          :disabled="!versionActionMenu.torrent.playable_file"
-          @click="handleOpenFolder(versionActionMenu.torrent.playable_file || '')"
-        >
-          Open Folder
-        </button>
-      </div>
+      <ReleaseActionMenu
+        :visible="versionActionMenu.visible"
+        :x="versionActionMenu.x"
+        :y="versionActionMenu.y"
+        :file-path="versionActionMenu.filePath"
+        :root-name="versionActionMenu.rootName"
+        :play-label="getPlayLabel(versionActionMenu.filePath)"
+        @play="handlePlayVersion(versionActionMenu.filePath)"
+        @open-folder="handleOpenFolder(versionActionMenu.filePath || '', versionActionMenu.rootId)"
+      />
     </Teleport>
   </div>
 </template>
@@ -180,17 +170,19 @@ import type { Series, Season, Episode, Torrent } from '../types';
 import { getCoverUrl, getVideoPreviewUrl, getVideoSourceAttributes, isSafariBrowser } from '../api';
 import { navAttrs } from '../composables/useKeyboardNavigation';
 import ReleaseVersionCard from './ReleaseVersionCard.vue';
+import ReleaseActionMenu from './ReleaseActionMenu.vue';
 
 const props = defineProps<{
   series: Series;
   focusEpisode?: { seasonNumber: number; episodeNumber: number } | null;
   hasResumePosition: (filePath: string | null) => boolean;
+  getRootName: (rootId: string | null | undefined) => string | null;
 }>();
 
 const emit = defineEmits<{
   close: [];
   play: [string];
-  openFolder: [string];
+  openFolder: [string, string | null | undefined];
 }>();
 
 // Focus on matched episode when provided
@@ -235,12 +227,16 @@ const versionActionMenu = ref<{
   visible: boolean;
   x: number;
   y: number;
-  torrent: Torrent | null;
+  filePath: string | null;
+  rootName: string | null;
+  rootId: string | null;
 }>({
   visible: false,
   x: 0,
   y: 0,
-  torrent: null,
+  filePath: null,
+  rootName: null,
+  rootId: null,
 });
 
 const releaseMenuOriginElement = ref<HTMLElement | null>(null);
@@ -348,7 +344,9 @@ function closeContextMenu() {
 
 function closeVersionActionMenu() {
   versionActionMenu.value.visible = false;
-  versionActionMenu.value.torrent = null;
+  versionActionMenu.value.filePath = null;
+  versionActionMenu.value.rootName = null;
+  versionActionMenu.value.rootId = null;
 }
 
 function handleGamepadAction(event: Event) {
@@ -384,17 +382,18 @@ function getPlayLabel(filePath: string | null): string {
 }
 
 // Open folder for a version
-function handleOpenFolder(folderPath: string) {
+function handleOpenFolder(folderPath: string, rootId?: string | null) {
   if (!folderPath) return;
-  emit('openFolder', folderPath);
+  emit('openFolder', folderPath, rootId);
   closeVersionActionMenu();
   closeContextMenu();
 }
 
 function handleVersionActivate(torrent: Torrent, event: MouseEvent | KeyboardEvent) {
   if (!torrent.playable_file) return;
+  const rootId = torrent.root_id || props.series.root_id;
   if (event.altKey) {
-    handleOpenFolder(torrent.playable_file);
+    handleOpenFolder(torrent.playable_file, rootId);
     return;
   }
   handlePlayVersion(torrent.playable_file);
@@ -402,22 +401,26 @@ function handleVersionActivate(torrent: Torrent, event: MouseEvent | KeyboardEve
 
 function handleVersionShortcutKeydown(event: KeyboardEvent, torrent: Torrent) {
   if (!torrent.playable_file) return;
+  const rootId = torrent.root_id || props.series.root_id;
   const key = event.key.toLowerCase();
   if (key === 'e' && (event.metaKey || event.ctrlKey)) {
     event.preventDefault();
     event.stopPropagation();
-    handleOpenFolder(torrent.playable_file);
+    handleOpenFolder(torrent.playable_file, rootId);
   }
 }
 
 function handleVersionContextMenu(event: MouseEvent, torrent: Torrent) {
   event.preventDefault();
   event.stopPropagation();
+  const rootId = torrent.root_id || props.series.root_id;
   versionActionMenu.value = {
     visible: true,
     x: event.clientX,
     y: event.clientY,
-    torrent,
+    filePath: torrent.playable_file || null,
+    rootName: props.getRootName(rootId) || null,
+    rootId,
   };
   nextTick(() => {
     const firstAction = document.querySelector('.version-action-menu .version-action-item:not(:disabled)') as HTMLElement | null;
@@ -1059,36 +1062,4 @@ html.mouse-active .episode-tile:hover .tile-play {
   font-size: 0.85rem;
 }
 
-.version-action-menu {
-  position: fixed;
-  z-index: 1001;
-  min-width: 180px;
-  background: rgba(18, 20, 28, 0.98);
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  border-radius: 8px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
-  overflow: hidden;
-}
-
-.version-action-item {
-  width: 100%;
-  border: none;
-  background: transparent;
-  color: #fff;
-  text-align: left;
-  padding: 10px 12px;
-  font-size: 0.82rem;
-  cursor: pointer;
-}
-
-html.mouse-active .version-action-item:hover:not(:disabled),
-.version-action-item:focus-visible:not(:disabled) {
-  background: rgba(255, 255, 255, 0.12);
-  outline: none;
-}
-
-.version-action-item:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
 </style>

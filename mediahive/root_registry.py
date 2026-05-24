@@ -26,18 +26,23 @@ logger = logging.getLogger("mediahive.root_registry")
 def _normalize_path(path: str) -> str:
     """Canonicalize a path for stable ID generation.
 
-    - resolve() to follow symlinks and normalize ..
+    - expanduser() only (do not resolve symlinks/mapped drives)
     - lower-case drive letter on Windows
     - strip trailing separators
     - use forward slashes
     """
-    p = Path(path).expanduser().resolve()
+    p = Path(path).expanduser()
     posix = p.as_posix()
+    # Canonicalize drive-only roots ("Z:") to drive root ("Z:/") so paths are absolute.
+    if len(posix) == 2 and posix[1] == ":" and posix[0].isalpha():
+        posix = f"{posix}/"
     # Windows drive letter normalization
     if len(posix) >= 2 and posix[1] == ":":
         posix = posix[0].lower() + posix[1:]
     # Strip trailing slash (except root "/")
-    while len(posix) > 1 and posix.endswith("/"):
+    while len(posix) > 1 and posix.endswith("/") and not (
+        len(posix) == 3 and posix[1] == ":" and posix[2] == "/"
+    ):
         posix = posix[:-1]
     return posix
 
@@ -47,6 +52,20 @@ def compute_root_id(path: str) -> str:
     normalized = _normalize_path(path)
     h = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
     return h[:12]
+
+
+def _derive_root_name(path: str) -> str:
+    """Derive a friendly root name from a path basename/anchor."""
+    normalized = (path or "").replace("\\", "/").rstrip("/")
+    if not normalized:
+        return "media"
+    parts = [segment for segment in normalized.split("/") if segment]
+    if parts:
+        leaf = parts[-1]
+        if len(leaf) == 2 and leaf[1] == ":" and leaf[0].isalpha():
+            return leaf[0]
+        return leaf
+    return "media"
 
 
 # ---------------------------------------------------------------------------
@@ -68,8 +87,9 @@ class RootEntry(msgspec.Struct):
 class RootContext:
     """Runtime container for a single media root."""
 
-    def __init__(self, root_id: str, root_path: Path):
+    def __init__(self, root_id: str, root_path: Path, name: str | None = None):
         self.root_id = root_id
+        self.name = name or root_id
         self.root_path = root_path
         self.status = "loading"
         self.error: Optional[str] = None
@@ -171,6 +191,7 @@ class Supervisor:
         return [
             {
                 "root_id": ctx.root_id,
+                "name": ctx.name,
                 "path": ctx.root_path.as_posix(),
                 "status": ctx.status,
                 "error": ctx.error,
@@ -229,18 +250,14 @@ class Supervisor:
             seen_ids: set[str] = set()
             failed: list[dict] = []
 
-            for name, path_str in roots.items():
-                name = name.strip()
-                if not name:
-                    failed.append({"name": name, "path": path_str, "reason": "empty name"})
-                    continue
-                p = Path(path_str).expanduser().resolve()
+            for requested_name, path_str in roots.items():
+                p = Path(path_str).expanduser()
                 if not p.exists() or not p.is_dir():
-                    failed.append({"name": name, "path": path_str, "reason": "not a directory"})
+                    failed.append({"name": requested_name, "path": path_str, "reason": "not a directory"})
                     continue
                 norm = _normalize_path(p.as_posix())
                 if norm in seen_paths:
-                    failed.append({"name": name, "path": path_str, "reason": "duplicate path"})
+                    failed.append({"name": requested_name, "path": path_str, "reason": "duplicate path"})
                     continue
                 seen_paths.add(norm)
                 rid = compute_root_id(str(p))
@@ -248,7 +265,19 @@ class Supervisor:
                     # Extremely unlikely hash collision — fall back to full hash
                     rid = hashlib.sha256(norm.encode("utf-8")).hexdigest()[:16]
                 seen_ids.add(rid)
-                candidates.append(RootEntry(name=name, path=norm, root_id=rid))
+
+                # Friendly names should reflect the configured root path (e.g. "Z:" -> "Z"),
+                # not the resolved physical target (which may be a UNC path).
+                configured_path = Path(path_str).expanduser().as_posix()
+                base_name = _derive_root_name(configured_path)
+                unique_name = base_name
+                suffix = 2
+                existing_names = {e.name for e in candidates}
+                while unique_name in existing_names:
+                    unique_name = f"{base_name}{suffix}"
+                    suffix += 1
+
+                candidates.append(RootEntry(name=unique_name, path=norm, root_id=rid))
 
             # Build desired root_id set
             desired_ids = {e.root_id for e in candidates}
@@ -265,12 +294,13 @@ class Supervisor:
                 existing = self._contexts.get(entry.root_id)
                 if existing and existing.root_path.as_posix() == entry.path:
                     # Reuse existing context
+                    existing.name = entry.name
                     new_contexts[entry.root_id] = existing
                 else:
                     # If existing path changed, stop old one
                     if existing:
                         asyncio.create_task(existing.stop())
-                    ctx = RootContext(entry.root_id, Path(entry.path))
+                    ctx = RootContext(entry.root_id, Path(entry.path), entry.name)
                     await ctx.start()
                     new_contexts[entry.root_id] = ctx
 

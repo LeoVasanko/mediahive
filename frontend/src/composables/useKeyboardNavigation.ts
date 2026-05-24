@@ -610,6 +610,8 @@ function handleKeyDown(event: KeyboardEvent) {
  */
 function handleEnterKey(event: KeyboardEvent) {
   if (event.key !== 'Enter') return;
+  if (event.defaultPrevented) return;
+  if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
 
   const target = event.target as HTMLElement;
   if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {

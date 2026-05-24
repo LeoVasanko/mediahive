@@ -177,7 +177,7 @@ async function refreshRoots() {
     const data = await fetchRoots();
     roots.value = data.map(r => ({
       root_id: r.root_id,
-      name: r.path.split('/').pop() || r.path.split('\\').pop() || r.root_id,
+      name: r.name,
       path: r.path,
       status: r.status,
     }));

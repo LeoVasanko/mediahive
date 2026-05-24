@@ -5,6 +5,7 @@
     :series="item.data as Series"
     :focus-episode="focusEpisode"
     :has-resume-position="hasResumePosition"
+    :get-root-name="getRootName"
     @close="$emit('close')"
     @play="handlePlay"
     @openFolder="handleOpenFolder"
@@ -96,7 +97,9 @@
                   :disabled="!version.playable_file"
                   v-bind="navAttrs(2, index, index === 0 ? 0 : undefined)"
                   @activate="handleVersionActivate(version, $event)"
-                  :title="version.playable_file ? 'Click to play/continue. Alt+Click to open folder.' : 'No playable file'"
+                  @keydown="handleVersionShortcutKeydown($event, version)"
+                  @contextmenu="handleVersionContextMenu($event, version)"
+                  :title="version.playable_file ? 'Click to play/continue. Alt+Click, Alt+Enter, or Cmd/Ctrl+E to open folder. Right-click for actions.' : 'No playable file'"
                 />
               </div>
             </div>
@@ -152,28 +155,49 @@
         </div>
       </div>
     </div>
+
+    <Teleport to="body">
+      <div
+        v-if="versionActionMenu.visible"
+        class="movie-menu-backdrop"
+        @click="closeVersionActionMenu"
+        @contextmenu.prevent="closeVersionActionMenu"
+      ></div>
+      <ReleaseActionMenu
+        :visible="versionActionMenu.visible"
+        :x="versionActionMenu.x"
+        :y="versionActionMenu.y"
+        :file-path="versionActionMenu.filePath"
+        :root-name="versionActionMenu.rootName"
+        :play-label="getPlayLabel(versionActionMenu.filePath)"
+        @play="handlePlayVersion(versionActionMenu.filePath)"
+        @open-folder="handleOpenFolder(versionActionMenu.filePath || '', versionActionMenu.rootId)"
+      />
+    </Teleport>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch, onMounted, nextTick } from 'vue';
+import { computed, ref, watch, onMounted, onUnmounted, nextTick } from 'vue';
 import type { CastMember, MediaItem, Movie, Series, Torrent } from '../types';
 import { getCoverUrl, getVideoPreviewUrl, getVideoSourceAttributes, isSafariBrowser, type VideoSourceAttributes } from '../api';
 import castPlaceholderFemaleUrl from '../assets/cast-placeholder-female.svg';
 import castPlaceholderMaleUrl from '../assets/cast-placeholder-male.svg';
 import SeriesFullView from './SeriesFullView.vue';
 import ReleaseVersionCard from './ReleaseVersionCard.vue';
+import ReleaseActionMenu from './ReleaseActionMenu.vue';
 import { navAttrs } from '../composables/useKeyboardNavigation';
 
 const props = defineProps<{
   item: MediaItem;
   focusEpisode?: { seasonNumber: number; episodeNumber: number } | null;
   hasResumePosition: (filePath: string | null) => boolean;
+  getRootName: (rootId: string | null | undefined) => string | null;
 }>();
 const emit = defineEmits<{
   close: [];
   play: [string];
-  openFolder: [string];
+  openFolder: [string, string | null | undefined];
   searchActor: [string];
 }>();
 
@@ -456,6 +480,84 @@ const seasons = computed(() => {
 
 const selectedSeasonIndex = ref<number>(0);
 
+const versionActionMenu = ref<{
+  visible: boolean;
+  x: number;
+  y: number;
+  filePath: string | null;
+  rootName: string | null;
+  rootId: string | null;
+}>({
+  visible: false,
+  x: 0,
+  y: 0,
+  filePath: null,
+  rootName: null,
+  rootId: null,
+});
+
+function closeVersionActionMenu() {
+  versionActionMenu.value.visible = false;
+  versionActionMenu.value.filePath = null;
+  versionActionMenu.value.rootName = null;
+  versionActionMenu.value.rootId = null;
+}
+
+function getPlayLabel(filePath: string | null): string {
+  return props.hasResumePosition(filePath) ? 'Continue' : 'Play';
+}
+
+function handlePlayVersion(filePath: string | null) {
+  if (filePath) {
+    emit('play', filePath);
+  }
+  closeVersionActionMenu();
+}
+
+function handleVersionContextMenu(event: MouseEvent, version: Torrent) {
+  event.preventDefault();
+  event.stopPropagation();
+  const rootId = version.root_id || ((props.item.data as Movie).root_id ?? props.item.root_id);
+  versionActionMenu.value = {
+    visible: true,
+    x: event.clientX,
+    y: event.clientY,
+    filePath: version.playable_file || null,
+    rootName: props.getRootName(rootId) || null,
+    rootId,
+  };
+  nextTick(() => {
+    const firstAction = document.querySelector('.version-action-menu .version-action-item:not(:disabled)') as HTMLElement | null;
+    firstAction?.focus();
+  });
+}
+
+function handleVersionShortcutKeydown(event: KeyboardEvent, version: Torrent) {
+  if (!version.playable_file) return;
+  const rootId = version.root_id || ((props.item.data as Movie).root_id ?? props.item.root_id);
+  const key = event.key.toLowerCase();
+  if (key === 'e' && (event.metaKey || event.ctrlKey)) {
+    event.preventDefault();
+    event.stopPropagation();
+    handleOpenFolder(version.playable_file, rootId);
+    return;
+  }
+  if (key === 'enter' && event.altKey) {
+    event.preventDefault();
+    event.stopPropagation();
+    handleOpenFolder(version.playable_file, rootId);
+  }
+}
+
+function handleMovieMenuKeydown(event: KeyboardEvent) {
+  if (!versionActionMenu.value.visible) return;
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    event.stopPropagation();
+    closeVersionActionMenu();
+  }
+}
+
 // Select first season by default
 watch(seasons, (s) => {
   if (s.length > 0 && selectedSeasonIndex.value >= s.length) {
@@ -471,15 +573,17 @@ function handlePlay(filePath: string | null) {
 
 function handleVersionActivate(version: Torrent, event: MouseEvent | KeyboardEvent) {
   if (!version.playable_file) return;
+  const rootId = version.root_id || ((props.item.data as Movie).root_id ?? props.item.root_id);
   if (event.altKey) {
-    handleOpenFolder(version.playable_file);
+    handleOpenFolder(version.playable_file, rootId);
     return;
   }
   handlePlay(version.playable_file);
 }
 
-function handleOpenFolder(folderPath: string) {
-  emit('openFolder', folderPath);
+function handleOpenFolder(folderPath: string, rootId?: string | null) {
+  closeVersionActionMenu();
+  emit('openFolder', folderPath, rootId);
 }
 
 function handleCastSelect(castName: string) {
@@ -487,12 +591,26 @@ function handleCastSelect(castName: string) {
   if (!name) return;
   emit('searchActor', name);
 }
+
+onMounted(() => {
+  document.addEventListener('keydown', handleMovieMenuKeydown, true);
+});
+
+onUnmounted(() => {
+  document.removeEventListener('keydown', handleMovieMenuKeydown, true);
+});
 </script>
 
 <style scoped>
 /* Movie page layout (inline within main content) */
 .movie-page {
   background-color: var(--bg-primary);
+}
+
+.movie-menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 999;
 }
 
 .movie-page-content {

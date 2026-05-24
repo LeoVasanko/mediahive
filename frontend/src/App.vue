@@ -67,6 +67,7 @@
       :item="selectedItem"
       :focus-episode="focusEpisode"
       :has-resume-position="hasResumePosition"
+      :get-root-name="getRootName"
       @close="closeDetail"
       @play="handlePlay"
       @open-folder="handleOpenFolder"
@@ -232,15 +233,24 @@ const { mediaIndex, loading, error, connected: wsConnected, tasks, setActiveRoot
 const activeTasks = computed<TaskInfo[]>(() => Array.from(tasks.value.values()));
 
 // Poll for active roots and connect WS to them
-const rootStatuses = ref<Map<string, { path: string; status: string }>>(new Map());
+const rootStatuses = ref<Map<string, { name: string; path: string; status: string }>>(new Map());
+
+function getRootName(rootId: string | null | undefined): string | null {
+  if (!rootId) return null;
+  return rootStatuses.value.get(rootId)?.name || null;
+}
 
 async function refreshRoots() {
   try {
     const roots = await fetchRoots();
-    const newMap = new Map<string, { path: string; status: string }>();
+    const newMap = new Map<string, { name: string; path: string; status: string }>();
     const activeIds: string[] = [];
     for (const r of roots) {
-      newMap.set(r.root_id, { path: r.path, status: r.status });
+      newMap.set(r.root_id, {
+        name: r.name,
+        path: r.path,
+        status: r.status,
+      });
       if (r.status === 'ready' || r.status === 'scanning' || r.status === 'loading') {
         activeIds.push(r.root_id);
       }
@@ -1516,8 +1526,8 @@ async function handlePlay(filePath: string) {
   }
 }
 
-async function handleOpenFolder(folderPath: string) {
-  const rootId = findRootIdForPath(folderPath);
+async function handleOpenFolder(folderPath: string, explicitRootId?: string | null) {
+  const rootId = explicitRootId || findRootIdForPath(folderPath);
   if (!rootId) {
     console.error('Cannot open folder: unknown root for path', folderPath);
     return;

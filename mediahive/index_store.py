@@ -69,11 +69,14 @@ class IndexStore:
     # ------------------------------------------------------------------
 
     def _maybe_migrate_id(self, item_id: str) -> str:
-        """Prepend root_id to legacy item IDs that lack it."""
+        """Normalize item ID to this store's current root_id namespace."""
         if not self.root_id:
             return item_id
         if ":" in item_id:
-            return item_id
+            # If snapshot was created under a different root_id prefix,
+            # remap to current root_id while preserving content hash.
+            _, content_hash = item_id.split(":", 1)
+            return f"{self.root_id}:{content_hash}"
         return f"{self.root_id}:{item_id}"
 
     async def load_snapshot(self) -> None:

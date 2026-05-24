@@ -147,11 +147,21 @@ def _validate_root_paths(roots: dict[str, str]) -> dict[str, str]:
     """
     validated: dict[str, str] = {}
     for name, path_str in roots.items():
-        p = Path(path_str).expanduser().resolve()
-        if not p.exists() or not p.is_dir():
+        configured_posix = Path(path_str).expanduser().as_posix()
+        if (
+            len(configured_posix) == 2
+            and configured_posix[1] == ":"
+            and configured_posix[0].isalpha()
+        ):
+            configured_posix = f"{configured_posix}/"
+
+        configured_path = Path(configured_posix)
+        if not configured_path.exists() or not configured_path.is_dir():
             logger.warning("Root path invalid, skipping: %s", path_str)
             continue
-        validated[name] = p.as_posix()
+        # Keep the configured path form (POSIX separators) so downstream naming
+        # can reflect user intent (e.g. mapped drive "Z:") instead of UNC.
+        validated[name] = configured_posix
     return validated
 
 
@@ -177,20 +187,23 @@ async def _activate_all_roots() -> None:
     """
     desired: dict[str, str] = {}
 
-    # 1. Persisted config roots
-    cfg = load_config()
-    if cfg.roots:
-        desired.update(cfg.roots)
-
-    # 2. CLI roots via MEDIAHIVE_ROOTS (JSON dict)
+    # 1. CLI roots via MEDIAHIVE_ROOTS (JSON dict)
     env_roots_raw = os.environ.get("MEDIAHIVE_ROOTS")
+    env_roots: dict[str, str] | None = None
     if env_roots_raw:
         try:
-            env_roots = json.loads(env_roots_raw)
-            if isinstance(env_roots, dict):
-                desired.update(env_roots)
+            parsed = json.loads(env_roots_raw)
+            if isinstance(parsed, dict):
+                env_roots = parsed
         except Exception:
             logger.exception("Failed to parse MEDIAHIVE_ROOTS")
+
+    # 2. Persisted config roots (used only when CLI roots are not provided)
+    cfg = load_config()
+    if env_roots is not None:
+        desired.update(env_roots)
+    elif cfg.roots:
+        desired.update(cfg.roots)
 
     if not desired:
         logger.info("No roots configured; waiting for PUT /api/roots")
@@ -384,12 +397,13 @@ async def open_folder(root_id: str, request: Request):
 
     try:
         if sys.platform == "win32":
+            native_path = str(target_path).replace("/", "\\")
             if target_path.is_file():
                 subprocess.Popen(
-                    ["explorer", "/select,", str(target_path)], **_POPEN_KWARGS
+                    ["explorer", "/select,", native_path], **_POPEN_KWARGS
                 )
             else:
-                subprocess.Popen(["explorer", str(target_path)], **_POPEN_KWARGS)
+                subprocess.Popen(["explorer", native_path], **_POPEN_KWARGS)
         elif sys.platform == "darwin":
             if target_path.is_file():
                 subprocess.Popen(["open", "-R", str(target_path)])
