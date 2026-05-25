@@ -438,7 +438,16 @@ function clearSearch(options: { preferBack?: boolean; targetPath?: string } = {}
 
   searchQuery.value = ""
 
-  if (!currentQuery && route.path === targetPath) {
+  // If there's no active search query in the URL, just clear state and don't navigate.
+  // This prevents unwanted navigation when the search is cleared reactively (e.g.
+  // route changes to a detail page, which triggers the route watcher to clear
+  // searchQuery, which flows through Header and back to updateSearchQuery).
+  if (!currentQuery) {
+    searchReturnPath.value = null
+    return
+  }
+
+  if (route.path === targetPath) {
     searchReturnPath.value = null
     return
   }
@@ -449,7 +458,6 @@ function clearSearch(options: { preferBack?: boolean; targetPath?: string } = {}
       : ""
   const canRestoreWithBack =
     options.preferBack !== false &&
-    !!currentQuery &&
     searchReturnPath.value === targetPath &&
     backPath === targetPath
 
