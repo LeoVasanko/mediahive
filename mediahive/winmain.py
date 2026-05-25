@@ -578,8 +578,7 @@ def _start_gamepad_remote(
 
 
 def _setup_logging() -> Path:
-    """Redirect stdout/stderr and configure logging to a file in
-    %APPDATA%/mediahive/.
+    """Redirect stdout/stderr and configure logging to a file in %APPDATA%/mediahive/.
 
     In a PyInstaller --windowed build there is no console, so any print() or
     unhandled exception traceback would be lost.  This ensures everything ends

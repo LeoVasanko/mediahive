@@ -202,7 +202,7 @@ def format_size(size_bytes: int | None) -> str:
 
 
 def main() -> None:
-    """Main entry point for the torrent scanner."""
+    """Run the torrent scanner command-line workflow."""
     parser = argparse.ArgumentParser(
         description="Scan and manage torrent files",
         formatter_class=argparse.RawDescriptionHelpFormatter,

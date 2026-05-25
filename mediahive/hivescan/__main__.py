@@ -1,3 +1,5 @@
+"""Hivescan CLI entrypoint."""
+
 import argparse
 import asyncio
 import json

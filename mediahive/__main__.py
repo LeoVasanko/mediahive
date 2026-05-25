@@ -1,3 +1,5 @@
+"""MediaHive CLI entrypoint."""
+
 import argparse
 import asyncio
 import json

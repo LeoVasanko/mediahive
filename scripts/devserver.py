@@ -11,7 +11,7 @@ from pathlib import Path
 
 # Import util.py from scripts/fastapi-vue (not a package, so we adjust sys.path)
 sys.path.insert(0, str(Path(__file__).with_name("fastapi-vue")))
-from devutil import (  # type: ignore
+from devutil import (  # type: ignore[import-not-found]
     ProcessGroup,
     check_ports_free,
     logger,

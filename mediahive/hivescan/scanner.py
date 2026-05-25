@@ -162,8 +162,8 @@ class RootScanner:
                 )
             )
 
-        MEDIA_CONTAINER_DIRS = {"BDMV", "VIDEO_TS", "HVDVD_TS"}
-        VIDEO_EXTENSIONS = {
+        media_container_dirs = {"BDMV", "VIDEO_TS", "HVDVD_TS"}
+        video_extensions = {
             ".mkv",
             ".mp4",
             ".avi",
@@ -196,7 +196,7 @@ class RootScanner:
                         continue
 
                     if await AsyncPath(item).is_dir():
-                        if item.name.upper() in MEDIA_CONTAINER_DIRS:
+                        if item.name.upper() in media_container_dirs:
                             is_media_container = True
                         child_dirs.append(item)
                     else:
@@ -232,7 +232,7 @@ class RootScanner:
                     await _walk(child)
                     await asyncio.sleep(0)
                 for child_file in child_files:
-                    if child_file.suffix.lower() in VIDEO_EXTENSIONS:
+                    if child_file.suffix.lower() in video_extensions:
                         relpath = make_relative_path(str(child_file), media_root_str)
                         try:
                             stat_info = await AsyncPath(child_file).stat()
@@ -298,6 +298,7 @@ class RootScanner:
 
     async def _run_scan(self) -> None:
         """Full scan pipeline:
+
         1. Discover downloads
         2. Categorise → movies / series
         3. Iterate async generators, send each item as Upsert

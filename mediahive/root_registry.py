@@ -144,7 +144,7 @@ class RootContext:
             logger.exception("Error flushing snapshot for root %s", self.root_id)
 
     async def send_event(self, event: ScanEvent) -> None:
-        """Called by the scanner to push an event into this root's queue."""
+        """Push a scanner event into this root's queue."""
         await self._events.put(event)
 
     async def _consume_events(self) -> None:

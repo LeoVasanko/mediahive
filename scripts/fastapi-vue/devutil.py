@@ -9,7 +9,7 @@ import sys
 from collections.abc import Coroutine
 from contextlib import suppress
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 import httpx
 from buildutil import find_dev_tool, find_install_tool, logger
@@ -58,10 +58,15 @@ class ProcessGroup:
             logger.warning("%s failed with exit status %d", e.cmd, e.returncode)
             raise SystemExit(1) from None
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> Self:
+        """Return this process group context manager."""
         return self
 
-    async def __aexit__(self, exc_type, *_):
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        *_: object,
+    ) -> None:
         """Wait for one process to exit, terminate others, then wait for all."""
         await self._cleanup(immediate=exc_type is not None)
 

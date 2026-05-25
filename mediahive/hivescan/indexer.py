@@ -383,7 +383,9 @@ async def _process_movies(
 ) -> AsyncIterator[tuple[Movie, tuple[str, Path, str] | None]]:
     """Async generator that processes all movies.
 
-    Yields (Movie, showreel_task_or_None) for each movie as it is processed.
+    Yields:
+        Tuples of ``(Movie, showreel_task_or_None)`` as each movie is processed.
+
     """
     # In-memory cache for TMDb lookups
     movie_tmdb_cache: dict[str, Info | None] = {}
@@ -555,7 +557,7 @@ async def _process_movies(
         yield movie, showreel_task
 
     # Process movies without TMDb info
-    for key, group_data in no_tmdb_movie_groups.items():
+    for group_data in no_tmdb_movie_groups.values():
         items = group_data["items"]
         title = group_data["title"]
         year = group_data["year"]
@@ -637,7 +639,9 @@ async def _process_series(
 ) -> AsyncIterator[tuple[Series, list[tuple[str, Path, int, int, str]]]]:
     """Async generator that processes all series.
 
-    Yields (Series, episode_reel_tasks) for each series as it is processed.
+    Yields:
+        Tuples of ``(Series, episode_reel_tasks)`` as each series is processed.
+
     """
     # In-memory cache for TMDb lookups
     series_tmdb_cache: dict[str, Info | None] = {}
@@ -787,7 +791,7 @@ async def _process_series(
         yield series, ep_reel_tasks
 
     # Process series without TMDb info
-    for key, group_data in no_tmdb_groups.items():
+    for group_data in no_tmdb_groups.values():
         items = group_data["items"]
         title = group_data["title"]
         content_hash = hashlib.md5(f"series:{title}".encode()).hexdigest()[:12]

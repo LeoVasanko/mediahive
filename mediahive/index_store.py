@@ -96,7 +96,7 @@ class IndexStore:
             logger.exception("Failed to load snapshot from %s", self.snapshot_path)
 
     def _load_snapshot_sync(self, raw: bytes) -> None:
-        """Synchronous snapshot parsing (runs in thread pool)."""
+        """Parse snapshot bytes in a thread-pool context."""
         data = msgspec.json.decode(raw, type=IndexSnapshot)
         for m in data.movies:
             if m.showreel_source_sets:

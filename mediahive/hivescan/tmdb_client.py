@@ -411,8 +411,8 @@ async def fetch_movie_info(title: str, year: int | None = None) -> Info | None:
     alternative_titles = sorted(alt_titles_set) if alt_titles_set else None
 
     # Extract full cast
-    credits = details.get("credits", {})
-    cast_data = credits.get("cast", [])
+    credits_data = details.get("credits", {})
+    cast_data = credits_data.get("cast", [])
     cast = [
         CastMember(
             name=c["name"],
@@ -424,7 +424,7 @@ async def fetch_movie_info(title: str, year: int | None = None) -> Info | None:
     ]
 
     # Extract director from crew
-    crew = credits.get("crew", [])
+    crew = credits_data.get("crew", [])
     directors = [c["name"] for c in crew if c.get("job") == "Director"]
     director = directors[0] if directors else None
 
@@ -512,8 +512,8 @@ async def fetch_series_info(title: str) -> Info | None:
     keywords = [k["name"] for k in keywords_data]
 
     # Extract full cast
-    credits = details.get("credits", {})
-    cast_data = credits.get("cast", [])
+    credits_data = details.get("credits", {})
+    cast_data = credits_data.get("cast", [])
     cast = [
         CastMember(
             name=c["name"],

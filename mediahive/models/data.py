@@ -116,7 +116,8 @@ class IndexSnapshot(msgspec.Struct):
     movies: list[Movie] = []
     series: list[Series] = []
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
+        """Populate default stats when omitted from decoded payload."""
         if self.stats is msgspec.UNSET:
             self.stats = MediaStats()
 

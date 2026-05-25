@@ -13,7 +13,7 @@ class SCGITransport(xmlrpc.client.Transport):
         super().__init__()
         self.socket_path = socket_path
 
-    def single_request(self, host, handler, request_body, verbose=False):
+    def single_request(self, _host, _handler, request_body, _verbose=False):
         # Create SCGI request
         headers = f"CONTENT_LENGTH\x00{len(request_body)}\x00SCGI\x001\x00"
         request = f"{len(headers)}:{headers},{request_body.decode('utf-8')}"
@@ -68,6 +68,7 @@ class RTorrentClient:
 
     def load_torrent(self, torrent_path: Path, download_dir: Path) -> bool:
         """Load a torrent file and set its download directory.
+
         Uses load.start_verbose to load and immediately start/hash-check.
 
         Args:
