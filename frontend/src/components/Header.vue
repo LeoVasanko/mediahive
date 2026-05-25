@@ -1,7 +1,9 @@
 <template>
   <header class="header" :class="[`header-${position}`]">
     <div class="header-left">
-      <img :src="logoUrl" alt="MediaHive" class="header-logo" />
+      <RouterLink to="/" class="header-logo-link" aria-label="Go to front page">
+        <img :src="logoUrl" alt="MediaHive" class="header-logo" />
+      </RouterLink>
       <nav class="header-nav">
         <!-- Browse mode: show both Movies and Series -->
         <template v-if="!isDetailPage">

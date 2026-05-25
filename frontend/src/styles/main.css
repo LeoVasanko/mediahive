@@ -149,6 +149,11 @@ html.mouse-active ::-webkit-scrollbar-thumb:hover {
   gap: 12px;
 }
 
+.header-logo-link {
+  display: inline-flex;
+  align-items: center;
+}
+
 .header-logo {
   height: 40px;
   width: 40px;
