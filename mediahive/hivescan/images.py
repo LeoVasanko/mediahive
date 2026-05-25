@@ -42,7 +42,7 @@ async def _download_image(url: str, output_path: Path, description: str) -> str 
         await AsyncPath(output_path.parent).mkdir(parents=True, exist_ok=True)
         await ap.write_bytes(response.content)
         return output_path.as_posix()
-    except Exception as e:
+    except (httpx.HTTPError, OSError) as e:
         print(f"    Failed to download {description}: {e}")
         return None
 

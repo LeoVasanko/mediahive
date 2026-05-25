@@ -400,7 +400,9 @@ async def _process_movies(
         return await find_playable_file(item.path) is not None
 
     # Filter movies with playable files
-    valid_movies = [item for item in categories[ContentType.MOVIE] if await has_playable(item)]
+    valid_movies = [
+        item for item in categories[ContentType.MOVIE] if await has_playable(item)
+    ]
     skipped = len(categories[ContentType.MOVIE]) - len(valid_movies)
     if skipped > 0:
         logger.debug(
@@ -655,7 +657,9 @@ async def _process_series(
         return len(await find_episode_files(item.path)) > 0
 
     # Filter series with video content
-    valid_series = [item for item in categories[ContentType.SERIES] if await has_video_content(item)]
+    valid_series = [
+        item for item in categories[ContentType.SERIES] if await has_video_content(item)
+    ]
     skipped = len(categories[ContentType.SERIES]) - len(valid_series)
     if skipped > 0:
         logger.info(

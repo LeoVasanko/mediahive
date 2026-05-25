@@ -52,7 +52,7 @@ def load_config() -> Config:
         try:
             cfg = msgspec.toml.decode(path.read_bytes(), type=Config)
             return _migrate_legacy_media_folder(cfg)
-        except Exception:
+        except OSError, msgspec.DecodeError, msgspec.ValidationError:
             return Config()
     return Config()
 

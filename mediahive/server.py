@@ -76,7 +76,7 @@ def _load_resume_positions(root_path: Path) -> dict[str, int]:
     playback_state_path = root_path / ".mediahive" / "playback-state.json"
     try:
         raw = json.loads(playback_state_path.read_text(encoding="utf-8"))
-    except Exception:
+    except OSError, TypeError, json.JSONDecodeError:
         return {}
 
     resume_positions = raw.get("resume_positions") if isinstance(raw, dict) else None
@@ -472,7 +472,7 @@ async def ws_endpoint(ws: WebSocket, root_id: str) -> None:
             await ws.receive_text()
     except WebSocketDisconnect:
         ctx.store.disconnect(ws)
-    except Exception:
+    except OSError, RuntimeError:
         ctx.store.disconnect(ws)
 
 
@@ -492,7 +492,7 @@ async def play_media(root_id: str, request: Request):
     try:
         _open_with_default_app(file_path)
         return {"status": "ok"}
-    except Exception as e:
+    except (OSError, subprocess.SubprocessError, RuntimeError, ValueError) as e:
         raise HTTPException(status_code=500, detail=f"Failed to play media: {e}")
 
 
@@ -527,7 +527,7 @@ async def open_folder(root_id: str, request: Request):
             subprocess.Popen(["xdg-open", str(folder)])
 
         return {"status": "ok"}
-    except Exception as e:
+    except (OSError, subprocess.SubprocessError, RuntimeError, ValueError) as e:
         raise HTTPException(status_code=500, detail=f"Failed to open folder: {e}")
 
 

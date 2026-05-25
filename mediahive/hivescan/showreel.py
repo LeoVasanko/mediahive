@@ -74,7 +74,7 @@ async def _run_ffmpeg(
             await _kill_proc(proc)
             try:
                 stdout, stderr = await proc.communicate()
-            except Exception:
+            except OSError, asyncio.SubprocessError:
                 stdout, stderr = b"", b""
             logger.exception(
                 "ffmpeg command timed out. cmd=%s stderr=%s",
@@ -105,7 +105,7 @@ async def _run_ffmpeg(
     except asyncio.CancelledError:
         await _kill_proc(proc)
         raise
-    except Exception:
+    except OSError, asyncio.SubprocessError:
         logger.exception("Unexpected error running ffmpeg command: %s", shlex.join(cmd))
         return None
 
@@ -519,7 +519,7 @@ async def detect_dovi_profile(video_path: str) -> int | None:
     """
     try:
         return (await probe_media_info(video_path)).dovi_profile
-    except Exception as e:
+    except (OSError, ValueError, RuntimeError) as e:
         logger.warning("    DoVi detection error: %s", e)
         return None
 
@@ -545,7 +545,7 @@ async def is_hdr_video(video_path: str) -> bool:
     """
     try:
         return (await probe_media_info(video_path)).is_hdr
-    except Exception:
+    except OSError, ValueError, RuntimeError:
         return False
 
 
@@ -674,7 +674,7 @@ async def get_video_duration(video_path: str) -> float | None:
     """Get the duration of a video file in seconds using ffmpeg probe output."""
     try:
         return (await probe_media_info(video_path)).duration
-    except Exception:
+    except OSError, ValueError, RuntimeError:
         return None
 
 

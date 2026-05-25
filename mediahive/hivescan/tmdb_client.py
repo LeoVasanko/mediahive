@@ -81,7 +81,7 @@ async def _load_from_cache(cache_path: Path):
         if data.get("_cached_none"):
             return None
         return data
-    except Exception:
+    except OSError, TypeError, json.JSONDecodeError:
         return _NOT_FOUND
 
 
@@ -91,7 +91,7 @@ async def _save_to_cache(cache_path: Path, data: dict | None) -> None:
         await AsyncPath(_get_cache_dir()).mkdir(parents=True, exist_ok=True)
         text = json.dumps({"_cached_none": True}) if data is None else json.dumps(data)
         await AsyncPath(cache_path).write_text(text, encoding="utf-8")
-    except Exception:
+    except OSError, TypeError, ValueError:
         pass  # Cache write failures are not critical
 
 
@@ -133,7 +133,7 @@ async def tmdb_api_request(
         # Cache the failure (None) to avoid retrying
         await _save_to_cache(cache_path, None)
         return None
-    except Exception:
+    except httpx.HTTPError:
         # Don't cache network errors - they may be transient
         return None
 
@@ -233,10 +233,15 @@ def _generate_title_variants(words: list[str], min_words: int = 2) -> list[str]:
     variants.append(" ".join(words))
 
     # Then try removing from end (most common: edition names at end)
-    variants.extend(" ".join(words[:num_words]) for num_words in range(len(words) - 1, min_words - 1, -1))
+    variants.extend(
+        " ".join(words[:num_words])
+        for num_words in range(len(words) - 1, min_words - 1, -1)
+    )
 
     # Then try removing from start (garbage at beginning)
-    variants.extend(" ".join(words[start:]) for start in range(1, len(words) - min_words + 1))
+    variants.extend(
+        " ".join(words[start:]) for start in range(1, len(words) - min_words + 1)
+    )
 
     # Finally try middle portions (remove from both ends)
     for start in range(1, len(words) - min_words):

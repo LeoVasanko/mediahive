@@ -290,7 +290,7 @@ class IndexStore:
         """Send data to a WS client; mark as dead on failure."""
         try:
             await ws.send_bytes(data)
-        except Exception:
+        except OSError, RuntimeError:
             dead.append(ws)
 
     def broadcast_task(self, task_info: TaskInfo) -> None:

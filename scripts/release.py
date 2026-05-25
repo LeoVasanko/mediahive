@@ -222,7 +222,7 @@ def main() -> None:
         print("\nDone. To publish to PyPI, run:")
         print("  uv publish")
 
-    except Exception as e:
+    except (FileNotFoundError, OSError, RuntimeError, ValueError, httpx.HTTPError) as e:
         print(f"✗ Release failed: {e}", file=sys.stderr)
         sys.exit(1)
 

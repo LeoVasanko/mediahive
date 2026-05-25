@@ -125,7 +125,7 @@ def _default_playback_state() -> dict[str, object]:
 def _load_playback_state(path: Path) -> dict[str, object]:
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
+    except OSError, TypeError, json.JSONDecodeError:
         return _default_playback_state()
 
     if not isinstance(raw, dict):
@@ -163,7 +163,7 @@ def _media_key_for_filepath(
         try:
             relative = Path(filepath).resolve().relative_to(root.resolve())
             return relative.as_posix(), root
-        except Exception:
+        except OSError, RuntimeError, ValueError:
             continue
     return None
 
@@ -186,7 +186,7 @@ def _load_xinput_get_state():
             fn.argtypes = [ctypes.c_uint, ctypes.POINTER(_XINPUT_STATE)]
             fn.restype = ctypes.c_ulong
             return fn
-        except Exception:
+        except AttributeError, OSError:
             continue
     raise RuntimeError("XInput DLL not found")
 
@@ -412,7 +412,7 @@ def _start_gamepad_remote(
 
         try:
             status = status_future.result()
-        except Exception:
+        except OSError, RuntimeError, ValueError:
             status = None
         status_future = None
 
@@ -662,7 +662,7 @@ def _wait_for_backend(timeout: int | None = None) -> bool:
         try:
             with urllib.request.urlopen(url, timeout=BACKEND_HEALTH_REQUEST_TIMEOUT):
                 return True
-        except Exception:
+        except urllib.error.URLError, TimeoutError, OSError:
             time.sleep(BACKEND_HEALTH_POLL_SECONDS)
 
 
@@ -835,7 +835,7 @@ def winmain() -> None:
         try:
             with urllib.request.urlopen(req, timeout=10):
                 logger.info("Requested initial roots activation")
-        except Exception as exc:
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
             logger.warning("Initial roots activation request failed: %s", exc)
 
     if not _wait_for_backend(timeout=HEALTH_TIMEOUT):
@@ -863,7 +863,7 @@ def winmain() -> None:
             user_agent = window.evaluate_js("navigator.userAgent")
             if isinstance(user_agent, str):
                 logger.info("Embedded webview user agent: %s", user_agent)
-        except Exception as exc:
+        except (OSError, RuntimeError, ValueError) as exc:
             logger.warning("Could not read embedded user agent: %s", exc)
 
         nonlocal poll_thread

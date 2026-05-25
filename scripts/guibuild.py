@@ -256,7 +256,7 @@ def main() -> None:
 
         print(f"✓ Built successfully: {zip_path}")
         print(f"  Size: {zip_path.stat().st_size / (1024 * 1024):.1f} MB")
-    except Exception as e:
+    except (FileNotFoundError, OSError, RuntimeError, ValueError) as e:
         print(f"✗ Build failed: {e}", file=sys.stderr)
         sys.exit(1)
 

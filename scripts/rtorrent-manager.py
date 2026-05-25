@@ -88,7 +88,7 @@ def parse_torrent(filepath: Path) -> TorrentInfo | None:
     try:
         with Path(filepath).open("rb") as f:
             data = bencodepy.decode(f.read())
-    except Exception as e:
+    except (OSError, ValueError, TypeError) as e:
         print(f"Error parsing {filepath}: {e}")
         return None
 
@@ -381,7 +381,7 @@ Examples:
                         try:
                             torrent_file.unlink()
                             removed_torrent_files += 1
-                        except Exception:
+                        except OSError:
                             pass
 
                 # Delete the downloaded files
@@ -393,7 +393,7 @@ Examples:
                             download_path.unlink()
                         removed_downloads += 1
                         print(f"  [DEL] {download_path}")
-                    except Exception as e:
+                    except OSError as e:
                         print(f"  [ERR] {download_path}: {e}")
                 else:
                     print(f"  [DEL] {torrent_info['name']} (no data)")
@@ -442,7 +442,7 @@ Examples:
                 try:
                     torrent.path.unlink()
                     print(f"Removed: {torrent.path}")
-                except Exception as e:
+                except OSError as e:
                     print(f"Failed to remove {torrent.path}: {e}")
 
 

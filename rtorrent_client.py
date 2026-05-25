@@ -48,7 +48,9 @@ class SCGITransport(xmlrpc.client.Transport):
 class RTorrentClient:
     """Client for communicating with rtorrent via XMLRPC over SCGI socket."""
 
-    def __init__(self, socket_path: str = "/home/user/rtorrent/.session/rpc.socket") -> None:
+    def __init__(
+        self, socket_path: str = "/home/user/rtorrent/.session/rpc.socket"
+    ) -> None:
         self.socket_path = socket_path
         transport = SCGITransport(socket_path)
         self.proxy = xmlrpc.client.ServerProxy(
@@ -60,7 +62,7 @@ class RTorrentClient:
         try:
             downloads = self.proxy.download_list("")
             return {h.upper() for h in downloads}
-        except Exception as e:
+        except (OSError, xmlrpc.client.Error) as e:
             print(f"Error getting loaded torrents: {e}")
             return set()
 
@@ -83,7 +85,7 @@ class RTorrentClient:
                 "", str(torrent_path), f'd.directory.set="{download_dir}"'
             )
             return True
-        except Exception as e:
+        except (OSError, xmlrpc.client.Error) as e:
             print(f"Error loading torrent {torrent_path}: {e}")
             return False
 
@@ -105,7 +107,7 @@ class RTorrentClient:
                 "base_path": base_path,  # Full path to data (file or folder)
                 "is_multi_file": is_multi_file,
             }
-        except Exception as e:
+        except (OSError, xmlrpc.client.Error) as e:
             print(f"Error getting torrent info for {info_hash}: {e}")
             return None
 
@@ -129,9 +131,9 @@ class RTorrentClient:
                         info = self.get_torrent_info(info_hash)
                         if info:
                             unregistered.append(info)
-                except Exception:
+                except OSError, xmlrpc.client.Error:
                     continue
-        except Exception as e:
+        except (OSError, xmlrpc.client.Error) as e:
             print(f"Error scanning for unregistered torrents: {e}")
         return unregistered
 
@@ -154,6 +156,6 @@ class RTorrentClient:
                 # Just remove from rtorrent, keep files
                 self.proxy.d.erase(info_hash)
             return True
-        except Exception as e:
+        except (OSError, xmlrpc.client.Error) as e:
             print(f"Error removing torrent {info_hash}: {e}")
             return False
