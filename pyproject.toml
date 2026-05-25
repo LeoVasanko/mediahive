@@ -57,5 +57,13 @@ gui = [
 [dependency-groups]
 dev = [
     "httpx>=0.28.1",
+    "ruff>=0.15.14",
     "setuptools-scm>=8",
 ]
+
+[tool.ruff]
+preview = true
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = ["D203", "D213", "DOC201", "COM812", "T201"]
