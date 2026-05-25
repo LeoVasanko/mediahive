@@ -366,8 +366,10 @@ html:not(.mouse-active) .btn-secondary.nav-focused {
   overflow-y: hidden;
   padding-bottom: 8px;
   margin: 0 -2px;
+  /* Tail padding is added only on the right so that increasing it does not
+     shift items to the right (which would break safe-zone calculations). */
   padding: 4px calc(2px + var(--section-padding) + var(--sync-row-tail)) 8px
-    calc(2px + var(--section-padding) + var(--sync-row-tail));
+    calc(2px + var(--section-padding));
   scrollbar-width: none;
   -ms-overflow-style: none;
 }

@@ -44,6 +44,7 @@ const SYNC_SCROLL_RIGHT_DEADZONE_VAR = "--sync-row-right-deadzone"
 let syncedRowsFrame: number | null = null
 let syncedRowsCurrentOffset = 0
 let syncedRowsTargetOffset = 0
+// Kept for backward compatibility; tail is now per-row via CSS custom properties.
 let syncedRowsTailPx = 0
 let lastSyncedAnchorCol: number | null = null
 let lastSyncedRowsAnimationAt: number | null = null
@@ -107,22 +108,27 @@ function getRowMaxOffset(row: HTMLElement): number {
   return Math.max(0, row.scrollWidth - row.clientWidth)
 }
 
+function getRowTail(row: HTMLElement): number {
+  const raw = row.style.getPropertyValue(SYNC_SCROLL_TAIL_VAR).trim()
+  return raw ? parseFloat(raw) : 0
+}
+
 function getRowNaturalMaxOffset(row: HTMLElement): number {
-  return Math.max(0, getRowMaxOffset(row) - syncedRowsTailPx)
+  return Math.max(0, getRowMaxOffset(row) - getRowTail(row))
 }
 
-function getTailNeededForOffset(offset: number, rows: HTMLElement[]): number {
-  if (rows.length === 0) return 0
-
-  let minNaturalMax = Number.POSITIVE_INFINITY
-  for (const row of rows) {
-    minNaturalMax = Math.min(minNaturalMax, getRowNaturalMaxOffset(row))
-  }
-
-  if (!Number.isFinite(minNaturalMax)) return 0
-  return Math.max(0, offset - minNaturalMax)
+function getTailNeededForOffset(offset: number, row: HTMLElement): number {
+  const naturalMax = getRowNaturalMaxOffset(row)
+  if (!Number.isFinite(naturalMax)) return 0
+  return Math.max(0, offset - naturalMax)
 }
 
+function setRowTail(row: HTMLElement, tailPx: number) {
+  const nextTail = Math.max(0, tailPx)
+  row.style.setProperty(SYNC_SCROLL_TAIL_VAR, `${nextTail}px`)
+}
+
+/** @deprecated Use setRowTail() for per-row tail values. */
 function setSyncedRowsTail(tailPx: number, rows: HTMLElement[] = getSyncedRows()) {
   const nextTail = Math.max(0, tailPx)
   syncedRowsTailPx = nextTail
@@ -131,16 +137,31 @@ function setSyncedRowsTail(tailPx: number, rows: HTMLElement[] = getSyncedRows()
   }
 }
 
+// Reference the deprecated function so TS doesn't complain; it may be called
+// by external code.
+void setSyncedRowsTail
+
+/** @deprecated Tail is now per-row. Kept for external compatibility. */
+export function getSyncedRowsTailPx(): number {
+  return syncedRowsTailPx
+}
+
 function applySyncedRowScroll(offset: number, rows: HTMLElement[] = getSyncedRows()) {
   for (const row of rows) {
     row.scrollLeft = clampRowScrollOffset(row, offset)
   }
 }
 
+function resetAllRowTails(rows: HTMLElement[] = getSyncedRows()) {
+  for (const row of rows) {
+    setRowTail(row, 0)
+  }
+}
+
 function resetSyncedRows(immediate: boolean = false) {
   lastSyncedAnchorCol = null
   syncedRowsTargetOffset = 0
-  setSyncedRowsTail(0)
+  resetAllRowTails()
 
   if (immediate) {
     syncedRowsCurrentOffset = 0
@@ -205,9 +226,7 @@ function updateSyncedRowTarget(anchorCol: number, anchorRow: HTMLElement | null 
   if (!metrics) return
 
   const currentOffset = syncedRowsCurrentOffset
-  const effectiveAnchorOffset = anchorRow
-    ? clampRowScrollOffset(anchorRow, currentOffset)
-    : currentOffset
+  const effectiveAnchorOffset = currentOffset
   const deadzoneInset = Math.max(
     metrics.paddingLeft,
     (metrics.viewportWidth - metrics.cardWidth) * SYNC_SCROLL_DEADZONE_RATIO,
@@ -221,26 +240,48 @@ function updateSyncedRowTarget(anchorCol: number, anchorRow: HTMLElement | null 
   const itemLeft = metrics.paddingLeft + anchorCol * metrics.stride
   const viewportLeft = itemLeft - effectiveAnchorOffset
 
-  const desiredOffset =
+  let desiredOffset =
     viewportLeft < minVisibleLeft
       ? Math.max(0, itemLeft - minVisibleLeft)
       : viewportLeft > maxVisibleLeft
         ? Math.max(0, itemLeft - maxVisibleLeft)
         : currentOffset
 
-  const neededTail = getTailNeededForOffset(desiredOffset, rows)
-  if (Math.abs(neededTail - syncedRowsTailPx) >= 0.5) {
-    setSyncedRowsTail(neededTail, rows)
+  // If the anchor row fits entirely on screen (no scrollable overflow), keep
+  // it left-aligned and do not generate tail padding for it.
+  if (anchorRow && getRowMaxOffset(anchorRow) === 0) {
+    desiredOffset = 0
+  }
+
+  // Compute and apply per-row tail: each row gets exactly the tail it needs
+  // to reach the desired virtual offset. Rows that don't need tail keep what
+  // they have (or get none). This is strictly per-row — no global minimum.
+  let anyTailChanged = false
+  for (const row of rows) {
+    const neededTail = getTailNeededForOffset(desiredOffset, row)
+    const currentTail = getRowTail(row)
+    const nextTail = Math.max(currentTail, neededTail)
+    if (Math.abs(nextTail - currentTail) >= 0.5) {
+      setRowTail(row, nextTail)
+      anyTailChanged = true
+    }
+  }
+  if (anyTailChanged) {
+    // Force synchronous layout recalculation so that scrollWidth reflects
+    // the new tail padding before we compute clamped scroll positions.
+    for (const row of rows) {
+      void row.scrollWidth
+    }
   }
 
   lastSyncedAnchorCol = anchorCol
   syncedRowsTargetOffset = desiredOffset
 
-  if (anchorRow) {
-    // Preserve a global virtual offset, bounded by the focused row after tail-space is applied.
-    syncedRowsTargetOffset = Math.min(syncedRowsTargetOffset, getRowMaxOffset(anchorRow))
-  } else if (syncedRowsTailPx > 0) {
-    setSyncedRowsTail(0, rows)
+  if (!anchorRow) {
+    resetAllRowTails(rows)
+    for (const row of rows) {
+      void row.scrollWidth
+    }
   }
 
   if (syncedRowsFrame === null) {
