@@ -73,10 +73,26 @@
         </div>
       </template>
       <template v-else>
-        <div v-if="subtitle" class="media-card-detail">{{ subtitle }}</div>
-        <div v-if="directorAndCast" class="media-card-detail">
-          <span v-if="director" class="director-name">{{ director }}</span
-          ><span v-if="director && filteredCastNames">, </span>{{ filteredCastNames }}
+        <div
+          v-if="item.type === 'series' && formattedSeriesCreators"
+          class="media-card-detail person-list"
+        >
+          <span
+            v-for="(creatorName, creatorIndex) in formattedSeriesCreators"
+            :key="`${creatorName}-${creatorIndex}`"
+            class="person-token"
+            >{{ creatorName }}</span
+          >
+        </div>
+        <div v-else-if="subtitle" class="media-card-detail">{{ subtitle }}</div>
+        <div v-if="directorAndCast" class="media-card-detail person-list">
+          <span v-if="director" class="director-name person-token">{{ formatPersonLabel(director) }}</span>
+          <span
+            v-for="(castName, castIndex) in formattedCastNames"
+            :key="`${castName}-${castIndex}`"
+            class="person-token"
+            >{{ castName }}</span
+          >
         </div>
       </template>
     </div>
@@ -174,11 +190,22 @@ const subtitle = computed(() => {
     const epData = props.item.data as EpisodeWithSeries
     return `${epData.series.title} S${epData.seasonNumber}E${epData.episode.episode_number}`
   }
-  if (props.item.type === "series") {
-    const creators = (props.item.data as Series).info?.creators
-    return creators && creators.length > 0 ? creators.join(", ") : null
-  }
   return null
+})
+
+const seriesCreators = computed(() => {
+  if (props.item.type !== "series") return null
+  const creators = (props.item.data as Series).info?.creators
+  return creators && creators.length > 0 ? creators : null
+})
+
+function formatPersonLabel(name: string): string {
+  return name.trim().replace(/\s+/g, "\u202F")
+}
+
+const formattedSeriesCreators = computed(() => {
+  if (!seriesCreators.value) return null
+  return seriesCreators.value.map((name) => formatPersonLabel(name))
 })
 
 const director = computed(() => {
@@ -188,23 +215,26 @@ const director = computed(() => {
 
 const directorAndCast = computed(() => {
   if (props.item.type !== "movies") return false
-  return director.value || filteredCastNames.value
+  return !!director.value || filteredCastNames.value.length > 0
 })
 
 const filteredCastNames = computed(() => {
-  if (props.item.type !== "movies") return null
+  if (props.item.type !== "movies") return []
   const cast = (props.item.data as Movie).info?.cast
-  if (!cast || cast.length === 0) return null
+  if (!cast || cast.length === 0) return []
 
   const directorName = director.value?.toLowerCase()
   const filteredCast = directorName
     ? cast.filter((c) => c.name.toLowerCase() !== directorName)
     : cast
 
-  if (filteredCast.length === 0) return null
+  if (filteredCast.length === 0) return []
 
-  const names = filteredCast.slice(0, 3).map((c) => c.name)
-  return names.join(", ")
+  return filteredCast.slice(0, 3).map((c) => c.name)
+})
+
+const formattedCastNames = computed(() => {
+  return filteredCastNames.value.map((name) => formatPersonLabel(name))
 })
 
 const matchedPeople = computed(() => {
@@ -295,6 +325,21 @@ html:not(.mouse-active) .media-card.nav-focused .card-focus-outline rect {
   -webkit-box-orient: vertical;
   overflow: hidden;
   line-height: 1.3;
+}
+
+.media-card-detail.person-list {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  row-gap: 1px;
+  column-gap: 0.5ch;
+  -webkit-line-clamp: unset;
+  -webkit-box-orient: unset;
+  max-height: calc(1.3em * 2);
+}
+
+.person-token {
+  white-space: nowrap;
 }
 
 .director-name {
