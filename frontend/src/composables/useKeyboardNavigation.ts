@@ -6,6 +6,20 @@ export interface FocusableElement {
   col: number
 }
 
+export type NavDirection = "up" | "down" | "left" | "right"
+
+export interface OutOfBoundsNavigationContext {
+  current: HTMLElement
+  direction: NavDirection
+  currentRow: number
+  currentCol: number
+  byRow: Map<number, FocusableElement[]>
+}
+
+export type OutOfBoundsNavigationHandler = (
+  context: OutOfBoundsNavigationContext,
+) => HTMLElement | null | undefined
+
 // Global focus state
 const focusedElement = ref<HTMLElement | null>(null)
 const isNavigating = ref(false)
@@ -25,6 +39,7 @@ const SYNC_SCROLL_FIRST_CONTENT_ROW = 2
 const SYNC_SCROLL_DEADZONE_RATIO = 0.18
 const SYNC_SCROLL_EASING_MS = 220
 const SYNC_SCROLL_TAIL_VAR = "--sync-row-tail"
+const SYNC_SCROLL_RIGHT_DEADZONE_VAR = "--sync-row-right-deadzone"
 
 let syncedRowsFrame: number | null = null
 let syncedRowsCurrentOffset = 0
@@ -32,6 +47,18 @@ let syncedRowsTargetOffset = 0
 let syncedRowsTailPx = 0
 let lastSyncedAnchorCol: number | null = null
 let lastSyncedRowsAnimationAt: number | null = null
+const outOfBoundsHandlers = new Set<OutOfBoundsNavigationHandler>()
+
+function resolveOutOfBoundsNavigation(
+  context: OutOfBoundsNavigationContext,
+): HTMLElement | null {
+  const handlers = Array.from(outOfBoundsHandlers)
+  for (let i = handlers.length - 1; i >= 0; i--) {
+    const result = handlers[i]?.(context)
+    if (result) return result
+  }
+  return null
+}
 
 function getSyncedRows(): HTMLElement[] {
   return Array.from(document.querySelectorAll<HTMLElement>(`[${SYNC_SCROLL_ROW_ATTR}="true"]`))
@@ -48,6 +75,8 @@ function getSyncedRowMetrics(rows: HTMLElement[]) {
 
     const rowStyle = window.getComputedStyle(row)
     const paddingLeft = parseFloat(rowStyle.paddingLeft || "0")
+    const rightDeadzoneRaw = rowStyle.getPropertyValue(SYNC_SCROLL_RIGHT_DEADZONE_VAR).trim()
+    const rightDeadzoneOverride = rightDeadzoneRaw ? parseFloat(rightDeadzoneRaw) : NaN
     let gap = parseFloat(rowStyle.columnGap || rowStyle.gap || "0")
 
     if (cards.length > 1) {
@@ -60,6 +89,9 @@ function getSyncedRowMetrics(rows: HTMLElement[]) {
       stride: cardWidth + gap,
       paddingLeft,
       viewportWidth: row.clientWidth,
+      rightDeadzoneOverride: Number.isFinite(rightDeadzoneOverride)
+        ? Math.max(0, rightDeadzoneOverride)
+        : null,
     }
   }
 
@@ -180,10 +212,11 @@ function updateSyncedRowTarget(anchorCol: number, anchorRow: HTMLElement | null 
     metrics.paddingLeft,
     (metrics.viewportWidth - metrics.cardWidth) * SYNC_SCROLL_DEADZONE_RATIO,
   )
+  const rightDeadzone = metrics.rightDeadzoneOverride ?? deadzoneInset
   const minVisibleLeft = deadzoneInset
   const maxVisibleLeft = Math.max(
     minVisibleLeft,
-    metrics.viewportWidth - metrics.cardWidth - deadzoneInset,
+    metrics.viewportWidth - metrics.cardWidth - rightDeadzone,
   )
   const itemLeft = metrics.paddingLeft + anchorCol * metrics.stride
   const viewportLeft = itemLeft - effectiveAnchorOffset
@@ -226,6 +259,30 @@ function updateSyncedRowTarget(anchorCol: number, anchorRow: HTMLElement | null 
   }
 }
 
+function getLocalSyncedRowCol(
+  anchorRow: HTMLElement,
+  element: HTMLElement,
+  requestedCol: number,
+): number {
+  const cards = Array.from(anchorRow.querySelectorAll<HTMLElement>(`.media-card[${FOCUSABLE_ATTR}]`))
+  if (cards.length === 0) return Math.max(0, requestedCol)
+
+  const cardCols = cards
+    .map((card) => parseInt(card.getAttribute(COL_ATTR) || "", 10))
+    .filter((col) => Number.isFinite(col))
+
+  if (cardCols.length > 0) {
+    const minCol = Math.min(...cardCols)
+    const localFromRequested = requestedCol - minCol
+    return Math.max(0, Math.min(localFromRequested, cards.length - 1))
+  }
+
+  const fallbackIndex = cards.indexOf(element)
+  if (fallbackIndex >= 0) return fallbackIndex
+
+  return Math.max(0, Math.min(requestedCol, cards.length - 1))
+}
+
 function syncRowsToElement(element: HTMLElement) {
   const row = parseInt(element.getAttribute(ROW_ATTR) || "0", 10)
   if (row < SYNC_SCROLL_FIRST_CONTENT_ROW) {
@@ -234,8 +291,14 @@ function syncRowsToElement(element: HTMLElement) {
   }
 
   const currentCol = parseInt(element.getAttribute(COL_ATTR) || "0", 10)
-  const anchorCol = desiredCol.value ?? currentCol
   const anchorRow = element.closest<HTMLElement>(`[${SYNC_SCROLL_ROW_ATTR}="true"]`)
+  if (!anchorRow) {
+    resetSyncedRows()
+    return
+  }
+
+  const requestedCol = desiredCol.value ?? currentCol
+  const anchorCol = getLocalSyncedRowCol(anchorRow, element, requestedCol)
   updateSyncedRowTarget(anchorCol, anchorRow)
 }
 
@@ -414,7 +477,7 @@ function findElementClosestToLogicalViewportX(
  */
 function findNextElement(
   current: HTMLElement,
-  direction: "up" | "down" | "left" | "right",
+  direction: NavDirection,
 ): HTMLElement | null {
   const currentRow = parseInt(current.getAttribute(ROW_ATTR) || "0", 10)
   const currentCol = parseInt(current.getAttribute(COL_ATTR) || "0", 10)
@@ -432,7 +495,15 @@ function findNextElement(
 
     // Find element with target col in this row
     const target = rowElements.find((e) => e.col === targetCol)
-    return target?.element || null
+    if (target?.element) return target.element
+
+    return resolveOutOfBoundsNavigation({
+      current,
+      direction,
+      currentRow,
+      currentCol,
+      byRow,
+    })
   } else {
     // Vertical: move to adjacent row, try to maintain column
     const sortedRows = Array.from(byRow.keys()).sort((a, b) => a - b)
@@ -443,7 +514,15 @@ function findNextElement(
     const delta = direction === "down" ? 1 : -1
     const targetRowIdx = currentRowIdx + delta
 
-    if (targetRowIdx < 0 || targetRowIdx >= sortedRows.length) return null
+    if (targetRowIdx < 0 || targetRowIdx >= sortedRows.length) {
+      return resolveOutOfBoundsNavigation({
+        current,
+        direction,
+        currentRow,
+        currentCol,
+        byRow,
+      })
+    }
 
     const targetRow = sortedRows[targetRowIdx]
 
@@ -480,7 +559,16 @@ function findNextElement(
       targetCol,
       metrics,
     )
-    return closestByViewport?.element || entryTarget?.element || null
+    const resolved = closestByViewport?.element || entryTarget?.element || null
+    if (resolved) return resolved
+
+    return resolveOutOfBoundsNavigation({
+      current,
+      direction,
+      currentRow,
+      currentCol,
+      byRow,
+    })
   }
 }
 
@@ -712,6 +800,13 @@ export function navAttrs(row: number, col: number, entryCol?: number) {
     attrs[ENTRY_COL_ATTR] = String(entryCol)
   }
   return attrs
+}
+
+export function registerOutOfBoundsNavigationHandler(handler: OutOfBoundsNavigationHandler) {
+  outOfBoundsHandlers.add(handler)
+  return () => {
+    outOfBoundsHandlers.delete(handler)
+  }
 }
 
 export { FOCUSABLE_ATTR, ROW_ATTR, COL_ATTR, ENTRY_COL_ATTR }

@@ -92,7 +92,8 @@
                   :best="index === 0"
                   :selectable="!!version.playable_file"
                   :disabled="!version.playable_file"
-                  v-bind="navAttrs(2, index, index === 0 ? 0 : undefined)"
+                  data-nav-release-item="true"
+                  v-bind="navAttrs(2 + index, 0, 0)"
                   @activate="handleVersionActivate(version, $event)"
                   @keydown="handleVersionShortcutKeydown($event, version)"
                   @contextmenu="handleVersionContextMenu($event, version)"
@@ -105,12 +106,18 @@
               </div>
             </div>
 
-            <div v-if="limitedMovieCast.length > 0" class="cast-list" data-sync-scroll-row="true">
+            <div
+              v-if="limitedMovieCast.length > 0"
+              class="cast-list"
+              data-sync-scroll-row="true"
+              data-nav-cast-row="true"
+            >
               <a
                 v-for="(castMember, castIndex) in limitedMovieCast"
                 :key="`${castMember.name}-${castMember.character || ''}`"
                 class="cast-card media-card"
-                v-bind="navAttrs(2, movieVersions.length + castIndex)"
+                data-nav-cast-item="true"
+                v-bind="navAttrs(2 + movieVersions.length, castIndex)"
                 :href="`#/?q=${encodeURIComponent(castMember.name)}`"
                 :title="`Search for ${castMember.name}`"
                 @click.prevent="handleCastSelect(castMember.name)"
@@ -208,7 +215,11 @@ import castPlaceholderMaleUrl from "../assets/cast-placeholder-male.svg"
 import SeriesFullView from "./SeriesFullView.vue"
 import ReleaseVersionCard from "./ReleaseVersionCard.vue"
 import ReleaseActionMenu from "./ReleaseActionMenu.vue"
-import { navAttrs } from "../composables/useKeyboardNavigation"
+import {
+  navAttrs,
+  registerOutOfBoundsNavigationHandler,
+  FOCUSABLE_ATTR,
+} from "../composables/useKeyboardNavigation"
 
 const props = defineProps<{
   item: MediaItem
@@ -230,6 +241,64 @@ const videoStates = ref<string[]>([])
 const COLLAGE_SLOT_COUNT = 5
 const safariAutoplay = isSafariBrowser()
 const COLLAGE_START_OFFSETS_SECONDS = [0, 8, 6, 4, 2]
+const DESKTOP_NAV_SHORTCUT_MIN_WIDTH = 900
+
+let disposeOutOfBoundsHandler: (() => void) | null = null
+let lastReleaseShortcutRow: number | null = null
+
+function getDesktopCastFirstItem(): HTMLElement | null {
+  const castRow = document.querySelector<HTMLElement>('[data-nav-cast-row="true"]')
+  if (!castRow) return null
+  return castRow.querySelector<HTMLElement>(`[data-nav-cast-item="true"][${FOCUSABLE_ATTR}="true"]`)
+}
+
+function getReleaseAtRow(row: number): HTMLElement | null {
+  return document.querySelector<HTMLElement>(
+    `[data-nav-release-item="true"][data-nav-row="${row}"][data-nav-col="0"][${FOCUSABLE_ATTR}="true"]`,
+  )
+}
+
+function getLastReleaseRowBefore(castRow: number): number | null {
+  const releases = Array.from(document.querySelectorAll<HTMLElement>('[data-nav-release-item="true"]'))
+  let best: number | null = null
+  for (const release of releases) {
+    const row = parseInt(release.getAttribute("data-nav-row") || "", 10)
+    if (!Number.isFinite(row) || row >= castRow) continue
+    if (best === null || row > best) best = row
+  }
+  return best
+}
+
+function registerMovieOutOfBoundsShortcut() {
+  disposeOutOfBoundsHandler?.()
+  disposeOutOfBoundsHandler = registerOutOfBoundsNavigationHandler((context) => {
+    if (window.innerWidth <= DESKTOP_NAV_SHORTCUT_MIN_WIDTH) return null
+    if (props.item.type !== "movies") return null
+
+    const { current, direction, currentRow, currentCol } = context
+
+    if (direction === "right" && current.hasAttribute("data-nav-release-item")) {
+      const firstCast = getDesktopCastFirstItem()
+      if (firstCast) {
+        lastReleaseShortcutRow = currentRow
+        return firstCast
+      }
+      return null
+    }
+
+    if (
+      direction === "left" &&
+      current.hasAttribute("data-nav-cast-item") &&
+      currentCol === 0
+    ) {
+      const targetRow = lastReleaseShortcutRow ?? getLastReleaseRowBefore(currentRow)
+      if (targetRow === null) return null
+      return getReleaseAtRow(targetRow)
+    }
+
+    return null
+  })
+}
 
 function setVideoRef(el: HTMLVideoElement | null, index: number) {
   videoRefs.value[index] = el
@@ -340,6 +409,8 @@ onMounted(() => {
   setTimeout(() => {
     startStaggeredPlayback()
   }, 100)
+
+  registerMovieOutOfBoundsShortcut()
 })
 
 const showreelSourceSets = computed((): string[][] | null => {
@@ -648,6 +719,9 @@ onMounted(() => {
 
 onUnmounted(() => {
   document.removeEventListener("keydown", handleMovieMenuKeydown, true)
+  disposeOutOfBoundsHandler?.()
+  disposeOutOfBoundsHandler = null
+  lastReleaseShortcutRow = null
 })
 </script>
 
@@ -736,10 +810,14 @@ onUnmounted(() => {
 .content-main {
   grid-area: main;
   min-width: 0;
+  position: relative;
+  z-index: 2;
 }
 
 .content-sidebar {
   min-width: 0;
+  position: relative;
+  z-index: 2;
 }
 
 .sidebar-left {
@@ -955,16 +1033,18 @@ onUnmounted(() => {
 }
 
 .cast-list {
+  --sync-row-tail: 0px;
+  --cast-safe-start: 40vw;
+  --cast-safe-end: 32px;
+  --sync-row-right-deadzone: 32px;
   position: absolute;
   top: calc(-1 * (var(--header-height) + 30px));
-  left: calc(-50vw + 50% + 40vw - 0.8rem);
-  width: calc(100vw - (40vw - 0.8rem));
+  left: calc(-50vw + 50%);
+  width: 100vw;
   margin: 0;
-  padding-top: 4px;
-  padding-right: 32px;
-  padding-bottom: 8px;
-  padding-left: 0;
-  z-index: 2;
+  padding: 4px calc(var(--cast-safe-end) + var(--sync-row-tail)) 8px
+    calc(var(--cast-safe-start) + var(--sync-row-tail));
+  z-index: 0;
   display: flex;
   flex-wrap: nowrap;
   gap: 6px;
@@ -1093,14 +1173,15 @@ html:not(.mouse-active) .cast-card.nav-focused::after {
   }
 
   .cast-list {
-    position: static;
+    --cast-safe-start: 32px;
+    --cast-safe-end: 32px;
+    --sync-row-right-deadzone: 32px;
+    position: relative;
     top: auto;
-    left: auto;
-    width: auto;
+    left: -32px;
+    width: calc(100% + 64px);
     margin-left: 0;
     margin-top: 0;
-    padding-left: 0;
-    padding-right: 0;
   }
 }
 
