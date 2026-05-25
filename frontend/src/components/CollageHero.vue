@@ -4,9 +4,17 @@
     <div class="collage-grid">
       <template v-for="(item, index) in collageItems" :key="item.id">
         <div
-          :ref="el => setItemRef(el as HTMLElement, index)"
+          :ref="(el) => setItemRef(el as HTMLElement, index)"
           class="collage-item"
-          :class="[`collage-item-${index}`, { 'collage-featured': index === 0, 'collage-item-top-row': isTopRowItem(index), 'nav-focused': focusedIndex === index, 'collage-hidden': !isItemVisible(index) }]"
+          :class="[
+            `collage-item-${index}`,
+            {
+              'collage-featured': index === 0,
+              'collage-item-top-row': isTopRowItem(index),
+              'nav-focused': focusedIndex === index,
+              'collage-hidden': !isItemVisible(index),
+            },
+          ]"
           v-bind="getItemAttrs(index)"
           @click="handleItemClick(item, index)"
           @focus="focusedIndex = index"
@@ -21,8 +29,15 @@
             />
           </div>
           <!-- SVG focus outline for big hex -->
-          <svg v-if="index === 0" class="hex-focus-outline hex-focus-big" viewBox="0 0 130 100" preserveAspectRatio="none">
-            <polygon points="21.67,0 21.67,25 0,37.5 0,62.5 21.67,75 21.67,100 108.33,100 108.33,75 130,62.5 130,37.5 108.33,25 108.33,0" />
+          <svg
+            v-if="index === 0"
+            class="hex-focus-outline hex-focus-big"
+            viewBox="0 0 130 100"
+            preserveAspectRatio="none"
+          >
+            <polygon
+              points="21.67,0 21.67,25 0,37.5 0,62.5 21.67,75 21.67,100 108.33,100 108.33,75 130,62.5 130,37.5 108.33,25 108.33,0"
+            />
           </svg>
           <!-- Non-featured items: image, video, or placeholder -->
           <img
@@ -44,43 +59,65 @@
               :src="source.src"
               :type="source.type"
               :codecs="source.codecs"
-            >
+            />
           </video>
-          <div v-if="index !== 0 && !getImageUrl(item) && getVideoSources(item).length === 0" class="collage-placeholder">
+          <div
+            v-if="index !== 0 && !getImageUrl(item) && getVideoSources(item).length === 0"
+            class="collage-placeholder"
+          >
             <span class="placeholder-title">{{ item.title }}</span>
           </div>
-        <div class="collage-item-overlay"></div>
-        <!-- SVG focus outline for small hex items -->
-        <svg v-if="index !== 0 && index !== 2 && !isTopRowItem(index)" class="hex-focus-outline hex-focus-small" viewBox="0 0 86.6 100" preserveAspectRatio="none">
-          <polygon points="43.3,0 86.6,25 86.6,75 43.3,100 0,75 0,25" />
-        </svg>
-        <!-- Item 2 uses a custom flat-bottom hex outline to match its clip-path -->
-        <svg v-if="index === 2" class="hex-focus-outline hex-focus-small" viewBox="0 0 86.6 100" preserveAspectRatio="none">
-          <polygon points="43.3,0 86.6,33.333 86.6,100 0,100 0,33.333" />
-        </svg>
-        <!-- Top-row items use a custom flat-top hex outline to match their clip-path -->
-        <svg v-if="isTopRowItem(index)" class="hex-focus-outline hex-focus-small" viewBox="0 0 86.6 100" preserveAspectRatio="none">
-          <polygon points="86.6,0 86.6,66.667 43.3,100 0,66.667 0,0" />
-        </svg>
-        <div class="collage-item-info" v-if="index === 0">
-          <h1 class="collage-title">{{ item.title }}</h1>
-          <div class="collage-meta">
-            <span v-if="item.year" class="meta-year">{{ item.year }}</span>
-            <span v-if="getRating(item)" class="meta-rating" :class="getRatingClass(item)">
-              ★ {{ getRating(item)?.toFixed(1) }}
-            </span>
-            <span v-if="getResolution(item)" class="meta-quality">{{ getResolution(item) }}</span>
+          <div class="collage-item-overlay"></div>
+          <!-- SVG focus outline for small hex items -->
+          <svg
+            v-if="index !== 0 && index !== 2 && !isTopRowItem(index)"
+            class="hex-focus-outline hex-focus-small"
+            viewBox="0 0 86.6 100"
+            preserveAspectRatio="none"
+          >
+            <polygon points="43.3,0 86.6,25 86.6,75 43.3,100 0,75 0,25" />
+          </svg>
+          <!-- Item 2 uses a custom flat-bottom hex outline to match its clip-path -->
+          <svg
+            v-if="index === 2"
+            class="hex-focus-outline hex-focus-small"
+            viewBox="0 0 86.6 100"
+            preserveAspectRatio="none"
+          >
+            <polygon points="43.3,0 86.6,33.333 86.6,100 0,100 0,33.333" />
+          </svg>
+          <!-- Top-row items use a custom flat-top hex outline to match their clip-path -->
+          <svg
+            v-if="isTopRowItem(index)"
+            class="hex-focus-outline hex-focus-small"
+            viewBox="0 0 86.6 100"
+            preserveAspectRatio="none"
+          >
+            <polygon points="86.6,0 86.6,66.667 43.3,100 0,66.667 0,0" />
+          </svg>
+          <div class="collage-item-info" v-if="index === 0">
+            <h1 class="collage-title">{{ item.title }}</h1>
+            <div class="collage-meta">
+              <span v-if="item.year" class="meta-year">{{ item.year }}</span>
+              <span v-if="getRating(item)" class="meta-rating" :class="getRatingClass(item)">
+                ★ {{ getRating(item)?.toFixed(1) }}
+              </span>
+              <span v-if="getResolution(item)" class="meta-quality">{{ getResolution(item) }}</span>
+            </div>
+            <p v-if="getOverview(item)" class="collage-overview">{{ getOverview(item) }}</p>
+            <div class="collage-buttons">
+              <button class="btn btn-primary" @click.stop="handlePlay(item)">
+                ▶ {{ getPlayLabel(item) }}
+              </button>
+              <button class="btn btn-secondary" @click.stop="$emit('info', item)">ℹ Info</button>
+            </div>
           </div>
-          <p v-if="getOverview(item)" class="collage-overview">{{ getOverview(item) }}</p>
-          <div class="collage-buttons">
-            <button class="btn btn-primary" @click.stop="handlePlay(item)">▶ {{ getPlayLabel(item) }}</button>
-            <button class="btn btn-secondary" @click.stop="$emit('info', item)">ℹ Info</button>
+          <div class="collage-item-hover" v-else>
+            <span class="hover-title">{{ item.title }}</span>
+            <span v-if="getRating(item)" class="hover-rating"
+              >★ {{ getRating(item)?.toFixed(1) }}</span
+            >
           </div>
-        </div>
-        <div class="collage-item-hover" v-else>
-          <span class="hover-title">{{ item.title }}</span>
-          <span v-if="getRating(item)" class="hover-rating">★ {{ getRating(item)?.toFixed(1) }}</span>
-        </div>
         </div>
       </template>
     </div>
@@ -88,80 +125,80 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted, onUnmounted, nextTick, watch } from 'vue';
-import type { MediaItem, Movie, Series } from '../types';
-import { getCoverUrl, getVideoPreviewUrl, getVideoSourceAttributes, isVideoPath } from '../api';
-import { navAttrs } from '../composables/useKeyboardNavigation';
+import { computed, ref, onMounted, onUnmounted, nextTick, watch } from "vue"
+import type { MediaItem, Movie, Series } from "../types"
+import { getCoverUrl, getVideoPreviewUrl, getVideoSourceAttributes, isVideoPath } from "../api"
+import { navAttrs } from "../composables/useKeyboardNavigation"
 
-const focusedIndex = ref<number | null>(null);
-const itemRefs = ref<(HTMLElement | null)[]>([]);
+const focusedIndex = ref<number | null>(null)
+const itemRefs = ref<(HTMLElement | null)[]>([])
 // Track last row when on col=0 (big image) for sideways navigation
-const lastRow = ref(1);
+const lastRow = ref(1)
 
 // Reset lastRow when entering the hero from outside (via global nav)
 watch(focusedIndex, (newVal, oldVal) => {
   if (newVal === 0 && oldVal === null) {
     // Entering big image from outside hero - reset to row 1
-    lastRow.value = 1;
+    lastRow.value = 1
   }
-});
+})
 // Track which items are visible (at least 75% in viewport)
-const visibleItems = ref<Set<number>>(new Set());
+const visibleItems = ref<Set<number>>(new Set())
 
 function setItemRef(el: HTMLElement | null, index: number) {
-  itemRefs.value[index] = el;
+  itemRefs.value[index] = el
 }
 
 // Check if element is at least 75% visible horizontally
 function isElementVisible(el: HTMLElement | null): boolean {
-  if (!el) return false;
-  const rect = el.getBoundingClientRect();
-  const viewportWidth = window.innerWidth;
+  if (!el) return false
+  const rect = el.getBoundingClientRect()
+  const viewportWidth = window.innerWidth
 
   // Calculate how much of the element is visible
-  const visibleLeft = Math.max(0, rect.left);
-  const visibleRight = Math.min(viewportWidth, rect.right);
-  const visibleWidth = Math.max(0, visibleRight - visibleLeft);
-  const visibleRatio = visibleWidth / rect.width;
+  const visibleLeft = Math.max(0, rect.left)
+  const visibleRight = Math.min(viewportWidth, rect.right)
+  const visibleWidth = Math.max(0, visibleRight - visibleLeft)
+  const visibleRatio = visibleWidth / rect.width
 
-  return visibleRatio >= 0.75;
+  return visibleRatio >= 0.75
 }
 
 function updateVisibility() {
-  const newVisible = new Set<number>();
+  const newVisible = new Set<number>()
 
   for (let i = 0; i < itemRefs.value.length; i++) {
     // Always include items 0, 1, 2 (big image and left side)
     if (i <= 2 || isElementVisible(itemRefs.value[i])) {
-      newVisible.add(i);
+      newVisible.add(i)
     }
   }
 
-  visibleItems.value = newVisible;
+  visibleItems.value = newVisible
 }
 
 onMounted(() => {
-  window.addEventListener('resize', updateVisibility);
-  document.addEventListener('focusin', handleDocumentFocusIn);
+  window.addEventListener("resize", updateVisibility)
+  document.addEventListener("focusin", handleDocumentFocusIn)
   // Initial visibility check after render
   nextTick(() => {
-    updateVisibility();
-  });
-});
+    updateVisibility()
+  })
+})
 
 onUnmounted(() => {
-  window.removeEventListener('resize', updateVisibility);
-  document.removeEventListener('focusin', handleDocumentFocusIn);
-});
+  window.removeEventListener("resize", updateVisibility)
+  document.removeEventListener("focusin", handleDocumentFocusIn)
+})
 
 function clearHeroFocus() {
-  focusedIndex.value = null;
+  focusedIndex.value = null
 }
 
 function handleDocumentFocusIn(event: FocusEvent) {
-  const target = event.target as HTMLElement | null;
-  if (!target?.closest('.collage-hero')) {
-    clearHeroFocus();
+  const target = event.target as HTMLElement | null
+  if (!target?.closest(".collage-hero")) {
+    clearHeroFocus()
   }
 }
 
@@ -180,20 +217,23 @@ function handleDocumentFocusIn(event: FocusEvent) {
 // col 4: fourth right column (12, 14, 13)
 // col 5: fifth right column (15, 16)
 
-interface NavCoord { row: number; col: number }
+interface NavCoord {
+  row: number
+  col: number
+}
 const coordMap: Record<number, NavCoord> = {
-  0:  { row: 1, col: 0 },   // Big image
+  0: { row: 1, col: 0 }, // Big image
   // Left side (col -1)
-  1:  { row: 0, col: -1 },  // top left
-  2:  { row: 2, col: -1 },  // bottom left
+  1: { row: 0, col: -1 }, // top left
+  2: { row: 2, col: -1 }, // bottom left
   // Right side - sequential columns
-  3:  { row: 0, col: 1 },
-  4:  { row: 2, col: 1 },
-  5:  { row: 1, col: 1 },
-  6:  { row: 0, col: 2 },
-  7:  { row: 2, col: 2 },
-  8:  { row: 1, col: 2 },
-  9:  { row: 0, col: 3 },
+  3: { row: 0, col: 1 },
+  4: { row: 2, col: 1 },
+  5: { row: 1, col: 1 },
+  6: { row: 0, col: 2 },
+  7: { row: 2, col: 2 },
+  8: { row: 1, col: 2 },
+  9: { row: 0, col: 3 },
   10: { row: 2, col: 3 },
   11: { row: 1, col: 3 },
   12: { row: 0, col: 4 },
@@ -211,198 +251,198 @@ const coordMap: Record<number, NavCoord> = {
   24: { row: 0, col: 8 },
   25: { row: 2, col: 8 },
   26: { row: 1, col: 8 },
-};
+}
 
 function isTopRowItem(index: number): boolean {
-  const coord = coordMap[index];
-  return index !== 0 && coord?.row === 0;
+  const coord = coordMap[index]
+  return index !== 0 && coord?.row === 0
 }
 
 // Reverse lookup: find item index at given coordinates
 function findItemAt(row: number, col: number): number | null {
   for (const [idx, coord] of Object.entries(coordMap)) {
-    if (coord.row === row && coord.col === col) return parseInt(idx);
+    if (coord.row === row && coord.col === col) return parseInt(idx)
   }
-  return null;
+  return null
 }
 
 // Find nearest item in a direction from current position
-function findNext(currentIdx: number, direction: 'up' | 'down' | 'left' | 'right'): number | null {
-  const current = coordMap[currentIdx];
-  if (!current) return null;
+function findNext(currentIdx: number, direction: "up" | "down" | "left" | "right"): number | null {
+  const current = coordMap[currentIdx]
+  if (!current) return null
 
   // Use lastRow for big image vertical navigation
-  const effectiveRow = current.col === 0 ? lastRow.value : current.row;
+  const effectiveRow = current.col === 0 ? lastRow.value : current.row
 
-  if (direction === 'left') {
+  if (direction === "left") {
     // Moving left: decrease col
-    const targetCol = current.col - 1;
+    const targetCol = current.col - 1
 
     if (current.col === 0) {
       // From big image, go to col -1 if it exists for the effective row
       // Row 1 has no col -1, so stay on big image (or could wrap to last item)
-      const leftItem = findItemAt(effectiveRow, -1);
+      const leftItem = findItemAt(effectiveRow, -1)
       if (leftItem !== null) {
-        return leftItem;
+        return leftItem
       }
       // Row 1 has no left item - fall back to top-left tile so left side stays reachable
-      const topLeftItem = findItemAt(0, -1);
+      const topLeftItem = findItemAt(0, -1)
       if (topLeftItem !== null) {
-        lastRow.value = 0;
-        return topLeftItem;
+        lastRow.value = 0
+        return topLeftItem
       }
       // No fallback available - stay put
-      return 0;
+      return 0
     }
 
     if (targetCol < -1) {
       // Already at col -1, can't go further left - stay put
-      return currentIdx;
+      return currentIdx
     }
 
     if (targetCol === 0) {
       // Moving to big image - remember current row
-      lastRow.value = current.row;
-      return 0;
+      lastRow.value = current.row
+      return 0
     }
     // Find item at same row, col-1
-    return findItemAt(current.row, targetCol);
+    return findItemAt(current.row, targetCol)
   }
 
-  if (direction === 'right') {
+  if (direction === "right") {
     // Moving right: increase col
-    const targetCol = current.col + 1;
+    const targetCol = current.col + 1
 
     if (current.col === 0) {
       // From big image, go to col 1 at remembered row
-      return findItemAt(lastRow.value, 1);
+      return findItemAt(lastRow.value, 1)
     }
     if (current.col === -1) {
       // From left column, go to big image
-      lastRow.value = current.row;
-      return 0;
+      lastRow.value = current.row
+      return 0
     }
     // Find item at same row, col+1, but only if it's visible
-    const nextItem = findItemAt(current.row, targetCol);
+    const nextItem = findItemAt(current.row, targetCol)
     if (nextItem !== null && visibleItems.value.has(nextItem)) {
-      return nextItem;
+      return nextItem
     }
     // No more visible items to the right - stay put
-    return currentIdx;
+    return currentIdx
   }
 
   // Helper to check if item at row/col is visible
   const isItemVisibleAt = (row: number, col: number) => {
-    const item = findItemAt(row, col);
-    return item !== null && visibleItems.value.has(item);
-  };
+    const item = findItemAt(row, col)
+    return item !== null && visibleItems.value.has(item)
+  }
 
-  if (direction === 'up') {
-    const targetRow = effectiveRow - 1;
-    if (targetRow < 0) return null; // Exit up
+  if (direction === "up") {
+    const targetRow = effectiveRow - 1
+    if (targetRow < 0) return null // Exit up
 
     if (current.col === 0) {
       // Big image: up/down always exits the hero section
-      return null;
+      return null
     }
 
     // Check if target row item at same col is visible
     if (!isItemVisibleAt(targetRow, current.col)) {
       // Skip to row above if middle row is not visible at this column
       if (targetRow === 1 && isItemVisibleAt(0, current.col)) {
-        const item = findItemAt(0, current.col);
-        if (item !== null) return item;
+        const item = findItemAt(0, current.col)
+        if (item !== null) return item
       }
-      return currentIdx; // Stay put
+      return currentIdx // Stay put
     }
 
     // Find item at row-1, same col (or nearest)
-    let item = findItemAt(targetRow, current.col);
-    if (item !== null) return item;
+    let item = findItemAt(targetRow, current.col)
+    if (item !== null) return item
     // Try to find nearest col in target row
     for (let c = current.col; c >= -1; c--) {
-      item = findItemAt(targetRow, c);
-      if (item !== null && isItemVisibleAt(targetRow, c)) return item;
+      item = findItemAt(targetRow, c)
+      if (item !== null && isItemVisibleAt(targetRow, c)) return item
     }
     for (let c = current.col + 1; c <= 10; c++) {
-      item = findItemAt(targetRow, c);
-      if (item !== null && isItemVisibleAt(targetRow, c)) return item;
+      item = findItemAt(targetRow, c)
+      if (item !== null && isItemVisibleAt(targetRow, c)) return item
     }
-    return null;
+    return null
   }
 
-  if (direction === 'down') {
-    const targetRow = effectiveRow + 1;
-    if (targetRow > 2) return null; // Exit down
+  if (direction === "down") {
+    const targetRow = effectiveRow + 1
+    if (targetRow > 2) return null // Exit down
 
     if (current.col === 0) {
       // Big image: up/down always exits the hero section
-      return null;
+      return null
     }
 
     // Check if target row item at same col is visible
     if (!isItemVisibleAt(targetRow, current.col)) {
       // Skip to row below if middle row is not visible at this column
       if (targetRow === 1 && isItemVisibleAt(2, current.col)) {
-        const item = findItemAt(2, current.col);
-        if (item !== null) return item;
+        const item = findItemAt(2, current.col)
+        if (item !== null) return item
       }
-      return currentIdx; // Stay put
+      return currentIdx // Stay put
     }
 
     // Find item at row+1, same col (or nearest)
-    let item = findItemAt(targetRow, current.col);
-    if (item !== null) return item;
+    let item = findItemAt(targetRow, current.col)
+    if (item !== null) return item
     // Try to find nearest col in target row
     for (let c = current.col; c >= -1; c--) {
-      item = findItemAt(targetRow, c);
-      if (item !== null && isItemVisibleAt(targetRow, c)) return item;
+      item = findItemAt(targetRow, c)
+      if (item !== null && isItemVisibleAt(targetRow, c)) return item
     }
     for (let c = current.col + 1; c <= 10; c++) {
-      item = findItemAt(targetRow, c);
-      if (item !== null && isItemVisibleAt(targetRow, c)) return item;
+      item = findItemAt(targetRow, c)
+      if (item !== null && isItemVisibleAt(targetRow, c)) return item
     }
-    return null;
+    return null
   }
 
-  return null;
+  return null
 }
 
 function handleKeyDown(e: KeyboardEvent) {
   // Only handle if focus is within this component
-  const target = e.target as HTMLElement;
-  if (!target.closest('.collage-hero')) return;
+  const target = e.target as HTMLElement
+  if (!target.closest(".collage-hero")) return
 
   const direction = {
-    ArrowUp: 'up',
-    ArrowDown: 'down',
-    ArrowLeft: 'left',
-    ArrowRight: 'right',
-  }[e.key] as 'up' | 'down' | 'left' | 'right' | undefined;
+    ArrowUp: "up",
+    ArrowDown: "down",
+    ArrowLeft: "left",
+    ArrowRight: "right",
+  }[e.key] as "up" | "down" | "left" | "right" | undefined
 
   if (!direction) {
-    if (e.key === 'Enter' && focusedIndex.value !== null) {
-      const item = collageItems.value[focusedIndex.value];
-      e.preventDefault();
-      e.stopPropagation();
-      if (item) handleItemClick(item, focusedIndex.value);
+    if (e.key === "Enter" && focusedIndex.value !== null) {
+      const item = collageItems.value[focusedIndex.value]
+      e.preventDefault()
+      e.stopPropagation()
+      if (item) handleItemClick(item, focusedIndex.value)
     }
-    return;
+    return
   }
 
-  const current = focusedIndex.value ?? 0;
-  const next = findNext(current, direction);
+  const current = focusedIndex.value ?? 0
+  const next = findNext(current, direction)
 
   if (next !== null && itemRefs.value[next]) {
-    e.preventDefault();
-    e.stopPropagation();
-    focusedIndex.value = next;
-    itemRefs.value[next]?.focus({ preventScroll: true });
-    return;
+    e.preventDefault()
+    e.stopPropagation()
+    focusedIndex.value = next
+    itemRefs.value[next]?.focus({ preventScroll: true })
+    return
   }
 
   // Navigation is leaving this section; clear local highlight and let global handler continue.
-  clearHeroFocus();
+  clearHeroFocus()
   // If next is null, let event bubble to global navigation
 }
 
@@ -410,154 +450,167 @@ function handleKeyDown(e: KeyboardEvent) {
 function getItemAttrs(index: number) {
   if (index === 0) {
     // The hero always enters through the featured item when moving into row 0.
-    return { ...navAttrs(0, index, 0) };
+    return { ...navAttrs(0, index, 0) }
   }
 
   // All tiles participate in the global focus model so only one visual highlight exists
   // and Enter/gamepad A targets the currently highlighted tile.
-  return { ...navAttrs(0, index) };
+  return { ...navAttrs(0, index) }
 }
 
 // Check if an item index should be visible based on its column and row
 function isItemVisible(index: number): boolean {
   // Always show the first few items (big image and left side)
-  if (index <= 2) return true;
-  return visibleItems.value.has(index);
+  if (index <= 2) return true
+  return visibleItems.value.has(index)
 }
 
 const props = defineProps<{
-  items: MediaItem[];
-  featuredItem?: MediaItem | null;
-  hasResumePosition: (filePath: string | null) => boolean;
-}>();
+  items: MediaItem[]
+  featuredItem?: MediaItem | null
+  hasResumePosition: (filePath: string | null) => boolean
+}>()
 
 const emit = defineEmits<{
-  play: [string];
-  info: [MediaItem];
-  select: [MediaItem];
-}>();
+  play: [string]
+  info: [MediaItem]
+  select: [MediaItem]
+}>()
 
 // Max items we might ever need - use a generous constant
-const maxItems = 27;
+const maxItems = 27
 
 // Get items for the collage based on visible columns
 const collageItems = computed(() => {
-  const result: MediaItem[] = [];
+  const result: MediaItem[] = []
 
   // Add featured item first
   if (props.featuredItem) {
-    result.push(props.featuredItem);
+    result.push(props.featuredItem)
   }
 
   // Add more items, avoiding duplicates, up to max needed
   for (const item of props.items) {
-    if (result.length >= maxItems) break;
-    if (!result.find(r => r.id === item.id)) {
-      result.push(item);
+    if (result.length >= maxItems) break
+    if (!result.find((r) => r.id === item.id)) {
+      result.push(item)
     }
   }
 
-  return result;
-});
+  return result
+})
 
 function getImageUrl(item: MediaItem): string | undefined {
-  const coverPath = item.cover_path;
-  const backdropPath = item.type === 'movies'
-    ? (item.data as Movie).backdrop_path
-    : (item.data as Series).backdrop_path;
-  const imagePath = coverPath || backdropPath;
+  const coverPath = item.cover_path
+  const backdropPath =
+    item.type === "movies"
+      ? (item.data as Movie).backdrop_path
+      : (item.data as Series).backdrop_path
+  const imagePath = coverPath || backdropPath
 
   // Check if the path is an image (not a video)
   if (imagePath && /\.(webm|mp4|mkv|avi|mov)$/i.test(imagePath)) {
-    return undefined;
+    return undefined
   }
 
-  return getCoverUrl(imagePath, item.root_id);
+  return getCoverUrl(imagePath, item.root_id)
 }
 
 function getVideoSources(item: MediaItem): Array<{ src: string; type: string; codecs: string }> {
   if (isVideoPath(item.cover_path)) {
-    return [{ src: getVideoPreviewUrl(getCoverUrl(item.cover_path, item.root_id)), ...getVideoSourceAttributes(item.cover_path) }];
+    return [
+      {
+        src: getVideoPreviewUrl(getCoverUrl(item.cover_path, item.root_id)),
+        ...getVideoSourceAttributes(item.cover_path),
+      },
+    ]
   }
 
-  const showreelSourceSets = item.showreel_source_sets;
+  const showreelSourceSets = item.showreel_source_sets
   if (showreelSourceSets && showreelSourceSets.length > 0) {
     return showreelSourceSets[0]
-      .filter(path => isVideoPath(path))
-      .map(path => ({ src: getVideoPreviewUrl(getCoverUrl(path, item.root_id)), ...getVideoSourceAttributes(path) }));
+      .filter((path) => isVideoPath(path))
+      .map((path) => ({
+        src: getVideoPreviewUrl(getCoverUrl(path, item.root_id)),
+        ...getVideoSourceAttributes(path),
+      }))
   }
 
-  const showreel = item.showreel_images;
+  const showreel = item.showreel_images
   if (showreel && showreel.length > 0) {
     return showreel
-      .filter(path => isVideoPath(path))
-      .map(path => ({ src: getVideoPreviewUrl(getCoverUrl(path, item.root_id)), ...getVideoSourceAttributes(path) }));
+      .filter((path) => isVideoPath(path))
+      .map((path) => ({
+        src: getVideoPreviewUrl(getCoverUrl(path, item.root_id)),
+        ...getVideoSourceAttributes(path),
+      }))
   }
 
-  return [];
+  return []
 }
 
 function getRating(item: MediaItem): number | null {
-  if (item.type === 'movies') {
-    return (item.data as Movie).info?.rating ?? null;
+  if (item.type === "movies") {
+    return (item.data as Movie).info?.rating ?? null
   }
-  return (item.data as Series).info?.rating ?? null;
+  return (item.data as Series).info?.rating ?? null
 }
 
 function getRatingClass(item: MediaItem): string {
-  const rating = getRating(item);
-  if (!rating) return '';
-  if (rating >= 7.5) return 'rating-high';
-  if (rating >= 6) return 'rating-medium';
-  return 'rating-low';
+  const rating = getRating(item)
+  if (!rating) return ""
+  if (rating >= 7.5) return "rating-high"
+  if (rating >= 6) return "rating-medium"
+  return "rating-low"
 }
 
 function getResolution(item: MediaItem): string | null {
-  if (item.type === 'movies') {
-    const movie = item.data as Movie;
-    return Object.values(movie.torrents || {})[0]?.resolution ?? null;
+  if (item.type === "movies") {
+    const movie = item.data as Movie
+    return Object.values(movie.torrents || {})[0]?.resolution ?? null
   }
-  return null;
+  return null
 }
 
 function getOverview(item: MediaItem): string | null {
-  const overview = item.type === 'movies'
-    ? (item.data as Movie).info?.overview
-    : (item.data as Series).info?.overview;
-  if (!overview) return null;
-  return overview.length > 150 ? overview.slice(0, 150) + '...' : overview;
+  const overview =
+    item.type === "movies"
+      ? (item.data as Movie).info?.overview
+      : (item.data as Series).info?.overview
+  if (!overview) return null
+  return overview.length > 150 ? overview.slice(0, 150) + "..." : overview
 }
 
 function getPlayableFile(item: MediaItem): string | null {
-  if (item.type === 'movies') {
-    const movie = item.data as Movie;
-    return Object.values(movie.torrents || {})[0]?.playable_file ?? null;
+  if (item.type === "movies") {
+    const movie = item.data as Movie
+    return Object.values(movie.torrents || {})[0]?.playable_file ?? null
   }
-  const series = item.data as Series;
+  const series = item.data as Series
   for (const season of series.seasons || []) {
     for (const episode of season.episodes || []) {
       for (const torrent of Object.values(episode.torrents || {})) {
-        if (torrent.playable_file) return torrent.playable_file;
+        if (torrent.playable_file) return torrent.playable_file
       }
     }
   }
-  return null;
+  return null
 }
 
 function handlePlay(item: MediaItem) {
-  const file = getPlayableFile(item);
-  if (file) emit('play', file);
+  const file = getPlayableFile(item)
+  if (file) emit("play", file)
 }
 
 function getPlayLabel(item: MediaItem): string {
-  return props.hasResumePosition(getPlayableFile(item)) ? 'Continue' : 'Play';
+  return props.hasResumePosition(getPlayableFile(item)) ? "Continue" : "Play"
 }
 
 function handleItemClick(item: MediaItem, index: number) {
   if (index === 0) {
-    emit('info', item);
+    emit("info", item)
   } else {
-    emit('select', item);
+    emit("select", item)
   }
 }
 </script>
@@ -571,7 +624,7 @@ function handleItemClick(item: MediaItem, index: number) {
   overflow: visible;
   background: var(--bg-primary);
   --h: clamp(450px, 70vh, 600px);
-  --small-w: calc(0.433 * var(--h));  /* Small hex width = 0.866 * 50% of height */
+  --small-w: calc(0.433 * var(--h)); /* Small hex width = 0.866 * 50% of height */
   --big-edge: calc(1.0833 * var(--h)); /* Big hex right edge = 1.3 * 0.8333 * height */
 }
 
@@ -584,7 +637,11 @@ function handleItemClick(item: MediaItem, index: number) {
   position: absolute;
   cursor: pointer;
   overflow: hidden;
-  transition: transform 0.3s ease, filter 0.3s ease, opacity 0.3s ease, visibility 0.3s ease;
+  transition:
+    transform 0.3s ease,
+    filter 0.3s ease,
+    opacity 0.3s ease,
+    visibility 0.3s ease;
 }
 
 /* Media (images and videos) fill the collage item */
@@ -595,7 +652,11 @@ function handleItemClick(item: MediaItem, index: number) {
   height: 100%;
   object-fit: cover;
   object-position: center 30%;
-  transition: transform 0.3s ease, filter 0.3s ease, opacity 0.3s ease, visibility 0.3s ease;
+  transition:
+    transform 0.3s ease,
+    filter 0.3s ease,
+    opacity 0.3s ease,
+    visibility 0.3s ease;
 }
 
 /* Hidden items - keep in DOM for measurement but invisible */
@@ -637,7 +698,8 @@ html:not(.mouse-active) .collage-item.nav-focused .hex-focus-outline {
 
 /* Blinking animation for focus outline */
 @keyframes hex-outline-blink {
-  0%, 100% {
+  0%,
+  100% {
     opacity: 1;
   }
   50% {
@@ -677,16 +739,16 @@ html:not(.mouse-active) .collage-item.nav-focused .hex-focus-outline {
   clip-path: polygon(
     16.67% 0%,
     16.67% 25%,
-    0%     37.5%,
-    0%     62.5%,
+    0% 37.5%,
+    0% 62.5%,
     16.67% 75%,
     16.67% 100%,
 
     83.33% 100%,
 
     83.33% 75%,
-    100%   62.5%,
-    100%   37.5%,
+    100% 62.5%,
+    100% 37.5%,
     83.33% 25%,
     83.33% 0%
   );
@@ -709,16 +771,16 @@ html:not(.mouse-active) .collage-item.nav-focused .hex-focus-outline {
   clip-path: polygon(
     16.67% 0%,
     16.67% 25%,
-    0%     37.5%,
-    0%     62.5%,
+    0% 37.5%,
+    0% 62.5%,
     16.67% 75%,
     16.67% 100%,
 
     83.33% 100%,
 
     83.33% 75%,
-    100%   62.5%,
-    100%   37.5%,
+    100% 62.5%,
+    100% 37.5%,
     83.33% 25%,
     83.33% 0%
   );
@@ -731,14 +793,7 @@ html:not(.mouse-active) .collage-item.nav-focused .hex-focus-outline {
 .collage-item:not(.collage-featured) {
   height: 50%;
   aspect-ratio: 0.866 / 1;
-  clip-path: polygon(
-    50%  0%,
-    100% 25%,
-    100% 75%,
-    50%  100%,
-    0%   75%,
-    0%   25%
-  );
+  clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
 }
 
 /* LEFT SIDE - positioned at left edge */
@@ -758,13 +813,7 @@ html:not(.mouse-active) .collage-item.nav-focused .hex-focus-outline {
 .collage-item.collage-item-2:not(.collage-featured) {
   height: 37.5%;
   width: var(--small-w);
-  clip-path: polygon(
-    50%  0%,
-    100% 33.333%,
-    100% 100%,
-    0%   100%,
-    0%   33.333%
-  );
+  clip-path: polygon(50% 0%, 100% 33.333%, 100% 100%, 0% 100%, 0% 33.333%);
 }
 
 /* Top-row items: keep side angles but flatten top edge to avoid top overflow */
@@ -772,13 +821,7 @@ html:not(.mouse-active) .collage-item.nav-focused .hex-focus-outline {
   top: 0;
   height: 37.5%;
   width: var(--small-w);
-  clip-path: polygon(
-    100% 0%,
-    100% 66.667%,
-    50%  100%,
-    0%   66.667%,
-    0%   0%
-  );
+  clip-path: polygon(100% 0%, 100% 66.667%, 50% 100%, 0% 66.667%, 0% 0%);
 }
 
 /* RIGHT SIDE - Column 0 (closest to big image) */
@@ -929,7 +972,7 @@ html:not(.mouse-active) .collage-item.nav-focused .hex-focus-outline {
 }
 
 .collage-placeholder::before {
-  content: '';
+  content: "";
   position: absolute;
   inset: 0;
   background: #e50914;
@@ -942,7 +985,7 @@ html:not(.mouse-active) .collage-item.nav-focused .hex-focus-outline {
   font-weight: bold;
   text-align: center;
   padding: 10px;
-  text-shadow: 0 2px 4px rgba(0,0,0,0.8);
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8);
   z-index: 1;
 }
 
@@ -987,9 +1030,15 @@ html:not(.mouse-active) .collage-item.nav-focused .hex-focus-outline {
   font-size: 0.85rem;
 }
 
-.rating-high { color: #46d369; }
-.rating-medium { color: #f9a825; }
-.rating-low { color: #e53935; }
+.rating-high {
+  color: #46d369;
+}
+.rating-medium {
+  color: #f9a825;
+}
+.rating-low {
+  color: #e53935;
+}
 
 .meta-quality {
   background: rgba(255, 255, 255, 0.15);
@@ -1027,7 +1076,9 @@ html:not(.mouse-active) .collage-item.nav-focused .hex-focus-outline {
   background: rgba(0, 0, 0, 0.85);
   border-radius: 4px;
   opacity: 0;
-  transition: opacity 0.3s ease, transform 0.3s ease;
+  transition:
+    opacity 0.3s ease,
+    transform 0.3s ease;
   display: flex;
   flex-direction: column;
   align-items: center;

@@ -22,43 +22,47 @@
         <span v-if="displayCodecBadge" class="v-badge codec">{{ displayCodecBadge }}</span>
         <span v-if="displayQualityBadge" class="v-badge qual">{{ displayQualityBadge }}</span>
         <span v-if="displayAudioBadge" class="v-badge audio">{{ displayAudioBadge }}</span>
-        <span v-if="displayReleaseGroupBadge" class="v-badge group">{{ displayReleaseGroupBadge }}</span>
+        <span v-if="displayReleaseGroupBadge" class="v-badge group">{{
+          displayReleaseGroupBadge
+        }}</span>
       </div>
       <div class="version-language-flags">
-        <LanguageFlags class="language-flags-audio" :codes="torrent.audio_languages" :compact="compactFlags" />
+        <LanguageFlags
+          class="language-flags-audio"
+          :codes="torrent.audio_languages"
+          :compact="compactFlags"
+        />
         <span
-          v-if="hasLanguageDisplay(torrent.audio_languages) && hasLanguageDisplay(torrent.subtitle_languages)"
+          v-if="
+            hasLanguageDisplay(torrent.audio_languages) &&
+            hasLanguageDisplay(torrent.subtitle_languages)
+          "
           class="language-separator"
-        >•</span>
-        <LanguageFlags class="language-flags-subs" :codes="torrent.subtitle_languages" :compact="compactFlags" />
+          >•</span
+        >
+        <LanguageFlags
+          class="language-flags-subs"
+          :codes="torrent.subtitle_languages"
+          :compact="compactFlags"
+        />
       </div>
     </div>
     <div class="version-dolby-cell">
-      <img
-        v-if="showBlurayLogo"
-        class="version-disc-logo"
-        :src="blurayLogoUrl"
-        alt="Blu-ray"
-      >
-      <img
-        v-else-if="showDvdLogo"
-        class="version-disc-logo"
-        :src="dvdLogoUrl"
-        alt="DVD"
-      >
+      <img v-if="showBlurayLogo" class="version-disc-logo" :src="blurayLogoUrl" alt="Blu-ray" />
+      <img v-else-if="showDvdLogo" class="version-disc-logo" :src="dvdLogoUrl" alt="DVD" />
       <img
         v-if="streamingServiceLogo"
         class="version-service-logo"
         :src="streamingServiceLogo.src"
         :alt="streamingServiceLogo.alt"
         :title="streamingServiceLogo.alt"
-      >
-        <DolbyBadges
-          class="version-dolby"
-          :has-dolby-vision="hasDolbyVision"
-          :has-dolby-atmos="hasDolbyAtmos"
-          :is-hdr="hasHdr"
-        />
+      />
+      <DolbyBadges
+        class="version-dolby"
+        :has-dolby-vision="hasDolbyVision"
+        :has-dolby-atmos="hasDolbyAtmos"
+        :is-hdr="hasHdr"
+      />
     </div>
     <div v-if="showActions" class="version-actions">
       <button
@@ -66,225 +70,273 @@
         tabindex="0"
         @click.stop="emit('play')"
         :disabled="!torrent.playable_file"
-      >▶ {{ playLabel }}</button>
+      >
+        ▶ {{ playLabel }}
+      </button>
       <button
         class="ctx-btn ctx-btn-folder"
         tabindex="0"
         @click.stop="emit('openFolder')"
         :disabled="!torrent.playable_file"
-      >📁</button>
+      >
+        📁
+      </button>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
-import type { Torrent } from '../types';
-import LanguageFlags from './LanguageFlags.vue';
-import DolbyBadges from './DolbyBadges.vue';
-import { buildLanguageFlags } from '../utils/languageFlags';
-import blurayLogoUrl from '../assets/bluray.webp';
-import dvdLogoUrl from '../assets/dvd.webp';
-import amazonLogoUrl from '../assets/service-amazon.webp';
-import appleTvLogoUrl from '../assets/service-apple-tv.webp';
-import netflixLogoUrl from '../assets/service-netflix.webp';
-import hboMaxLogoUrl from '../assets/service-hbo-max.webp';
-import huluLogoUrl from '../assets/service-hulu.webp';
-import disneyLogoUrl from '../assets/service-disney.svg';
-import itunesLogoUrl from '../assets/service-itunes.png';
+import { computed } from "vue"
+import type { Torrent } from "../types"
+import LanguageFlags from "./LanguageFlags.vue"
+import DolbyBadges from "./DolbyBadges.vue"
+import { buildLanguageFlags } from "../utils/languageFlags"
+import blurayLogoUrl from "../assets/bluray.webp"
+import dvdLogoUrl from "../assets/dvd.webp"
+import amazonLogoUrl from "../assets/service-amazon.webp"
+import appleTvLogoUrl from "../assets/service-apple-tv.webp"
+import netflixLogoUrl from "../assets/service-netflix.webp"
+import hboMaxLogoUrl from "../assets/service-hbo-max.webp"
+import huluLogoUrl from "../assets/service-hulu.webp"
+import disneyLogoUrl from "../assets/service-disney.svg"
+import itunesLogoUrl from "../assets/service-itunes.png"
 
 defineOptions({
   inheritAttrs: false,
-});
+})
 
-const props = withDefaults(defineProps<{
-  torrent: Torrent;
-  best?: boolean;
-  selectable?: boolean;
-  disabled?: boolean;
-  compactFlags?: boolean;
-  showActions?: boolean;
-  playLabel?: string;
-  title?: string;
-  variant?: 'default' | 'menu';
-}>(), {
-  best: false,
-  selectable: undefined,
-  disabled: undefined,
-  compactFlags: false,
-  showActions: false,
-  playLabel: 'Play',
-  title: undefined,
-  variant: 'default',
-});
+const props = withDefaults(
+  defineProps<{
+    torrent: Torrent
+    best?: boolean
+    selectable?: boolean
+    disabled?: boolean
+    compactFlags?: boolean
+    showActions?: boolean
+    playLabel?: string
+    title?: string
+    variant?: "default" | "menu"
+  }>(),
+  {
+    best: false,
+    selectable: undefined,
+    disabled: undefined,
+    compactFlags: false,
+    showActions: false,
+    playLabel: "Play",
+    title: undefined,
+    variant: "default",
+  },
+)
 
 const emit = defineEmits<{
-  activate: [MouseEvent | KeyboardEvent];
-  play: [];
-  openFolder: [];
-}>();
+  activate: [MouseEvent | KeyboardEvent]
+  play: []
+  openFolder: []
+}>()
 
-const dolbyTagPattern = /\b(dolby|atmos|vision|dovi|dv)\b/i;
-const dolbyVisionPattern = /\b(dolby\s*vision|dovi|\bdv\b)\b/i;
-const dolbyAtmosPattern = /\b(dolby\s*atmos|atmos)\b/i;
-const hdrPattern = /\bhdr\b|smpte\s*2084|bt\s*2020|hlg/i;
-const blurayTagPattern = /\bblu[\s.-]*ray\b/i;
-const blurayPlayablePattern = /(?:^|[\\/])(movieobject|index)\.bdmv$/i;
-const dvdPlayablePattern = /(?:^|[\\/])video_ts\.ifo$/i;
-const webQualityPattern = /^web(?:[ .-]?dl|[ .-]?rip)$/i;
+const dolbyTagPattern = /\b(dolby|atmos|vision|dovi|dv)\b/i
+const dolbyVisionPattern = /\b(dolby\s*vision|dovi|\bdv\b)\b/i
+const dolbyAtmosPattern = /\b(dolby\s*atmos|atmos)\b/i
+const hdrPattern = /\bhdr\b|smpte\s*2084|bt\s*2020|hlg/i
+const blurayTagPattern = /\bblu[\s.-]*ray\b/i
+const blurayPlayablePattern = /(?:^|[\\/])(movieobject|index)\.bdmv$/i
+const dvdPlayablePattern = /(?:^|[\\/])video_ts\.ifo$/i
+const webQualityPattern = /^web(?:[ .-]?dl|[ .-]?rip)$/i
 
 const serviceLogoMap: Array<{ aliases: string[]; src: string; alt: string }> = [
-  { aliases: ['amazon studios', 'amazon prime video', 'prime video', 'amazon', 'amzn'], src: amazonLogoUrl, alt: 'Amazon Prime Video' },
-  { aliases: ['apple tv+', 'apple tv plus', 'apple tv', 'atvp'], src: appleTvLogoUrl, alt: 'Apple TV+' },
-  { aliases: ['itunes', 'it'], src: itunesLogoUrl, alt: 'iTunes' },
-  { aliases: ['netflix', 'nf', 'nflx'], src: netflixLogoUrl, alt: 'Netflix' },
-  { aliases: ['hbo max', 'max', 'hmax'], src: hboMaxLogoUrl, alt: 'HBO Max' },
-  { aliases: ['disney plus', 'disney+', 'disney plus hotstar', 'dsnp'], src: disneyLogoUrl, alt: 'Disney+' },
-  { aliases: ['hulu'], src: huluLogoUrl, alt: 'Hulu' },
-];
+  {
+    aliases: ["amazon studios", "amazon prime video", "prime video", "amazon", "amzn"],
+    src: amazonLogoUrl,
+    alt: "Amazon Prime Video",
+  },
+  {
+    aliases: ["apple tv+", "apple tv plus", "apple tv", "atvp"],
+    src: appleTvLogoUrl,
+    alt: "Apple TV+",
+  },
+  { aliases: ["itunes", "it"], src: itunesLogoUrl, alt: "iTunes" },
+  { aliases: ["netflix", "nf", "nflx"], src: netflixLogoUrl, alt: "Netflix" },
+  { aliases: ["hbo max", "max", "hmax"], src: hboMaxLogoUrl, alt: "HBO Max" },
+  {
+    aliases: ["disney plus", "disney+", "disney plus hotstar", "dsnp"],
+    src: disneyLogoUrl,
+    alt: "Disney+",
+  },
+  { aliases: ["hulu"], src: huluLogoUrl, alt: "Hulu" },
+]
 
 function hasDolbyTag(value: string | null | undefined): boolean {
-  return Boolean(value && dolbyTagPattern.test(value));
+  return Boolean(value && dolbyTagPattern.test(value))
 }
 
-function hasAnyTag(
-  pattern: RegExp,
-  ...values: Array<string | null | undefined>
-): boolean {
-  return values.some((value) => Boolean(value && pattern.test(value)));
+function hasAnyTag(pattern: RegExp, ...values: Array<string | null | undefined>): boolean {
+  return values.some((value) => Boolean(value && pattern.test(value)))
 }
 
 function hasLanguageDisplay(codes: string[] | null | undefined): boolean {
-  const mapped = buildLanguageFlags(codes);
-  return mapped.flags.length > 0 || mapped.unmappedCodes.length > 0;
+  const mapped = buildLanguageFlags(codes)
+  return mapped.flags.length > 0 || mapped.unmappedCodes.length > 0
 }
 
 function hasHdrTag(value: string | null | undefined): boolean {
-  return Boolean(value && hdrPattern.test(value));
+  return Boolean(value && hdrPattern.test(value))
 }
 
 function normalizeProviderName(value: string | null | undefined): string {
-  return (value || '').toLowerCase().replace(/[^a-z0-9+]+/g, ' ').trim();
+  return (value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9+]+/g, " ")
+    .trim()
 }
 
 function normalizeQualityBadge(value: string): string {
-  const normalized = value.toLowerCase().replace(/[^a-z0-9]+/g, '');
+  const normalized = value.toLowerCase().replace(/[^a-z0-9]+/g, "")
 
-  if (normalized === 'hdtv' || normalized === 'pdtv' || normalized === 'tvrip' || normalized === 'sdtv') {
-    return 'TV';
+  if (
+    normalized === "hdtv" ||
+    normalized === "pdtv" ||
+    normalized === "tvrip" ||
+    normalized === "sdtv"
+  ) {
+    return "TV"
   }
 
   if (
-    normalized.includes('cam')
-    || normalized === 'telesync'
-    || normalized === 'ts'
-    || normalized === 'hdts'
-    || normalized === 'telecine'
-    || normalized === 'tc'
+    normalized.includes("cam") ||
+    normalized === "telesync" ||
+    normalized === "ts" ||
+    normalized === "hdts" ||
+    normalized === "telecine" ||
+    normalized === "tc"
   ) {
-    return 'CAM';
+    return "CAM"
   }
 
-  return value;
+  return value
 }
 
 const hasDolbyVision = computed(() => {
   return (
-    props.torrent.has_dolby_vision === true
-    || hasAnyTag(dolbyVisionPattern, props.torrent.quality, props.torrent.codec, props.torrent.audio, props.torrent.title)
-  );
-});
+    props.torrent.has_dolby_vision === true ||
+    hasAnyTag(
+      dolbyVisionPattern,
+      props.torrent.quality,
+      props.torrent.codec,
+      props.torrent.audio,
+      props.torrent.title,
+    )
+  )
+})
 
 const hasDolbyAtmos = computed(() => {
   return (
-    props.torrent.has_dolby_atmos === true
-    || hasAnyTag(dolbyAtmosPattern, props.torrent.quality, props.torrent.codec, props.torrent.audio, props.torrent.title)
-  );
-});
+    props.torrent.has_dolby_atmos === true ||
+    hasAnyTag(
+      dolbyAtmosPattern,
+      props.torrent.quality,
+      props.torrent.codec,
+      props.torrent.audio,
+      props.torrent.title,
+    )
+  )
+})
 
 const hasHdr = computed(() => {
   return (
-    props.torrent.is_hdr === true
-    || hasAnyTag(hdrPattern, props.torrent.quality, props.torrent.codec, props.torrent.audio, props.torrent.title)
-  );
-});
+    props.torrent.is_hdr === true ||
+    hasAnyTag(
+      hdrPattern,
+      props.torrent.quality,
+      props.torrent.codec,
+      props.torrent.audio,
+      props.torrent.title,
+    )
+  )
+})
 
 const isBlurayDisc = computed(() => {
-  if (!props.torrent.playable_file) return false;
-  return blurayPlayablePattern.test(props.torrent.playable_file);
-});
+  if (!props.torrent.playable_file) return false
+  return blurayPlayablePattern.test(props.torrent.playable_file)
+})
 
 const isDvdDisc = computed(() => {
-  if (!props.torrent.playable_file) return false;
-  return dvdPlayablePattern.test(props.torrent.playable_file);
-});
+  if (!props.torrent.playable_file) return false
+  return dvdPlayablePattern.test(props.torrent.playable_file)
+})
 
 const showBlurayLogo = computed(() => {
-  return isBlurayDisc.value;
-});
+  return isBlurayDisc.value
+})
 
 const showDvdLogo = computed(() => {
-  return isDvdDisc.value;
-});
+  return isDvdDisc.value
+})
 
 const streamingServiceLogo = computed(() => {
   if (!props.torrent.quality || !webQualityPattern.test(props.torrent.quality)) {
-    return null;
+    return null
   }
 
-  const network = normalizeProviderName(props.torrent.network);
-  if (!network) return null;
+  const network = normalizeProviderName(props.torrent.network)
+  if (!network) return null
 
-  const found = serviceLogoMap.find((entry) => entry.aliases.includes(network));
-  return found ? { src: found.src, alt: found.alt } : null;
-});
+  const found = serviceLogoMap.find((entry) => entry.aliases.includes(network))
+  return found ? { src: found.src, alt: found.alt } : null
+})
 
 const displayQualityBadge = computed(() => {
-  if (!props.torrent.quality || hasDolbyTag(props.torrent.quality)) return null;
-  if (streamingServiceLogo.value) return null;
-  if (blurayTagPattern.test(props.torrent.quality)) return null;
-  return normalizeQualityBadge(props.torrent.quality);
-});
+  if (!props.torrent.quality || hasDolbyTag(props.torrent.quality)) return null
+  if (streamingServiceLogo.value) return null
+  if (blurayTagPattern.test(props.torrent.quality)) return null
+  return normalizeQualityBadge(props.torrent.quality)
+})
 
 const displayCodecBadge = computed(() => {
-  if (!props.torrent.codec || hasDolbyTag(props.torrent.codec)) return null;
-  return props.torrent.codec;
-});
+  if (!props.torrent.codec || hasDolbyTag(props.torrent.codec)) return null
+  return props.torrent.codec
+})
 
 const displayAudioBadge = computed(() => {
-  if (!props.torrent.audio || hasDolbyTag(props.torrent.audio)) return null;
-  return props.torrent.audio;
-});
+  if (!props.torrent.audio || hasDolbyTag(props.torrent.audio)) return null
+  return props.torrent.audio
+})
 
 const displayReleaseGroupBadge = computed(() => {
-  const value = props.torrent.encoder?.trim();
-  if (!value) return null;
-  return value;
-});
+  const value = props.torrent.encoder?.trim()
+  if (!value) return null
+  return value
+})
 
 const showHdrBadge = computed(() => {
-  if (!hasHdr.value) return false;
-  return !hasHdrTag(props.torrent.quality) && !hasHdrTag(props.torrent.codec) && !hasHdrTag(props.torrent.audio);
-});
+  if (!hasHdr.value) return false
+  return (
+    !hasHdrTag(props.torrent.quality) &&
+    !hasHdrTag(props.torrent.codec) &&
+    !hasHdrTag(props.torrent.audio)
+  )
+})
 
 const isSelectable = computed(() => {
-  if (props.selectable !== undefined) return props.selectable;
-  return Boolean(props.torrent.playable_file);
-});
+  if (props.selectable !== undefined) return props.selectable
+  return Boolean(props.torrent.playable_file)
+})
 
 const isDisabled = computed(() => {
-  if (props.disabled !== undefined) return props.disabled;
-  return !isSelectable.value;
-});
+  if (props.disabled !== undefined) return props.disabled
+  return !isSelectable.value
+})
 
 const resolvedTitle = computed(() => {
-  if (props.title !== undefined) return props.title;
-  return isSelectable.value ? 'Click to play/continue. Alt+Click to open folder.' : 'No playable file';
-});
+  if (props.title !== undefined) return props.title
+  return isSelectable.value
+    ? "Click to play/continue. Alt+Click to open folder."
+    : "No playable file"
+})
 
 function handleActivate(event: MouseEvent | KeyboardEvent) {
-  if (!isSelectable.value || isDisabled.value) return;
-  emit('activate', event);
+  if (!isSelectable.value || isDisabled.value) return
+  emit("activate", event)
 }
 </script>
 
@@ -301,7 +353,9 @@ function handleActivate(event: MouseEvent | KeyboardEvent) {
   -webkit-backdrop-filter: blur(12px);
   border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.1);
-  transition: background 0.2s, border-color 0.2s;
+  transition:
+    background 0.2s,
+    border-color 0.2s;
 }
 
 .version-row.version-menu {

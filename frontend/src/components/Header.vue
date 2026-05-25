@@ -26,19 +26,10 @@
         </template>
         <!-- Detail mode: show current category + Details -->
         <template v-else>
-          <button
-            class="header-nav-item"
-            v-bind="navAttrs(navRow, 0)"
-            @focus="goToCategory"
-          >
-            {{ currentView === 'movies' ? 'Movies' : 'Series' }}
+          <button class="header-nav-item" v-bind="navAttrs(navRow, 0)" @focus="goToCategory">
+            {{ currentView === "movies" ? "Movies" : "Series" }}
           </button>
-          <button
-            class="header-nav-item active"
-            v-bind="navAttrs(navRow, 1, 1)"
-          >
-            Details
-          </button>
+          <button class="header-nav-item active" v-bind="navAttrs(navRow, 1, 1)">Details</button>
         </template>
       </nav>
     </div>
@@ -63,14 +54,22 @@
     </div>
 
     <div class="header-settings">
-      <button
-        class="header-settings-btn"
-        title="Settings"
-        @click="showSettings = !showSettings"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="12" cy="12" r="3"/>
-          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 5 15.4 1.65 1.65 0 0 0 3.4 15H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+      <button class="header-settings-btn" title="Settings" @click="showSettings = !showSettings">
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="20"
+          height="20"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <circle cx="12" cy="12" r="3" />
+          <path
+            d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 5 15.4 1.65 1.65 0 0 0 3.4 15H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"
+          />
         </svg>
       </button>
 
@@ -78,8 +77,18 @@
       <div v-if="showSettings" class="settings-view">
         <div class="settings-header">
           <button class="settings-back" @click="showSettings = false">
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M19 12H5M12 19l-7-7 7-7"/>
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="24"
+              height="24"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M19 12H5M12 19l-7-7 7-7" />
             </svg>
             <span>Back</span>
           </button>
@@ -118,11 +127,7 @@
             </div>
 
             <div class="roots-actions">
-              <button
-                v-if="isDesktopApp"
-                class="roots-add-btn"
-                @click="addRoot"
-              >
+              <button v-if="isDesktopApp" class="roots-add-btn" @click="addRoot">
                 + Add Folder…
               </button>
             </div>
@@ -134,125 +139,127 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, computed, onMounted, onUnmounted } from 'vue';
-import { useRouter } from 'vue-router';
-import { navAttrs } from '../composables/useKeyboardNavigation';
-import logoUrl from '../assets/mediahive.webp';
-import { fetchRoots, replaceRoots, pickFolderAndAddRoot } from '../api';
+import { ref, watch, computed, onMounted, onUnmounted } from "vue"
+import { useRouter } from "vue-router"
+import { navAttrs } from "../composables/useKeyboardNavigation"
+import logoUrl from "../assets/mediahive.webp"
+import { fetchRoots, replaceRoots, pickFolderAndAddRoot } from "../api"
 
 interface RootEntry {
-  root_id: string;
-  name: string;
-  path: string;
-  status: string;
+  root_id: string
+  name: string
+  path: string
+  status: string
 }
 
 const props = defineProps<{
-  currentView: 'movies' | 'series';
-  searchQuery: string;
-  mpcBeConnected: boolean;
-  navRow: number;
-  position: 'top' | 'after-hero' | 'after-movie-header' | 'after-series-hero';
-}>();
+  currentView: "movies" | "series"
+  searchQuery: string
+  mpcBeConnected: boolean
+  navRow: number
+  position: "top" | "after-hero" | "after-movie-header" | "after-series-hero"
+}>()
 
 const emit = defineEmits<{
-  search: [string];
-  goBack: [];
-}>();
+  search: [string]
+  goBack: []
+}>()
 
-const router = useRouter();
-const searchInputRef = ref<HTMLInputElement | null>(null);
-const localSearch = ref(props.searchQuery);
+const router = useRouter()
+const searchInputRef = ref<HTMLInputElement | null>(null)
+const localSearch = ref(props.searchQuery)
 
-const isDesktopApp = ref(typeof (window as any).pywebview !== 'undefined');
-function _onPywebviewReady() { isDesktopApp.value = true; }
-window.addEventListener('pywebviewready', _onPywebviewReady, { once: true });
-onUnmounted(() => window.removeEventListener('pywebviewready', _onPywebviewReady));
+const isDesktopApp = ref(typeof (window as any).pywebview !== "undefined")
+function _onPywebviewReady() {
+  isDesktopApp.value = true
+}
+window.addEventListener("pywebviewready", _onPywebviewReady, { once: true })
+onUnmounted(() => window.removeEventListener("pywebviewready", _onPywebviewReady))
 
-const showSettings = ref(false);
-const roots = ref<RootEntry[]>([]);
+const showSettings = ref(false)
+const roots = ref<RootEntry[]>([])
 
 async function refreshRoots() {
   try {
-    const data = await fetchRoots();
-    roots.value = data.map(r => ({
+    const data = await fetchRoots()
+    roots.value = data.map((r) => ({
       root_id: r.root_id,
       name: r.name,
       path: r.path,
       status: r.status,
-    }));
+    }))
   } catch (e) {
-    console.error('Failed to fetch roots:', e);
+    console.error("Failed to fetch roots:", e)
   }
 }
 
 async function removeRoot(rootId: string) {
-  const filtered = roots.value.filter(r => r.root_id !== rootId);
-  const newRoots = Object.fromEntries(filtered.map(r => [r.name, r.path]));
+  const filtered = roots.value.filter((r) => r.root_id !== rootId)
+  const newRoots = Object.fromEntries(filtered.map((r) => [r.name, r.path]))
   try {
-    await replaceRoots(newRoots);
-    await refreshRoots();
+    await replaceRoots(newRoots)
+    await refreshRoots()
   } catch (e) {
-    console.error('Failed to remove root:', e);
-    alert('Failed to remove root');
+    console.error("Failed to remove root:", e)
+    alert("Failed to remove root")
   }
 }
 
 async function addRoot() {
-  const folder = await pickFolderAndAddRoot();
-  if (!folder) return;
-  const name = folder.split('/').pop() || folder.split('\\').pop() || 'media';
+  const folder = await pickFolderAndAddRoot()
+  if (!folder) return
+  const name = folder.split("/").pop() || folder.split("\\").pop() || "media"
   // Resolve name collisions
-  let uniqueName = name;
-  let suffix = 2;
-  const currentNames = new Set(roots.value.map(r => r.name));
+  let uniqueName = name
+  let suffix = 2
+  const currentNames = new Set(roots.value.map((r) => r.name))
   while (currentNames.has(uniqueName)) {
-    uniqueName = `${name}${suffix}`;
-    suffix++;
+    uniqueName = `${name}${suffix}`
+    suffix++
   }
-  const newRoots = Object.fromEntries(roots.value.map(r => [r.name, r.path]));
-  newRoots[uniqueName] = folder;
+  const newRoots = Object.fromEntries(roots.value.map((r) => [r.name, r.path]))
+  newRoots[uniqueName] = folder
   try {
-    await replaceRoots(newRoots);
-    await refreshRoots();
-    showSettings.value = false;
+    await replaceRoots(newRoots)
+    await refreshRoots()
+    showSettings.value = false
   } catch (e) {
-    console.error('Failed to add root:', e);
-    alert('Failed to add root');
+    console.error("Failed to add root:", e)
+    alert("Failed to add root")
   }
 }
 
 watch(showSettings, (visible) => {
-  if (visible) void refreshRoots();
-});
+  if (visible) void refreshRoots()
+})
 
 // Check if we're on a detail page
 const isDetailPage = computed(() => {
-  return props.position === 'after-movie-header' || props.position === 'after-series-hero';
-});
+  return props.position === "after-movie-header" || props.position === "after-series-hero"
+})
 
 // Check if search is active (has query and not on detail page)
 const isSearchActive = computed(() => {
-  return !isDetailPage.value && !!localSearch.value;
-});
+  return !isDetailPage.value && !!localSearch.value
+})
 
 // Switch views on focus (no Enter required) - only in browse mode
 function switchToMovies() {
-  if (!isDetailPage.value && props.currentView !== 'movies') {
-    router.push('/movies');
+  if (!isDetailPage.value && props.currentView !== "movies") {
+    router.push("/movies")
   }
 }
 
 function switchToSeries() {
-  if (!isDetailPage.value && props.currentView !== 'series') {
-    router.push('/series');
+  if (!isDetailPage.value && props.currentView !== "series") {
+    router.push("/series")
   }
 }
 
 // Go back to category list from detail page
 function goToCategory() {
   // Emit goBack to let App.vue handle navigation and focus restoration
-  emit('goBack');
+  emit("goBack")
 }
 
 // Handle search input focus - navigate to search if we have a query
@@ -262,52 +269,56 @@ function handleSearchFocus() {
 
 // Sync local search to parent
 watch(localSearch, (val) => {
-  emit('search', val);
-});
+  emit("search", val)
+})
 
 // Sync parent search to local (for external clears)
-watch(() => props.searchQuery, (val) => {
-  if (val !== localSearch.value) {
-    localSearch.value = val;
-  }
-});
+watch(
+  () => props.searchQuery,
+  (val) => {
+    if (val !== localSearch.value) {
+      localSearch.value = val
+    }
+  },
+)
 
 function handleEscape() {
   // Clear search and blur
-  localSearch.value = '';
-  searchInputRef.value?.blur();
+  localSearch.value = ""
+  searchInputRef.value?.blur()
 }
 
 function focusSearchInput() {
-  searchInputRef.value?.focus();
-  searchInputRef.value?.select();
+  searchInputRef.value?.focus()
+  searchInputRef.value?.select()
 }
 
 function handleKeydown(e: KeyboardEvent) {
-  const target = e.target as HTMLElement | null;
+  const target = e.target as HTMLElement | null
   const isTypingTarget = Boolean(
-    target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
-  );
-  const isSearchShortcut = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f';
-  const isSlashShortcut = !e.ctrlKey && !e.metaKey && !e.altKey && e.code === 'Slash';
+    target &&
+    (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable),
+  )
+  const isSearchShortcut = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f"
+  const isSlashShortcut = !e.ctrlKey && !e.metaKey && !e.altKey && e.code === "Slash"
 
   if (isTypingTarget && !isSearchShortcut) {
-    return;
+    return
   }
 
   if (isSearchShortcut || isSlashShortcut) {
-    e.preventDefault();
-    focusSearchInput();
+    e.preventDefault()
+    focusSearchInput()
   }
 }
 
 onMounted(() => {
-  window.addEventListener('keydown', handleKeydown);
-});
+  window.addEventListener("keydown", handleKeydown)
+})
 
 onUnmounted(() => {
-  window.removeEventListener('keydown', handleKeydown);
-});
+  window.removeEventListener("keydown", handleKeydown)
+})
 </script>
 
 <style scoped>

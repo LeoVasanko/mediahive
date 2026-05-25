@@ -1,43 +1,39 @@
 <template>
   <div v-if="showDolbyLogo" class="dolby-badges" :class="{ compact }">
-    <img
-      :src="dolbyLogoSrc"
-      :alt="dolbyLogoAlt"
-      class="dolby-logo"
-    />
+    <img :src="dolbyLogoSrc" :alt="dolbyLogoAlt" class="dolby-logo" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
-import dolbyAtmosUrl from '../assets/dolby-atmos.webp';
-import dolbyVisionUrl from '../assets/dolby-vision.webp';
-import dolbyVisionAtmosUrl from '../assets/dolby-vision-atmos.webp';
+import { computed } from "vue"
+import dolbyAtmosUrl from "../assets/dolby-atmos.webp"
+import dolbyVisionUrl from "../assets/dolby-vision.webp"
+import dolbyVisionAtmosUrl from "../assets/dolby-vision-atmos.webp"
 
 const props = defineProps<{
-  hasDolbyVision?: boolean | null;
-  hasDolbyAtmos?: boolean | null;
-  isHdr?: boolean | null;
-  compact?: boolean;
-}>();
+  hasDolbyVision?: boolean | null
+  hasDolbyAtmos?: boolean | null
+  isHdr?: boolean | null
+  compact?: boolean
+}>()
 
-const hasDolbyVision = computed(() => props.hasDolbyVision === true);
-const hasDolbyAtmos = computed(() => props.hasDolbyAtmos === true);
-const compact = computed(() => props.compact === true);
+const hasDolbyVision = computed(() => props.hasDolbyVision === true)
+const hasDolbyAtmos = computed(() => props.hasDolbyAtmos === true)
+const compact = computed(() => props.compact === true)
 
-const showDolbyLogo = computed(() => hasDolbyVision.value || hasDolbyAtmos.value);
+const showDolbyLogo = computed(() => hasDolbyVision.value || hasDolbyAtmos.value)
 
 const dolbyLogoSrc = computed(() => {
-  if (hasDolbyVision.value && hasDolbyAtmos.value) return dolbyVisionAtmosUrl;
-  if (hasDolbyVision.value) return dolbyVisionUrl;
-  return dolbyAtmosUrl;
-});
+  if (hasDolbyVision.value && hasDolbyAtmos.value) return dolbyVisionAtmosUrl
+  if (hasDolbyVision.value) return dolbyVisionUrl
+  return dolbyAtmosUrl
+})
 
 const dolbyLogoAlt = computed(() => {
-  if (hasDolbyVision.value && hasDolbyAtmos.value) return 'Dolby Vision + Dolby Atmos';
-  if (hasDolbyVision.value) return 'Dolby Vision';
-  return 'Dolby Atmos';
-});
+  if (hasDolbyVision.value && hasDolbyAtmos.value) return "Dolby Vision + Dolby Atmos"
+  if (hasDolbyVision.value) return "Dolby Vision"
+  return "Dolby Atmos"
+})
 </script>
 
 <style scoped>

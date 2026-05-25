@@ -14,26 +14,27 @@
         :key="`raw-${code}`"
         class="language-code-fallback"
         :title="code"
-      >{{ code }}</span>
+        >{{ code }}</span
+      >
     </span>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
-import { buildLanguageFlags } from '../utils/languageFlags';
+import { computed } from "vue"
+import { buildLanguageFlags } from "../utils/languageFlags"
 
 const props = defineProps<{
-  label?: string;
-  codes: string[] | null | undefined;
-  compact?: boolean;
-}>();
+  label?: string
+  codes: string[] | null | undefined
+  compact?: boolean
+}>()
 
-const mapped = computed(() => buildLanguageFlags(props.codes));
-const flagEntries = computed(() => mapped.value.flags);
-const unmappedCodes = computed(() => mapped.value.unmappedCodes);
-const hasContent = computed(() => flagEntries.value.length > 0 || unmappedCodes.value.length > 0);
-const compact = computed(() => props.compact === true);
+const mapped = computed(() => buildLanguageFlags(props.codes))
+const flagEntries = computed(() => mapped.value.flags)
+const unmappedCodes = computed(() => mapped.value.unmappedCodes)
+const hasContent = computed(() => flagEntries.value.length > 0 || unmappedCodes.value.length > 0)
+const compact = computed(() => props.compact === true)
 </script>
 
 <style scoped>

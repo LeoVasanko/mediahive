@@ -27,8 +27,9 @@
   box-sizing: border-box;
 }
 
-html, body {
-  font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+html,
+body {
+  font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
   background-color: var(--bg-primary);
   color: var(--text-primary);
   min-height: 100vh;
@@ -92,7 +93,7 @@ html.mouse-active ::-webkit-scrollbar-thumb:hover {
 }
 
 .header::before {
-  content: '';
+  content: "";
   position: absolute;
   top: 0;
   bottom: 0;
@@ -132,11 +133,7 @@ html.mouse-active ::-webkit-scrollbar-thumb:hover {
   width: 30em;
   max-width: calc(100vw - 24px);
   opacity: 1;
-  background: linear-gradient(
-    to bottom,
-    rgba(5, 7, 10, 0.72) 0%,
-    rgba(5, 7, 10, 0.5) 100%
-  );
+  background: linear-gradient(to bottom, rgba(5, 7, 10, 0.72) 0%, rgba(5, 7, 10, 0.5) 100%);
   backdrop-filter: blur(10px) saturate(115%);
   -webkit-backdrop-filter: blur(10px) saturate(115%);
 }
@@ -276,12 +273,22 @@ html.mouse-active .header-settings-btn:hover {
   background-size: contain;
   background-position: right top;
   background-repeat: no-repeat;
-  mask-image: linear-gradient(to left, rgba(0,0,0,0.6) 0%, rgba(0,0,0,0.3) 60%, transparent 100%);
-  -webkit-mask-image: linear-gradient(to left, rgba(0,0,0,0.6) 0%, rgba(0,0,0,0.3) 60%, transparent 100%);
+  mask-image: linear-gradient(
+    to left,
+    rgba(0, 0, 0, 0.6) 0%,
+    rgba(0, 0, 0, 0.3) 60%,
+    transparent 100%
+  );
+  -webkit-mask-image: linear-gradient(
+    to left,
+    rgba(0, 0, 0, 0.6) 0%,
+    rgba(0, 0, 0, 0.3) 60%,
+    transparent 100%
+  );
 }
 
 .hero::after {
-  content: '';
+  content: "";
   position: absolute;
   bottom: 0;
   left: 0;
@@ -331,7 +338,8 @@ html.mouse-active .header-settings-btn:hover {
 
 /* Blinking animation for button focus */
 @keyframes btn-outline-blink {
-  0%, 100% {
+  0%,
+  100% {
     box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.9);
   }
   50% {
@@ -395,11 +403,15 @@ html:not(.mouse-active) .btn-secondary.nav-focused {
 }
 
 .view-zoom-enter-active {
-  transition: opacity 0.4s ease-out, transform 0.4s ease-out;
+  transition:
+    opacity 0.4s ease-out,
+    transform 0.4s ease-out;
 }
 
 .view-zoom-leave-active {
-  transition: opacity 0.3s ease-in, transform 0.3s ease-in;
+  transition:
+    opacity 0.3s ease-in,
+    transform 0.3s ease-in;
 }
 
 .view-zoom-enter-from {
@@ -456,7 +468,9 @@ html:not(.mouse-active) .btn-secondary.nav-focused {
   flex-shrink: 0;
   width: var(--card-width);
   cursor: pointer;
-  transition: z-index 0s, box-shadow var(--transition-medium);
+  transition:
+    z-index 0s,
+    box-shadow var(--transition-medium);
   position: relative;
   outline: none;
 }
@@ -606,7 +620,7 @@ html.mouse-active .media-card:hover .media-card-info {
 }
 
 .modal-header::after {
-  content: '';
+  content: "";
   position: absolute;
   bottom: 0;
   left: 0;

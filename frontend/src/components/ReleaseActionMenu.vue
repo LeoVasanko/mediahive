@@ -1,33 +1,24 @@
 <template>
-  <div
-    v-if="visible"
-    ref="menuRef"
-    class="version-action-menu"
-    :style="menuStyle"
-  >
+  <div v-if="visible" ref="menuRef" class="version-action-menu" :style="menuStyle">
     <div class="version-action-path" :title="resolvedPath">
       {{ resolvedPath }}
     </div>
-    <button
-      class="version-action-item"
-      :disabled="disabled"
-      @click="emit('play')"
-    >
+    <button class="version-action-item" :disabled="disabled" @click="emit('play')">
       <span class="version-action-icon" aria-hidden="true">
         <svg viewBox="0 0 16 16" focusable="false">
-          <path d="M4 3.2c0-.54.6-.86 1.05-.56l6.2 4.14a.67.67 0 0 1 0 1.12l-6.2 4.14A.67.67 0 0 1 4 11.44V3.2Z" />
+          <path
+            d="M4 3.2c0-.54.6-.86 1.05-.56l6.2 4.14a.67.67 0 0 1 0 1.12l-6.2 4.14A.67.67 0 0 1 4 11.44V3.2Z"
+          />
         </svg>
       </span>
       {{ playLabel }}
     </button>
-    <button
-      class="version-action-item"
-      :disabled="disabled"
-      @click="emit('openFolder')"
-    >
+    <button class="version-action-item" :disabled="disabled" @click="emit('openFolder')">
       <span class="version-action-icon" aria-hidden="true">
         <svg viewBox="0 0 16 16" focusable="false">
-          <path d="M1.4 4.3c0-.72.58-1.3 1.3-1.3h3.55c.3 0 .58.13.77.35l.72.85h5.56c.72 0 1.3.58 1.3 1.3v.92H1.4V4.3Zm0 3.22h13.2v4.2c0 .72-.58 1.3-1.3 1.3H2.7c-.72 0-1.3-.58-1.3-1.3v-4.2Z" />
+          <path
+            d="M1.4 4.3c0-.72.58-1.3 1.3-1.3h3.55c.3 0 .58.13.77.35l.72.85h5.56c.72 0 1.3.58 1.3 1.3v.92H1.4V4.3Zm0 3.22h13.2v4.2c0 .72-.58 1.3-1.3 1.3H2.7c-.72 0-1.3-.58-1.3-1.3v-4.2Z"
+          />
         </svg>
       </span>
       Open Folder
@@ -36,93 +27,96 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue"
 
-const props = withDefaults(defineProps<{
-  visible: boolean;
-  x: number;
-  y: number;
-  filePath: string | null;
-  rootName?: string | null;
-  playLabel?: string;
-}>(), {
-  rootName: null,
-  playLabel: 'Play',
-});
+const props = withDefaults(
+  defineProps<{
+    visible: boolean
+    x: number
+    y: number
+    filePath: string | null
+    rootName?: string | null
+    playLabel?: string
+  }>(),
+  {
+    rootName: null,
+    playLabel: "Play",
+  },
+)
 
 const emit = defineEmits<{
-  play: [];
-  openFolder: [];
-}>();
+  play: []
+  openFolder: []
+}>()
 
-const menuRef = ref<HTMLElement | null>(null);
-const menuLeft = ref(0);
-const menuTop = ref(0);
-const VIEWPORT_MARGIN = 12;
+const menuRef = ref<HTMLElement | null>(null)
+const menuLeft = ref(0)
+const menuTop = ref(0)
+const VIEWPORT_MARGIN = 12
 
 function toPosixPath(value: string | null | undefined): string {
-  return (value || '').replace(/\\/g, '/');
+  return (value || "").replace(/\\/g, "/")
 }
 
 const resolvedPath = computed(() => {
-  if (!props.filePath) return 'No playable file';
-  const normalizedFilePath = toPosixPath(props.filePath);
-  const rootName = toPosixPath((props.rootName || '').trim());
-  if (!rootName) return normalizedFilePath;
-  return `${rootName}/${normalizedFilePath}`;
-});
+  if (!props.filePath) return "No playable file"
+  const normalizedFilePath = toPosixPath(props.filePath)
+  const rootName = toPosixPath((props.rootName || "").trim())
+  if (!rootName) return normalizedFilePath
+  return `${rootName}/${normalizedFilePath}`
+})
 
 const menuStyle = computed(() => ({
   left: `${menuLeft.value}px`,
   top: `${menuTop.value}px`,
-}));
+}))
 
-const disabled = computed(() => !props.filePath);
+const disabled = computed(() => !props.filePath)
 
 function clampToViewport() {
-  const menu = menuRef.value;
-  if (!menu) return;
+  const menu = menuRef.value
+  if (!menu) return
 
-  const width = menu.offsetWidth;
-  const height = menu.offsetHeight;
+  const width = menu.offsetWidth
+  const height = menu.offsetHeight
 
-  const maxLeft = Math.max(VIEWPORT_MARGIN, window.innerWidth - width - VIEWPORT_MARGIN);
-  const maxTop = Math.max(VIEWPORT_MARGIN, window.innerHeight - height - VIEWPORT_MARGIN);
+  const maxLeft = Math.max(VIEWPORT_MARGIN, window.innerWidth - width - VIEWPORT_MARGIN)
+  const maxTop = Math.max(VIEWPORT_MARGIN, window.innerHeight - height - VIEWPORT_MARGIN)
 
-  menuLeft.value = Math.min(Math.max(props.x, VIEWPORT_MARGIN), maxLeft);
-  menuTop.value = Math.min(Math.max(props.y, VIEWPORT_MARGIN), maxTop);
+  menuLeft.value = Math.min(Math.max(props.x, VIEWPORT_MARGIN), maxLeft)
+  menuTop.value = Math.min(Math.max(props.y, VIEWPORT_MARGIN), maxTop)
 }
 
 function handleViewportChange() {
-  if (!props.visible) return;
-  clampToViewport();
+  if (!props.visible) return
+  clampToViewport()
 }
 
 watch(
   () => [props.visible, props.x, props.y, resolvedPath.value],
   async ([visible]) => {
-    if (!visible) return;
-    await nextTick();
-    clampToViewport();
+    if (!visible) return
+    await nextTick()
+    clampToViewport()
   },
-  { immediate: true }
-);
+  { immediate: true },
+)
 
 watch(
   () => props.visible,
   (visible) => {
     if (visible) {
-      window.addEventListener('resize', handleViewportChange);
-      return;
+      window.addEventListener("resize", handleViewportChange)
+      return
     }
-    window.removeEventListener('resize', handleViewportChange);
+    window.removeEventListener("resize", handleViewportChange)
   },
-  { immediate: true }
-);
+  { immediate: true },
+)
 
 onBeforeUnmount(() => {
-  window.removeEventListener('resize', handleViewportChange);
-});
+  window.removeEventListener("resize", handleViewportChange)
+})
 </script>
 
 <style scoped>

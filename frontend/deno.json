@@ -2,7 +2,11 @@
   "tasks": {
     "dev": "deno run -A npm:vite",
     "build": "deno run -A npm:vue-tsc --noEmit && deno run -A npm:vite build",
-    "preview": "deno run -A npm:vite preview"
+    "preview": "deno run -A npm:vite preview",
+    "lint": "deno run -A npm:oxlint --vue-plugin --import-plugin src",
+    "lint:fix": "deno task lint --fix",
+    "format": "deno run -A npm:oxfmt --config oxfmt.json src",
+    "format:check": "deno run -A npm:oxfmt --config oxfmt.json --check src"
   },
   "imports": {
     "vue": "npm:vue@^3.4.0"

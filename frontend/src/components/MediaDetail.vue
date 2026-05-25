@@ -14,10 +14,8 @@
   <!-- Full page view for movies -->
   <div v-else class="movie-page">
     <div class="movie-page-content">
-
       <!-- Diagonal collage header -->
       <div class="collage-header">
-
         <!-- Background collage of showreel videos -->
         <div class="collage-grid">
           <div
@@ -27,13 +25,10 @@
             @mouseenter="handleVideoHover(slot.index, true)"
             @mouseleave="handleVideoHover(slot.index, false)"
           >
-            <div
-              class="collage-fallback-tile"
-              :class="`collage-fallback-${slot.index + 1}`"
-            ></div>
+            <div class="collage-fallback-tile" :class="`collage-fallback-${slot.index + 1}`"></div>
             <video
               v-if="slot.sourcePaths.length > 0"
-              :ref="el => setVideoRef(el as HTMLVideoElement, slot.index)"
+              :ref="(el) => setVideoRef(el as HTMLVideoElement, slot.index)"
               :class="{ 'is-ready': isVideoReady(slot.index) }"
               :autoplay="safariAutoplay"
               loop
@@ -48,7 +43,7 @@
                 :src="getShowreelUrl(sourcePath)"
                 :type="getShowreelSourceAttributes(sourcePath).type"
                 :codecs="getShowreelSourceAttributes(sourcePath).codecs"
-              >
+              />
             </video>
           </div>
         </div>
@@ -61,7 +56,9 @@
           <h1 class="modal-title">{{ item.title }}</h1>
           <p v-if="movieTagline" class="header-tagline">{{ movieTagline }}</p>
           <div class="modal-meta">
-            <span v-if="rating" class="meta-rating" :class="ratingClass">★ {{ rating.toFixed(1) }}</span>
+            <span v-if="rating" class="meta-rating" :class="ratingClass"
+              >★ {{ rating.toFixed(1) }}</span
+            >
             <span v-if="item.year" class="meta-year">{{ item.year }}</span>
             <span v-if="movieRuntime" class="meta-runtime">{{ formatRuntime(movieRuntime) }}</span>
           </div>
@@ -85,7 +82,7 @@
                   :src="synopsisPosterUrl"
                   :alt="`${item.title} poster`"
                   class="synopsis-poster"
-                >
+                />
               </div>
               <div v-if="movieVersions.length > 0" class="versions-list versions-list-sidebar">
                 <ReleaseVersionCard
@@ -99,7 +96,11 @@
                   @activate="handleVersionActivate(version, $event)"
                   @keydown="handleVersionShortcutKeydown($event, version)"
                   @contextmenu="handleVersionContextMenu($event, version)"
-                  :title="version.playable_file ? 'Click to play/continue. Alt+Click, Alt+Enter, or Cmd/Ctrl+E to open folder. Right-click for actions.' : 'No playable file'"
+                  :title="
+                    version.playable_file
+                      ? 'Click to play/continue. Alt+Click, Alt+Enter, or Cmd/Ctrl+E to open folder. Right-click for actions.'
+                      : 'No playable file'
+                  "
                 />
               </div>
             </div>
@@ -119,18 +120,24 @@
                   :src="getCoverUrl(castMember.profile_path, item.root_id)"
                   :alt="castMember.name"
                   class="cast-photo"
-                >
-                <img v-else :src="getCastPlaceholderUrl(castMember.gender)" :alt="`${castMember.name} placeholder portrait`" class="cast-photo cast-photo-fallback">
+                />
+                <img
+                  v-else
+                  :src="getCastPlaceholderUrl(castMember.gender)"
+                  :alt="`${castMember.name} placeholder portrait`"
+                  class="cast-photo cast-photo-fallback"
+                />
                 <div class="cast-copy">
                   <span class="cast-name">{{ castMember.name }}</span>
-                  <span v-if="castMember.character" class="cast-character">{{ castMember.character }}</span>
+                  <span v-if="castMember.character" class="cast-character">{{
+                    castMember.character
+                  }}</span>
                 </div>
               </div>
             </div>
 
             <!-- Main content -->
-            <div class="content-main">
-            </div>
+            <div class="content-main"></div>
 
             <!-- Right sidebar - Metadata -->
             <div v-if="item.type === 'movies'" class="content-sidebar sidebar-right">
@@ -144,10 +151,12 @@
                 </div>
                 <div v-if="movieStatus || movieReleaseDate" class="meta-summary">
                   <span v-if="movieStatus" class="meta-summary-item">{{ movieStatus }}</span>
-                  <span v-if="movieReleaseDate" class="meta-summary-item">{{ movieReleaseDate }}</span>
+                  <span v-if="movieReleaseDate" class="meta-summary-item">{{
+                    movieReleaseDate
+                  }}</span>
                 </div>
                 <div v-if="movieKeywords && movieKeywords.length > 0" class="meta-keywords-section">
-                  <span class="meta-value keywords">{{ movieKeywords.join(', ') }}</span>
+                  <span class="meta-value keywords">{{ movieKeywords.join(", ") }}</span>
                 </div>
               </div>
             </div>
@@ -178,315 +187,328 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch, onMounted, onUnmounted, nextTick } from 'vue';
-import type { CastMember, MediaItem, Movie, Series, Torrent } from '../types';
-import { getCoverUrl, getVideoPreviewUrl, getVideoSourceAttributes, isSafariBrowser, type VideoSourceAttributes } from '../api';
-import castPlaceholderFemaleUrl from '../assets/cast-placeholder-female.svg';
-import castPlaceholderMaleUrl from '../assets/cast-placeholder-male.svg';
-import SeriesFullView from './SeriesFullView.vue';
-import ReleaseVersionCard from './ReleaseVersionCard.vue';
-import ReleaseActionMenu from './ReleaseActionMenu.vue';
-import { navAttrs } from '../composables/useKeyboardNavigation';
+import { computed, ref, watch, onMounted, onUnmounted, nextTick } from "vue"
+import type { CastMember, MediaItem, Movie, Series, Torrent } from "../types"
+import {
+  getCoverUrl,
+  getVideoPreviewUrl,
+  getVideoSourceAttributes,
+  isSafariBrowser,
+  type VideoSourceAttributes,
+} from "../api"
+import castPlaceholderFemaleUrl from "../assets/cast-placeholder-female.svg"
+import castPlaceholderMaleUrl from "../assets/cast-placeholder-male.svg"
+import SeriesFullView from "./SeriesFullView.vue"
+import ReleaseVersionCard from "./ReleaseVersionCard.vue"
+import ReleaseActionMenu from "./ReleaseActionMenu.vue"
+import { navAttrs } from "../composables/useKeyboardNavigation"
 
 const props = defineProps<{
-  item: MediaItem;
-  focusEpisode?: { seasonNumber: number; episodeNumber: number } | null;
-  hasResumePosition: (filePath: string | null) => boolean;
-  getRootName: (rootId: string | null | undefined) => string | null;
-}>();
+  item: MediaItem
+  focusEpisode?: { seasonNumber: number; episodeNumber: number } | null
+  hasResumePosition: (filePath: string | null) => boolean
+  getRootName: (rootId: string | null | undefined) => string | null
+}>()
 const emit = defineEmits<{
-  close: [];
-  play: [string];
-  openFolder: [string, string | null | undefined];
-  searchActor: [string];
-}>();
+  close: []
+  play: [string]
+  openFolder: [string, string | null | undefined]
+  searchActor: [string]
+}>()
 
 // Track expanded episode for showing multiple releases
 
-const videoRefs = ref<(HTMLVideoElement | null)[]>([]);
-const videoStates = ref<string[]>([]);
-const COLLAGE_SLOT_COUNT = 5;
-const safariAutoplay = isSafariBrowser();
-const COLLAGE_START_OFFSETS_SECONDS = [0, 8, 6, 4, 2];
+const videoRefs = ref<(HTMLVideoElement | null)[]>([])
+const videoStates = ref<string[]>([])
+const COLLAGE_SLOT_COUNT = 5
+const safariAutoplay = isSafariBrowser()
+const COLLAGE_START_OFFSETS_SECONDS = [0, 8, 6, 4, 2]
 
 function setVideoRef(el: HTMLVideoElement | null, index: number) {
-  videoRefs.value[index] = el;
+  videoRefs.value[index] = el
 }
 
 function handleVideoLoaded(index: number) {
-  videoStates.value[index] = 'ready';
+  videoStates.value[index] = "ready"
 }
 
 function handleVideoError(index: number) {
-  videoStates.value[index] = 'error';
+  videoStates.value[index] = "error"
 }
 
 function isVideoReady(index: number): boolean {
-  return videoStates.value[index] === 'ready';
+  return videoStates.value[index] === "ready"
 }
 
 // Start staggered video playback
 function startStaggeredPlayback() {
-  const videos = videoRefs.value.filter(v => v !== null) as HTMLVideoElement[];
-  if (videos.length === 0) return;
+  const videos = videoRefs.value.filter((v) => v !== null) as HTMLVideoElement[]
+  if (videos.length === 0) return
 
   if (safariAutoplay) {
     videos.forEach((video, index) => {
-      const offset = COLLAGE_START_OFFSETS_SECONDS[index] ?? 0;
+      const offset = COLLAGE_START_OFFSETS_SECONDS[index] ?? 0
       const startVideo = () => {
-        video.currentTime = offset;
-        video.play().catch(() => {});
-      };
+        video.currentTime = offset
+        video.play().catch(() => {})
+      }
 
       if (video.readyState >= 1) {
-        startVideo();
+        startVideo()
       } else {
-        video.addEventListener('loadedmetadata', startVideo, { once: true });
+        video.addEventListener("loadedmetadata", startVideo, { once: true })
       }
-    });
-    return;
+    })
+    return
   }
 
   // Start first video immediately
   // Non-Safari keeps legacy behavior: start without explicit seek offset.
-  videos[0].play().catch(() => {});
+  videos[0].play().catch(() => {})
 
   // Set up staggered start for remaining videos
   for (let i = 1; i < videos.length; i++) {
     setTimeout(() => {
-      const video = videos[i];
-      if (!video) return;
-      video.play().catch(() => {});
-    }, i * 2000);
+      const video = videos[i]
+      if (!video) return
+      video.play().catch(() => {})
+    }, i * 2000)
   }
 }
 
 // Volume fade animation tracking
-const volumeFadeIntervals = new Map<number, ReturnType<typeof setInterval>>();
+const volumeFadeIntervals = new Map<number, ReturnType<typeof setInterval>>()
 
 // Handle hover-based audio fade in/out
 function handleVideoHover(index: number, isEntering: boolean) {
-  const video = videoRefs.value[index];
-  if (!video) return;
+  const video = videoRefs.value[index]
+  if (!video) return
 
   // Clear any existing fade for this video
-  const existingInterval = volumeFadeIntervals.get(index);
+  const existingInterval = volumeFadeIntervals.get(index)
   if (existingInterval) {
-    clearInterval(existingInterval);
-    volumeFadeIntervals.delete(index);
+    clearInterval(existingInterval)
+    volumeFadeIntervals.delete(index)
   }
 
   if (isEntering) {
     // Mute all other videos immediately
-    document.querySelectorAll('video').forEach(v => {
+    document.querySelectorAll("video").forEach((v) => {
       if (v !== video) {
-        v.volume = 0;
-        v.muted = true;
+        v.volume = 0
+        v.muted = true
       }
-    });
+    })
 
     // Fade in this video's audio
-    video.muted = false;
+    video.muted = false
     const fadeIn = setInterval(() => {
       if (video.volume < 0.95) {
-        video.volume = Math.min(1, video.volume + 0.1);
+        video.volume = Math.min(1, video.volume + 0.1)
       } else {
-        video.volume = 1;
-        clearInterval(fadeIn);
-        volumeFadeIntervals.delete(index);
+        video.volume = 1
+        clearInterval(fadeIn)
+        volumeFadeIntervals.delete(index)
       }
-    }, 30);
-    volumeFadeIntervals.set(index, fadeIn);
+    }, 30)
+    volumeFadeIntervals.set(index, fadeIn)
   } else {
     // Fade out this video's audio
     const fadeOut = setInterval(() => {
       if (video.volume > 0.05) {
-        video.volume = Math.max(0, video.volume - 0.1);
+        video.volume = Math.max(0, video.volume - 0.1)
       } else {
-        video.volume = 0;
-        video.muted = true;
-        clearInterval(fadeOut);
-        volumeFadeIntervals.delete(index);
+        video.volume = 0
+        video.muted = true
+        clearInterval(fadeOut)
+        volumeFadeIntervals.delete(index)
       }
-    }, 30);
-    volumeFadeIntervals.set(index, fadeOut);
+    }, 30)
+    volumeFadeIntervals.set(index, fadeOut)
   }
 }
 
 onMounted(() => {
   // Wait for videos to be ready, then start staggered playback
   setTimeout(() => {
-    startStaggeredPlayback();
-  }, 100);
-});
+    startStaggeredPlayback()
+  }, 100)
+})
 
 const showreelSourceSets = computed((): string[][] | null => {
-  if (props.item.type === 'movies') {
-    const movie = props.item.data as Movie;
+  if (props.item.type === "movies") {
+    const movie = props.item.data as Movie
     if (movie.showreel_source_sets && movie.showreel_source_sets.length > 0) {
-      return movie.showreel_source_sets;
+      return movie.showreel_source_sets
     }
-    return movie.showreel_images?.map((path) => [path]) ?? null;
+    return movie.showreel_images?.map((path) => [path]) ?? null
   } else {
-    const series = props.item.data as Series;
-    const sourceSets: string[][] = [];
+    const series = props.item.data as Series
+    const sourceSets: string[][] = []
     for (const season of series.seasons || []) {
       for (const episode of season.episodes || []) {
         if (episode.reel_sources && episode.reel_sources.length > 0) {
-          sourceSets.push(episode.reel_sources);
+          sourceSets.push(episode.reel_sources)
         } else if (episode.reel_image) {
-          sourceSets.push([episode.reel_image]);
+          sourceSets.push([episode.reel_image])
         }
       }
     }
-    return sourceSets.length > 0 ? sourceSets : null;
+    return sourceSets.length > 0 ? sourceSets : null
   }
-});
+})
 
 const collageSourceSets = computed((): string[][] => {
-  if (!showreelSourceSets.value || showreelSourceSets.value.length === 0) return [];
-  return showreelSourceSets.value.slice(0, 5);
-});
+  if (!showreelSourceSets.value || showreelSourceSets.value.length === 0) return []
+  return showreelSourceSets.value.slice(0, 5)
+})
 
 const collageSlots = computed(() => {
   return Array.from({ length: COLLAGE_SLOT_COUNT }, (_, index) => ({
     index,
     sourcePaths: collageSourceSets.value[index] ?? [],
-  }));
-});
+  }))
+})
 
-watch(collageSlots, async (slots) => {
-  videoRefs.value = Array.from({ length: COLLAGE_SLOT_COUNT }, (_, index) => videoRefs.value[index] ?? null);
-  videoStates.value = slots.map((slot) => slot.sourcePaths.length > 0 ? 'loading' : 'missing');
-  await nextTick();
-  setTimeout(() => {
-    startStaggeredPlayback();
-  }, 100);
-}, { immediate: true });
+watch(
+  collageSlots,
+  async (slots) => {
+    videoRefs.value = Array.from(
+      { length: COLLAGE_SLOT_COUNT },
+      (_, index) => videoRefs.value[index] ?? null,
+    )
+    videoStates.value = slots.map((slot) => (slot.sourcePaths.length > 0 ? "loading" : "missing"))
+    await nextTick()
+    setTimeout(() => {
+      startStaggeredPlayback()
+    }, 100)
+  },
+  { immediate: true },
+)
 
 function getShowreelUrl(path: string): string {
-  return getVideoPreviewUrl(getCoverUrl(path, props.item.root_id));
+  return getVideoPreviewUrl(getCoverUrl(path, props.item.root_id))
 }
 
 function getShowreelSourceAttributes(path: string): VideoSourceAttributes {
-  return getVideoSourceAttributes(path);
+  return getVideoSourceAttributes(path)
 }
 // Movie versions
 const movieVersions = computed((): Torrent[] => {
-  if (props.item.type !== 'movies') return [];
-  const movie = props.item.data as Movie;
-  return Object.values(movie.torrents || {});
-});
+  if (props.item.type !== "movies") return []
+  const movie = props.item.data as Movie
+  return Object.values(movie.torrents || {})
+})
 
 // Page backdrop background
 const backdropStyle = computed(() => {
-  if (props.item.type !== 'movies') return {};
-  const movie = props.item.data as Movie;
-  const imagePath = movie.backdrop_path;
-  const imageUrl = getCoverUrl(imagePath, props.item.root_id);
+  if (props.item.type !== "movies") return {}
+  const movie = props.item.data as Movie
+  const imagePath = movie.backdrop_path
+  const imageUrl = getCoverUrl(imagePath, props.item.root_id)
   if (imageUrl) {
-    return { backgroundImage: `url("${imageUrl}")` };
+    return { backgroundImage: `url("${imageUrl}")` }
   }
-  return {};
-});
+  return {}
+})
 
 const synopsisPosterUrl = computed(() => {
-  if (props.item.type !== 'movies') return null;
-  return getCoverUrl(props.item.cover_path, props.item.root_id);
-});
+  if (props.item.type !== "movies") return null
+  return getCoverUrl(props.item.cover_path, props.item.root_id)
+})
 
 const movieGenres = computed(() => {
-  if (props.item.type !== 'movies') return null;
-  return (props.item.data as Movie).info?.genres;
-});
+  if (props.item.type !== "movies") return null
+  return (props.item.data as Movie).info?.genres
+})
 
 const movieTagline = computed(() => {
-  if (props.item.type !== 'movies') return null;
-  return (props.item.data as Movie).info?.tagline;
-});
+  if (props.item.type !== "movies") return null
+  return (props.item.data as Movie).info?.tagline
+})
 
 const movieDirector = computed(() => {
-  if (props.item.type !== 'movies') return null;
-  return (props.item.data as Movie).info?.director;
-});
+  if (props.item.type !== "movies") return null
+  return (props.item.data as Movie).info?.director
+})
 
 const movieCast = computed(() => {
-  if (props.item.type !== 'movies') return null;
-  return (props.item.data as Movie).info?.cast as CastMember[] | null;
-});
+  if (props.item.type !== "movies") return null
+  return (props.item.data as Movie).info?.cast as CastMember[] | null
+})
 
 const limitedMovieCast = computed(() => {
-  if (!movieCast.value) return [];
-  return movieCast.value;
-});
+  if (!movieCast.value) return []
+  return movieCast.value
+})
 
 const movieRuntime = computed(() => {
-  if (props.item.type !== 'movies') return null;
-  return (props.item.data as Movie).info?.runtime;
-});
+  if (props.item.type !== "movies") return null
+  return (props.item.data as Movie).info?.runtime
+})
 
 const movieReleaseDate = computed(() => {
-  if (props.item.type !== 'movies') return null;
-  return (props.item.data as Movie).info?.release_date;
-});
+  if (props.item.type !== "movies") return null
+  return (props.item.data as Movie).info?.release_date
+})
 
 const movieStatus = computed(() => {
-  if (props.item.type !== 'movies') return null;
-  return (props.item.data as Movie).info?.status;
-});
+  if (props.item.type !== "movies") return null
+  return (props.item.data as Movie).info?.status
+})
 
 const movieKeywords = computed(() => {
-  if (props.item.type !== 'movies') return null;
-  return (props.item.data as Movie).info?.keywords;
-});
+  if (props.item.type !== "movies") return null
+  return (props.item.data as Movie).info?.keywords
+})
 
-function getCastPlaceholderUrl(gender?: CastMember['gender']): string {
-  return gender === 'female' ? castPlaceholderFemaleUrl : castPlaceholderMaleUrl;
+function getCastPlaceholderUrl(gender?: CastMember["gender"]): string {
+  return gender === "female" ? castPlaceholderFemaleUrl : castPlaceholderMaleUrl
 }
 
 function formatRuntime(minutes: number): string {
-  const hours = Math.floor(minutes / 60);
-  const mins = minutes % 60;
-  if (hours === 0) return `${mins}m`;
-  return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+  const hours = Math.floor(minutes / 60)
+  const mins = minutes % 60
+  if (hours === 0) return `${mins}m`
+  return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`
 }
 
 const rating = computed(() => {
-  if (props.item.type === 'movies') {
-    return (props.item.data as Movie).info?.rating;
+  if (props.item.type === "movies") {
+    return (props.item.data as Movie).info?.rating
   }
-  return (props.item.data as Series).info?.rating;
-});
+  return (props.item.data as Series).info?.rating
+})
 
 const overview = computed(() => {
-  if (props.item.type === 'movies') {
-    return (props.item.data as Movie).info?.overview;
+  if (props.item.type === "movies") {
+    return (props.item.data as Movie).info?.overview
   }
-  return (props.item.data as Series).info?.overview;
-});
+  return (props.item.data as Series).info?.overview
+})
 
 const ratingClass = computed(() => {
-  if (!rating.value) return '';
-  if (rating.value >= 7.5) return 'rating-high';
-  if (rating.value >= 6) return 'rating-medium';
-  return 'rating-low';
-});
+  if (!rating.value) return ""
+  if (rating.value >= 7.5) return "rating-high"
+  if (rating.value >= 6) return "rating-medium"
+  return "rating-low"
+})
 
 const seasons = computed(() => {
-  if (props.item.type !== 'series') return [];
-  const series = props.item.data as Series;
-  return series.seasons || [];
-});
+  if (props.item.type !== "series") return []
+  const series = props.item.data as Series
+  return series.seasons || []
+})
 
-const selectedSeasonIndex = ref<number>(0);
+const selectedSeasonIndex = ref<number>(0)
 
 const versionActionMenu = ref<{
-  visible: boolean;
-  x: number;
-  y: number;
-  filePath: string | null;
-  rootName: string | null;
-  rootId: string | null;
+  visible: boolean
+  x: number
+  y: number
+  filePath: string | null
+  rootName: string | null
+  rootId: string | null
 }>({
   visible: false,
   x: 0,
@@ -494,30 +516,30 @@ const versionActionMenu = ref<{
   filePath: null,
   rootName: null,
   rootId: null,
-});
+})
 
 function closeVersionActionMenu() {
-  versionActionMenu.value.visible = false;
-  versionActionMenu.value.filePath = null;
-  versionActionMenu.value.rootName = null;
-  versionActionMenu.value.rootId = null;
+  versionActionMenu.value.visible = false
+  versionActionMenu.value.filePath = null
+  versionActionMenu.value.rootName = null
+  versionActionMenu.value.rootId = null
 }
 
 function getPlayLabel(filePath: string | null): string {
-  return props.hasResumePosition(filePath) ? 'Continue' : 'Play';
+  return props.hasResumePosition(filePath) ? "Continue" : "Play"
 }
 
 function handlePlayVersion(filePath: string | null) {
   if (filePath) {
-    emit('play', filePath);
+    emit("play", filePath)
   }
-  closeVersionActionMenu();
+  closeVersionActionMenu()
 }
 
 function handleVersionContextMenu(event: MouseEvent, version: Torrent) {
-  event.preventDefault();
-  event.stopPropagation();
-  const rootId = version.root_id || ((props.item.data as Movie).root_id ?? props.item.root_id);
+  event.preventDefault()
+  event.stopPropagation()
+  const rootId = version.root_id || ((props.item.data as Movie).root_id ?? props.item.root_id)
   versionActionMenu.value = {
     visible: true,
     x: event.clientX,
@@ -525,80 +547,86 @@ function handleVersionContextMenu(event: MouseEvent, version: Torrent) {
     filePath: version.playable_file || null,
     rootName: props.getRootName(rootId) || null,
     rootId,
-  };
+  }
   nextTick(() => {
-    const firstAction = document.querySelector('.version-action-menu .version-action-item:not(:disabled)') as HTMLElement | null;
-    firstAction?.focus();
-  });
+    const firstAction = document.querySelector(
+      ".version-action-menu .version-action-item:not(:disabled)",
+    ) as HTMLElement | null
+    firstAction?.focus()
+  })
 }
 
 function handleVersionShortcutKeydown(event: KeyboardEvent, version: Torrent) {
-  if (!version.playable_file) return;
-  const rootId = version.root_id || ((props.item.data as Movie).root_id ?? props.item.root_id);
-  const key = event.key.toLowerCase();
-  if (key === 'e' && (event.metaKey || event.ctrlKey)) {
-    event.preventDefault();
-    event.stopPropagation();
-    handleOpenFolder(version.playable_file, rootId);
-    return;
+  if (!version.playable_file) return
+  const rootId = version.root_id || ((props.item.data as Movie).root_id ?? props.item.root_id)
+  const key = event.key.toLowerCase()
+  if (key === "e" && (event.metaKey || event.ctrlKey)) {
+    event.preventDefault()
+    event.stopPropagation()
+    handleOpenFolder(version.playable_file, rootId)
+    return
   }
-  if (key === 'enter' && event.altKey) {
-    event.preventDefault();
-    event.stopPropagation();
-    handleOpenFolder(version.playable_file, rootId);
+  if (key === "enter" && event.altKey) {
+    event.preventDefault()
+    event.stopPropagation()
+    handleOpenFolder(version.playable_file, rootId)
   }
 }
 
 function handleMovieMenuKeydown(event: KeyboardEvent) {
-  if (!versionActionMenu.value.visible) return;
-  if (event.key === 'Escape') {
-    event.preventDefault();
-    event.stopPropagation();
-    closeVersionActionMenu();
+  if (!versionActionMenu.value.visible) return
+  if (event.key === "Escape") {
+    event.preventDefault()
+    event.stopPropagation()
+    closeVersionActionMenu()
   }
 }
 
 // Select first season by default
-watch(seasons, (s) => {
-  if (s.length > 0 && selectedSeasonIndex.value >= s.length) {
-    selectedSeasonIndex.value = 0;
-  }
-}, { immediate: true });
+watch(
+  seasons,
+  (s) => {
+    if (s.length > 0 && selectedSeasonIndex.value >= s.length) {
+      selectedSeasonIndex.value = 0
+    }
+  },
+  { immediate: true },
+)
 
 function handlePlay(filePath: string | null) {
   if (filePath) {
-    emit('play', filePath);
+    emit("play", filePath)
   }
 }
 
 function handleVersionActivate(version: Torrent, event: MouseEvent | KeyboardEvent) {
-  if (!version.playable_file) return;
-  const rootId = version.root_id || ((props.item.data as Movie).root_id ?? props.item.root_id);
+  if (!version.playable_file) return
+  const rootId = version.root_id || ((props.item.data as Movie).root_id ?? props.item.root_id)
   if (event.altKey) {
-    handleOpenFolder(version.playable_file, rootId);
-    return;
+    handleOpenFolder(version.playable_file, rootId)
+    return
   }
-  handlePlay(version.playable_file);
+  handlePlay(version.playable_file)
 }
 
 function handleOpenFolder(folderPath: string, rootId?: string | null) {
-  closeVersionActionMenu();
-  emit('openFolder', folderPath, rootId);
+  closeVersionActionMenu()
+  emit("openFolder", folderPath, rootId)
 }
 
 function handleCastSelect(castName: string) {
-  const name = castName.trim();
-  if (!name) return;
-  emit('searchActor', name);
+  const name = castName.trim()
+  if (!name) return
+  emit("searchActor", name)
 }
 
 onMounted(() => {
-  document.addEventListener('keydown', handleMovieMenuKeydown, true);
-});
+  document.addEventListener("keydown", handleMovieMenuKeydown, true)
+})
 
 onUnmounted(() => {
-  document.removeEventListener('keydown', handleMovieMenuKeydown, true);
-});
+  document.removeEventListener("keydown", handleMovieMenuKeydown, true)
+})
 </script>
 
 <style scoped>
@@ -618,7 +646,7 @@ onUnmounted(() => {
 }
 
 .movie-page-content::before {
-  content: '';
+  content: "";
   position: absolute;
   top: 300px;
   /* Start clipped edge at reel 2/3 split bottom (y=300): 40vw - 0.8rem. */
@@ -626,15 +654,16 @@ onUnmounted(() => {
   width: calc(40vw + 0.8rem);
   max-width: calc(100vw - 24px);
   height: var(--header-height);
-  background: linear-gradient(
-    to bottom,
-    rgba(5, 7, 10, 0.72) 0%,
-    rgba(5, 7, 10, 0.5) 100%
-  );
+  background: linear-gradient(to bottom, rgba(5, 7, 10, 0.72) 0%, rgba(5, 7, 10, 0.5) 100%);
   -webkit-backdrop-filter: blur(10px) saturate(115%);
   backdrop-filter: blur(10px) saturate(115%);
   /* Match reel slant angle: 2rem horizontal shift over 300px reel height. */
-  -webkit-clip-path: polygon(0 0, 100% 0, calc(100% - (var(--header-height) * 0.1067)) 100%, 0 100%);
+  -webkit-clip-path: polygon(
+    0 0,
+    100% 0,
+    calc(100% - (var(--header-height) * 0.1067)) 100%,
+    0 100%
+  );
   clip-path: polygon(0 0, 100% 0, calc(100% - (var(--header-height) * 0.1067)) 100%, 0 100%);
   pointer-events: none;
   z-index: 30;
@@ -675,8 +704,8 @@ onUnmounted(() => {
   display: grid;
   grid-template-columns: minmax(260px, 360px) minmax(0, 1fr) minmax(240px, 320px);
   grid-template-areas:
-    'left cast cast'
-    'left main right';
+    "left cast cast"
+    "left main right";
   gap: 32px;
   align-items: start;
   position: relative;
@@ -921,7 +950,7 @@ onUnmounted(() => {
 }
 
 .cast-card::after {
-  content: '';
+  content: "";
   position: absolute;
   inset: 0;
   border-radius: inherit;
@@ -961,7 +990,12 @@ html:not(.mouse-active) .cast-card.nav-focused::after {
   position: absolute;
   inset: auto 0 0 0;
   padding: 28px 8px 8px;
-  background: linear-gradient(180deg, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.78) 45%, rgba(0, 0, 0, 0.95) 100%);
+  background: linear-gradient(
+    180deg,
+    rgba(0, 0, 0, 0) 0%,
+    rgba(0, 0, 0, 0.78) 45%,
+    rgba(0, 0, 0, 0.95) 100%
+  );
 }
 
 .cast-name {
@@ -983,9 +1017,9 @@ html:not(.mouse-active) .cast-card.nav-focused::after {
   .content-layout {
     grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
     grid-template-areas:
-      'left cast'
-      'left main'
-      'left right';
+      "left cast"
+      "left main"
+      "left right";
     gap: 24px;
   }
 }
@@ -994,10 +1028,10 @@ html:not(.mouse-active) .cast-card.nav-focused::after {
   .content-layout {
     grid-template-columns: 1fr;
     grid-template-areas:
-      'left'
-      'cast'
-      'main'
-      'right';
+      "left"
+      "cast"
+      "main"
+      "right";
     gap: 20px;
   }
 
@@ -1093,7 +1127,9 @@ html.mouse-active .showreel-image:hover {
   background: rgba(255, 255, 255, 0.05);
   border-radius: 8px;
   border: 1px solid transparent;
-  transition: background 0.2s, border-color 0.2s;
+  transition:
+    background 0.2s,
+    border-color 0.2s;
 }
 
 html.mouse-active .version-item:hover {
@@ -1290,7 +1326,9 @@ html.mouse-active .version-item:hover {
   background: rgba(255, 255, 255, 0.05);
   border-radius: 8px;
   border: 1px solid transparent;
-  transition: background 0.2s, border-color 0.2s;
+  transition:
+    background 0.2s,
+    border-color 0.2s;
   overflow: hidden;
 }
 
@@ -1541,14 +1579,10 @@ html.mouse-active .release-item:hover {
 
 /* Subtle vignette on each collage image */
 .collage-header .collage-item::before {
-  content: '';
+  content: "";
   position: absolute;
   inset: 0;
-  background: linear-gradient(
-    to bottom,
-    transparent 0%,
-    rgba(0, 0, 0, 0.3) 100%
-  );
+  background: linear-gradient(to bottom, transparent 0%, rgba(0, 0, 0, 0.3) 100%);
   pointer-events: none;
   z-index: 2;
 }
@@ -1646,5 +1680,4 @@ html.mouse-active .release-item:hover {
   flex-direction: column;
   gap: 8px;
 }
-
 </style>

@@ -26,7 +26,7 @@
         playsinline
       ></video>
       <div v-else class="media-card-placeholder">
-        {{ item.type === 'movies' ? '🎬' : item.type === 'episode' ? '📺' : '📺' }}
+        {{ item.type === "movies" ? "🎬" : item.type === "episode" ? "📺" : "📺" }}
       </div>
       <div v-if="rating" class="media-card-rating" :class="ratingClass">
         ★ {{ rating.toFixed(1) }}
@@ -38,24 +38,43 @@
         <span v-if="item.year" class="media-card-year">{{ item.year }}</span>
       </div>
       <template v-if="item.searchMatchInfo">
-        <div v-if="matchedPeople && matchedPeople.length > 0" class="media-card-detail match-reason">
+        <div
+          v-if="matchedPeople && matchedPeople.length > 0"
+          class="media-card-detail match-reason"
+        >
           <template v-for="(person, idx) in matchedPeople" :key="person.name">
-            <span :class="person.highlightRoles ? 'match-dim' : 'match-name'">{{ person.name }}</span>
-            <span :class="person.highlightRoles ? 'match-highlight' : 'match-roles'">({{ person.roles }})</span><span v-if="idx < matchedPeople.length - 1">, </span>
+            <span :class="person.highlightRoles ? 'match-dim' : 'match-name'">{{
+              person.name
+            }}</span>
+            <span :class="person.highlightRoles ? 'match-highlight' : 'match-roles'"
+              >({{ person.roles }})</span
+            ><span v-if="idx < matchedPeople.length - 1">, </span>
           </template>
         </div>
-        <div v-if="item.searchMatchInfo.matchedEpisodes && item.searchMatchInfo.matchedEpisodes.length > 0" class="media-card-episodes">
-          <div v-for="ep in item.searchMatchInfo.matchedEpisodes.slice(0, 3)" :key="ep.name" class="matched-episode">
+        <div
+          v-if="
+            item.searchMatchInfo.matchedEpisodes && item.searchMatchInfo.matchedEpisodes.length > 0
+          "
+          class="media-card-episodes"
+        >
+          <div
+            v-for="ep in item.searchMatchInfo.matchedEpisodes.slice(0, 3)"
+            :key="ep.name"
+            class="matched-episode"
+          >
             <span class="match-name">{{ ep.name }}</span>
             <span class="match-roles"> ({{ ep.location }})</span>
           </div>
-          <div v-if="item.searchMatchInfo.matchedEpisodes.length > 3" class="matched-episode-more">+{{ item.searchMatchInfo.matchedEpisodes.length - 3 }} more</div>
+          <div v-if="item.searchMatchInfo.matchedEpisodes.length > 3" class="matched-episode-more">
+            +{{ item.searchMatchInfo.matchedEpisodes.length - 3 }} more
+          </div>
         </div>
       </template>
       <template v-else>
         <div v-if="subtitle" class="media-card-detail">{{ subtitle }}</div>
         <div v-if="directorAndCast" class="media-card-detail">
-          <span v-if="director" class="director-name">{{ director }}</span><span v-if="director && filteredCastNames">, </span>{{ filteredCastNames }}
+          <span v-if="director" class="director-name">{{ director }}</span
+          ><span v-if="director && filteredCastNames">, </span>{{ filteredCastNames }}
         </div>
       </template>
     </div>
@@ -63,121 +82,122 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue';
-import type { MediaItem, Movie, Series, EpisodeWithSeries } from '../types';
-import { getCoverUrl, isVideoPath } from '../api';
-import { navAttrs } from '../composables/useKeyboardNavigation';
+import { computed, ref } from "vue"
+import type { MediaItem, Movie, Series, EpisodeWithSeries } from "../types"
+import { getCoverUrl, isVideoPath } from "../api"
+import { navAttrs } from "../composables/useKeyboardNavigation"
 
 const props = defineProps<{
-  item: MediaItem;
-  navRow?: number;
-  navCol?: number;
-}>();
+  item: MediaItem
+  navRow?: number
+  navCol?: number
+}>()
 
 defineEmits<{
-  click: [];
-}>();
+  click: []
+}>()
 
 const navAttributes = computed(() => {
   if (props.navRow !== undefined && props.navCol !== undefined) {
-    return navAttrs(props.navRow, props.navCol);
+    return navAttrs(props.navRow, props.navCol)
   }
-  return {};
-});
+  return {}
+})
 
-const imageError = ref(false);
+const imageError = ref(false)
 
 const posterImageUrl = computed(() => {
-  if (imageError.value) return null;
+  if (imageError.value) return null
   if (!props.item.cover_path || isVideoPath(props.item.cover_path)) {
-    return null;
+    return null
   }
-  return getCoverUrl(props.item.cover_path, props.item.root_id);
-});
+  return getCoverUrl(props.item.cover_path, props.item.root_id)
+})
 
 const posterVideoUrl = computed(() => {
   if (props.item.cover_path && isVideoPath(props.item.cover_path)) {
-    return getCoverUrl(props.item.cover_path, props.item.root_id);
+    return getCoverUrl(props.item.cover_path, props.item.root_id)
   }
 
-  const fallbackVideo = props.item.showreel_images?.find(path => isVideoPath(path));
-  return fallbackVideo ? getCoverUrl(fallbackVideo, props.item.root_id) : null;
-});
+  const fallbackVideo = props.item.showreel_images?.find((path) => isVideoPath(path))
+  return fallbackVideo ? getCoverUrl(fallbackVideo, props.item.root_id) : null
+})
 
 const rating = computed(() => {
-  if (props.item.type === 'movies') {
-    return (props.item.data as Movie).info?.rating;
+  if (props.item.type === "movies") {
+    return (props.item.data as Movie).info?.rating
   }
-  if (props.item.type === 'episode') {
-    const epData = props.item.data as EpisodeWithSeries;
-    return epData.episode.rating ?? epData.series.info?.rating;
+  if (props.item.type === "episode") {
+    const epData = props.item.data as EpisodeWithSeries
+    return epData.episode.rating ?? epData.series.info?.rating
   }
-  return (props.item.data as Series).info?.rating;
-});
+  return (props.item.data as Series).info?.rating
+})
 
 const ratingClass = computed(() => {
-  if (!rating.value) return '';
-  if (rating.value >= 7.5) return 'rating-high';
-  if (rating.value >= 6) return 'rating-medium';
-  return 'rating-low';
-});
+  if (!rating.value) return ""
+  if (rating.value >= 7.5) return "rating-high"
+  if (rating.value >= 6) return "rating-medium"
+  return "rating-low"
+})
 
 const displayTitle = computed(() => {
-  if (props.item.type === 'episode') {
-    const epData = props.item.data as EpisodeWithSeries;
-    return epData.episode.name || `Episode ${epData.episode.episode_number}`;
+  if (props.item.type === "episode") {
+    const epData = props.item.data as EpisodeWithSeries
+    return epData.episode.name || `Episode ${epData.episode.episode_number}`
   }
-  return props.item.title;
-});
+  return props.item.title
+})
 
 const subtitle = computed(() => {
-  if (props.item.type === 'episode') {
-    const epData = props.item.data as EpisodeWithSeries;
-    return `${epData.series.title} S${epData.seasonNumber}E${epData.episode.episode_number}`;
+  if (props.item.type === "episode") {
+    const epData = props.item.data as EpisodeWithSeries
+    return `${epData.series.title} S${epData.seasonNumber}E${epData.episode.episode_number}`
   }
-  if (props.item.type === 'series') {
-    const creators = (props.item.data as Series).info?.creators;
-    return creators && creators.length > 0 ? creators.join(', ') : null;
+  if (props.item.type === "series") {
+    const creators = (props.item.data as Series).info?.creators
+    return creators && creators.length > 0 ? creators.join(", ") : null
   }
-  return null;
-});
+  return null
+})
 
 const director = computed(() => {
-  if (props.item.type !== 'movies') return null;
-  return (props.item.data as Movie).info?.director;
-});
+  if (props.item.type !== "movies") return null
+  return (props.item.data as Movie).info?.director
+})
 
 const directorAndCast = computed(() => {
-  if (props.item.type !== 'movies') return false;
-  return director.value || filteredCastNames.value;
-});
+  if (props.item.type !== "movies") return false
+  return director.value || filteredCastNames.value
+})
 
 const filteredCastNames = computed(() => {
-  if (props.item.type !== 'movies') return null;
-  const cast = (props.item.data as Movie).info?.cast;
-  if (!cast || cast.length === 0) return null;
+  if (props.item.type !== "movies") return null
+  const cast = (props.item.data as Movie).info?.cast
+  if (!cast || cast.length === 0) return null
 
-  const directorName = director.value?.toLowerCase();
+  const directorName = director.value?.toLowerCase()
   const filteredCast = directorName
-    ? cast.filter(c => c.name.toLowerCase() !== directorName)
-    : cast;
+    ? cast.filter((c) => c.name.toLowerCase() !== directorName)
+    : cast
 
-  if (filteredCast.length === 0) return null;
+  if (filteredCast.length === 0) return null
 
-  const names = filteredCast.slice(0, 3).map(c => c.name);
-  return names.join(', ');
-});
+  const names = filteredCast.slice(0, 3).map((c) => c.name)
+  return names.join(", ")
+})
 
 const matchedPeople = computed(() => {
-  const info = props.item.searchMatchInfo;
-  if (!info || !info.matchedPeople) return null;
-  return info.matchedPeople;
-});
+  const info = props.item.searchMatchInfo
+  if (!info || !info.matchedPeople) return null
+  return info.matchedPeople
+})
 </script>
 
 <style scoped>
 @keyframes card-outline-blink {
-  0%, 100% {
+  0%,
+  100% {
     opacity: 1;
   }
   50% {

@@ -16,16 +16,16 @@
 </template>
 
 <script setup lang="ts">
-import type { MediaItem } from '../types';
-import MediaCard from './MediaCard.vue';
+import type { MediaItem } from "../types"
+import MediaCard from "./MediaCard.vue"
 
 defineProps<{
-  items: MediaItem[];
-  wrap?: boolean;
-  rowIndex?: number;
-}>();
+  items: MediaItem[]
+  wrap?: boolean
+  rowIndex?: number
+}>()
 
 defineEmits<{
-  select: [MediaItem];
-}>();
+  select: [MediaItem]
+}>()
 </script>
