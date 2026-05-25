@@ -654,6 +654,18 @@ export function installKeyboardNavigation() {
     }
   })
 
+  // Middle-click commonly opens links in a background tab.
+  // Scroll after activation so the source page keeps the clicked item in the safe zone.
+  document.addEventListener("auxclick", (event) => {
+    if (event.button !== 1) return
+    const target = event.target as HTMLElement
+    const focusable = target.closest(`[${FOCUSABLE_ATTR}]`) as HTMLElement | null
+    if (focusable) {
+      desiredCol.value = null
+      focusElement(focusable)
+    }
+  })
+
   // Handle focus events from tab navigation
   document.addEventListener("focusin", (event) => {
     const target = event.target as HTMLElement
@@ -664,7 +676,6 @@ export function installKeyboardNavigation() {
       focusedElement.value = target
       target.classList.add("nav-focused")
       desiredCol.value = null // Reset desired col on focus change
-      syncRowsToElement(target)
     } else {
       resetSyncedRows()
     }
