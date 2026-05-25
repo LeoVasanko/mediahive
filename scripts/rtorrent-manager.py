@@ -86,8 +86,7 @@ def parse_torrent(filepath: Path) -> TorrentInfo | None:
 
     """
     try:
-        with Path(filepath).open("rb") as f:
-            data = bencodepy.decode(f.read())
+        data = bencodepy.decode(Path(filepath).read_bytes())
     except (OSError, ValueError, TypeError) as e:
         print(f"Error parsing {filepath}: {e}")
         return None

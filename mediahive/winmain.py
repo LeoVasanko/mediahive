@@ -598,7 +598,8 @@ def _setup_logging() -> Path:
             prev.unlink()
         log_path.rename(prev)
 
-    log_file = Path(log_path).open("w", encoding="utf-8", buffering=1)  # line-buffered
+    fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
+    log_file = os.fdopen(fd, "w", encoding="utf-8", buffering=1)  # line-buffered
 
     # Redirect raw stdout/stderr so print() and tracebacks go to the file
     sys.stdout = log_file

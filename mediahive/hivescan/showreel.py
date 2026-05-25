@@ -15,6 +15,7 @@ import sys
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from aiopathlib import AsyncPath
 
@@ -25,7 +26,7 @@ _ffmpeg_not_found_logged = False
 
 
 # Suppress console windows when spawning subprocesses on Windows
-async def _subprocess_exec(*args, **kwargs):
+async def _subprocess_exec(*args: str, **kwargs: Any):
     """Wrap asyncio.create_subprocess_exec to hide console windows on Windows."""
     if sys.platform == "win32":
         kwargs.setdefault("creationflags", subprocess.CREATE_NO_WINDOW)
@@ -52,7 +53,7 @@ def _log_ffmpeg_not_found_once(cmd: list[str]) -> None:
 
 async def _run_ffmpeg(
     cmd: list[str],
-    timeout: float,
+    timeout_seconds: float,
     allow_nonzero_exit: bool = False,
 ) -> tuple[bytes, bytes] | None:
     """Run ffmpeg with consistent timeout/crash/not-found handling and logging.
@@ -69,12 +70,14 @@ async def _run_ffmpeg(
             stderr=asyncio.subprocess.PIPE,
         )
         try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(), timeout=timeout_seconds
+            )
         except TimeoutError:
             await _kill_proc(proc)
             try:
                 stdout, stderr = await proc.communicate()
-            except OSError, asyncio.SubprocessError:
+            except (OSError, asyncio.SubprocessError):
                 stdout, stderr = b"", b""
             logger.exception(
                 "ffmpeg command timed out. cmd=%s stderr=%s",
@@ -105,7 +108,7 @@ async def _run_ffmpeg(
     except asyncio.CancelledError:
         await _kill_proc(proc)
         raise
-    except OSError, asyncio.SubprocessError:
+    except (OSError, asyncio.SubprocessError):
         logger.exception("Unexpected error running ffmpeg command: %s", shlex.join(cmd))
         return None
 
@@ -358,7 +361,9 @@ async def get_av1_encoder() -> str:
         return _av1_encoder_cache
 
     # Check for NVIDIA AV1 encoder
-    encoders = await _run_ffmpeg(["ffmpeg", "-hide_banner", "-encoders"], timeout=10)
+    encoders = await _run_ffmpeg(
+        ["ffmpeg", "-hide_banner", "-encoders"], timeout_seconds=10
+    )
     if encoders and b"av1_nvenc" in encoders[0]:
         # Verify it actually works (driver support)
         test_run = await _run_ffmpeg(
@@ -374,7 +379,7 @@ async def get_av1_encoder() -> str:
                 "null",
                 "-",
             ],
-            timeout=10,
+            timeout_seconds=10,
         )
         if test_run is not None:
             _av1_encoder_cache = "av1_nvenc"
@@ -441,7 +446,9 @@ async def probe_media_info(video_path: str) -> MediaProbeInfo:
 
     info = MediaProbeInfo()
     cmd = ["ffmpeg", "-hide_banner", "-i", video_path]
-    ffmpeg_result = await _run_ffmpeg(cmd, timeout=30, allow_nonzero_exit=True)
+    ffmpeg_result = await _run_ffmpeg(
+        cmd, timeout_seconds=30, allow_nonzero_exit=True
+    )
     if ffmpeg_result is None:
         _media_probe_cache[video_path] = info
         return info
@@ -597,7 +604,7 @@ async def detect_crop(video_path: str) -> str | None:
         "null",
         "-",
     ]
-    ffmpeg_result = await _run_ffmpeg(cmd, timeout=60)
+    ffmpeg_result = await _run_ffmpeg(cmd, timeout_seconds=60)
     if ffmpeg_result is None:
         return None
     _, stderr_bytes = ffmpeg_result
@@ -819,7 +826,7 @@ async def generate_showreel_images(
             output_path.as_posix(),
         ]
 
-        ffmpeg_result = await _run_ffmpeg(cmd, timeout=120)
+        ffmpeg_result = await _run_ffmpeg(cmd, timeout_seconds=120)
         if ffmpeg_result is None:
             await AsyncPath(output_path).unlink(missing_ok=True)
             break
@@ -967,7 +974,7 @@ async def generate_episode_reel(
         output_path.as_posix(),
     ]
 
-    ffmpeg_result = await _run_ffmpeg(cmd, timeout=120)
+    ffmpeg_result = await _run_ffmpeg(cmd, timeout_seconds=120)
     if ffmpeg_result is None:
         await AsyncPath(output_path).unlink(missing_ok=True)
         return None

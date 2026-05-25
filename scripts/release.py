@@ -188,10 +188,12 @@ def main() -> None:
 
         zips = find_releasable_zips()
         if not zips:
-            raise FileNotFoundError(
+            print(
                 "No clean-versioned ZIPs found in build/.\n"
-                "Run scripts/winbuild.py first."
+                "Run scripts/guibuild.py first.",
+                file=sys.stderr,
             )
+            sys.exit(1)
 
         # Validate all dist files exist before touching Gitea
         dist_files: dict[str, list[Path]] = {}

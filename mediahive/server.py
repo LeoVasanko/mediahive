@@ -346,7 +346,7 @@ async def _activate_all_roots() -> None:
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(_app: FastAPI):
     await frontend.load()
 
     # Defer root activation to a background task so the server starts
@@ -355,13 +355,14 @@ async def lifespan(app: FastAPI):
 
     logger.info("Server ready; waiting for root activation")
 
-    yield
+    try:
+        yield
+    finally:
+        activation_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await activation_task
 
-    activation_task.cancel()
-    with suppress(asyncio.CancelledError):
-        await activation_task
-
-    await supervisor.shutdown()
+        await supervisor.shutdown()
 
 
 app = FastAPI(title="MediaHive Server", lifespan=lifespan, debug=DEVMODE)

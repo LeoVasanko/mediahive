@@ -89,12 +89,9 @@ def _pattern_to_regex(pattern: str) -> re.Pattern[str]:
 
     regex_str = "".join(parts)
 
-    if anchored or has_slash:
-        # Match from the start of the relative path
-        regex_str = "^" + regex_str
-    else:
-        # Match against any path component (basename or as suffix after /)
-        regex_str = "(?:^|/)" + regex_str
+    regex_str = (
+        "^" + regex_str if anchored or has_slash else "(?:^|/)" + regex_str
+    )
 
     # Must match the whole remaining path or be a prefix (directory match)
     regex_str += "(?:/.*)?$"
