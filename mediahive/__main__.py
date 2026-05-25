@@ -73,12 +73,13 @@ def main() -> None:
             roots[name] = p.as_posix()
         os.environ["MEDIAHIVE_ROOTS"] = json.dumps(roots)
 
-    dev = {"reload": True, "reload_dirs": ["mediahive"], "loop": "none"}
+    dev = {"reload": True, "reload_dirs": ["mediahive"]}
     server.run(
         "mediahive.server:app",
         listen=args.listen,
         default_port=DEFAULT_PORT,
-        **(dev if DEVMODE else {}),
+        loop="none" if sys.platform == "win32" else "auto",
+        **(dev if DEVMODE and sys.platform != "win32" else {}),
     )
 
 
