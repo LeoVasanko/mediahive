@@ -311,6 +311,15 @@ function handleSyncedRowResize() {
 }
 
 function ensureElementVisibleVertically(element: HTMLElement) {
+  if (element.hasAttribute("data-nav-release-item")) {
+    element.scrollIntoView({
+      behavior: "smooth",
+      block: "nearest",
+      inline: "nearest",
+    })
+    return
+  }
+
   const rootStyle = window.getComputedStyle(document.documentElement)
   const headerHeight = parseFloat(rootStyle.getPropertyValue("--header-height") || "0")
   const topMargin = headerHeight + 24
