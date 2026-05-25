@@ -592,14 +592,32 @@ function getCollageSliceStyle(season: Season, index: number) {
     : null
   const totalSlices = Math.min(seasonsWithPosters.value.length, 5)
   const sliceWidth = 100 / totalSlices
+  const actualWidth = sliceWidth + 5 // overlap in container percentage points
+  // The slant (horizontal offset from top to bottom) should equal the overlap
+  // measured relative to each slice's own width.
+  const slant = (5 / actualWidth) * 100
+
+  let clipPath: string
+  if (totalSlices === 1) {
+    clipPath = "polygon(0 0, 100% 0, 100% 100%, 0 100%)"
+  } else if (index === 0) {
+    // First slice: straight left edge, slanted right edge
+    clipPath = `polygon(0 0, 100% 0, ${100 - slant}% 100%, 0 100%)`
+  } else if (index === totalSlices - 1) {
+    // Last slice: slanted left edge, straight right edge
+    clipPath = `polygon(${slant}% 0, 100% 0, 100% 100%, 0 100%)`
+  } else {
+    // Middle slices: slanted on both sides
+    clipPath = `polygon(${slant}% 0, 100% 0, ${100 - slant}% 100%, 0 100%)`
+  }
 
   return {
     backgroundImage: posterUrl
       ? `url('${posterUrl}')`
       : "linear-gradient(135deg, #1a1a2e, #16213e)",
     left: `${index * sliceWidth}%`,
-    width: `${sliceWidth + 5}%`, // overlap slightly
-    clipPath: `polygon(${index * 10}% 0, 100% 0, ${100 - (totalSlices - index - 1) * 10}% 100%, 0% 100%)`,
+    width: `${actualWidth}%`,
+    clipPath,
   }
 }
 
