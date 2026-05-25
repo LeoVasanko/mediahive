@@ -773,6 +773,13 @@ onUnmounted(() => {
   line-height: 1.6;
   color: rgba(255, 255, 255, 0.85);
   margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 10;
+  line-clamp: 10;
+  max-height: calc(1.6em * 10);
 }
 
 /* Seasons container */
@@ -1036,6 +1043,12 @@ html.mouse-active .episode-tile:hover .tile-play {
 
   .hero-content {
     padding: 30px;
+  }
+
+  .series-overview {
+    -webkit-line-clamp: 10;
+    line-clamp: 10;
+    max-height: calc(1.6em * 10);
   }
 
   .ep-number {
