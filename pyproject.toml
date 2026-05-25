@@ -66,4 +66,4 @@ preview = true
 
 [tool.ruff.lint]
 select = ["ALL"]
-ignore = ["D203", "D213", "DOC201", "COM812", "T201"]
+ignore = ["D203", "D213", "DOC201", "COM812", "T201", "EM", "TC"]
