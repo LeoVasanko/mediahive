@@ -1037,12 +1037,19 @@ html:not(.mouse-active) .cast-card.nav-focused::after {
 
   .sidebar-left {
     align-self: auto;
+    display: grid;
+    grid-template-columns: clamp(120px, 36vw, 180px) minmax(0, 1fr);
+    align-items: start;
+    gap: 12px;
   }
 
   .synopsis-box {
-    width: clamp(120px, 36vw, 180px);
-    max-width: 100%;
-    margin: 0 auto;
+    width: 100%;
+    margin: 0;
+  }
+
+  .versions-list-sidebar {
+    min-width: 0;
   }
 
   .cast-list {
