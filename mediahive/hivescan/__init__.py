@@ -1,5 +1,4 @@
-"""
-Hivescan - Continuous media scanning with live WebSocket updates.
+"""Hivescan - Continuous media scanning with live WebSocket updates.
 
 Import from submodules directly:
     from mediahive.hivescan.scanner import start, stop
@@ -9,13 +8,13 @@ Import from submodules directly:
 """
 
 # Minimal public API - prefer importing from submodules directly
-from mediahive.hivescan.models import ContentType, ContentHash, ParsedContent
+from mediahive.hivescan.models import ContentHash, ContentType, ParsedContent
 from mediahive.hivescan.utils import DEFAULT_OUTPUT_FOLDER, find_common_root
 
 __all__ = [
-    "ContentType",
-    "ContentHash",
-    "ParsedContent",
     "DEFAULT_OUTPUT_FOLDER",
+    "ContentHash",
+    "ContentType",
+    "ParsedContent",
     "find_common_root",
 ]

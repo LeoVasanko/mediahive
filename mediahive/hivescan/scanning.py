@@ -4,7 +4,6 @@ import asyncio
 import glob
 from collections import defaultdict
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 from aiopathlib import AsyncPath
 
@@ -27,23 +26,23 @@ VIDEO_EXTENSIONS = {
 }
 
 # Caches for expensive operations
-_episode_files_cache: Dict[str, Dict[Tuple[int, int], List[Tuple[str, int]]]] = {}
-_playable_file_cache: Dict[str, Optional[str]] = {}
-_bluray_probe_file_cache: Dict[str, Optional[str]] = {}
+_episode_files_cache: dict[str, dict[tuple[int, int], list[tuple[str, int]]]] = {}
+_playable_file_cache: dict[str, str | None] = {}
+_bluray_probe_file_cache: dict[str, str | None] = {}
 
 
-async def scan_downloads(base_pattern: str) -> List[ParsedContent]:
-    """
-    Scan download directories matching the pattern.
+async def scan_downloads(base_pattern: str) -> list[ParsedContent]:
+    """Scan download directories matching the pattern.
 
     Args:
         base_pattern: Glob pattern for finding download directories
 
     Returns:
         List of ParsedContent objects for each found download
+
     """
     exclude_patterns = [".torrents", "incomplete", ".incomplete"]
-    results: List[ParsedContent] = []
+    results: list[ParsedContent] = []
 
     paths = await asyncio.to_thread(glob.glob, base_pattern)
     for path_str in paths:
@@ -82,21 +81,21 @@ def categorize_downloads(
 
 async def find_episode_files(
     path: Path,
-) -> Dict[Tuple[int, int], List[Tuple[str, int]]]:
-    """
-    Find all episode video files in a directory.
+) -> dict[tuple[int, int], list[tuple[str, int]]]:
+    """Find all episode video files in a directory.
 
     Args:
         path: Path to search (can be a season pack directory or single file)
 
     Returns:
         Dict mapping (season_num, episode_num) to list of (file_path, file_size) tuples
+
     """
     cache_key = path.as_posix()
     if cache_key in _episode_files_cache:
         return _episode_files_cache[cache_key]
 
-    episodes: Dict[Tuple[int, int], List[Tuple[str, int]]] = {}
+    episodes: dict[tuple[int, int], list[tuple[str, int]]] = {}
     ap = AsyncPath(path)
 
     if await ap.is_file():
@@ -117,19 +116,19 @@ async def find_episode_files(
                 if ep_info:
                     if ep_info not in episodes:
                         episodes[ep_info] = []
-                    episodes[ep_info].append(
-                        (Path(f).as_posix(), (await af.stat()).st_size)
-                    )
-    except (OSError, PermissionError):
+                    episodes[ep_info].append((
+                        Path(f).as_posix(),
+                        (await af.stat()).st_size,
+                    ))
+    except OSError, PermissionError:
         pass
 
     _episode_files_cache[cache_key] = episodes
     return episodes
 
 
-async def find_playable_file(path: Path) -> Optional[str]:
-    """
-    Find the main playable media file in a directory.
+async def find_playable_file(path: Path) -> str | None:
+    """Find the main playable media file in a directory.
 
     For Blu-ray discs: Returns BDMV/MovieObject.bdmv (fallback: BDMV/index.bdmv)
     For other content: Returns the largest video file
@@ -198,7 +197,7 @@ async def find_playable_file(path: Path) -> Optional[str]:
                     result = nested_video_ts_ifo.as_posix()
                     _playable_file_cache[cache_key] = result
                     return result
-    except (OSError, PermissionError):
+    except OSError, PermissionError:
         pass
 
     # Find largest video file
@@ -210,7 +209,7 @@ async def find_playable_file(path: Path) -> Optional[str]:
                 if "sample" in Path(f).name.lower():
                     continue
                 video_files.append((Path(f).as_posix(), (await af.stat()).st_size))
-    except (OSError, PermissionError):
+    except OSError, PermissionError:
         pass
 
     if not video_files:
@@ -223,7 +222,7 @@ async def find_playable_file(path: Path) -> Optional[str]:
     return result
 
 
-async def find_metadata_probe_file(playable_path: Optional[str]) -> Optional[str]:
+async def find_metadata_probe_file(playable_path: str | None) -> str | None:
     """Resolve a path suitable for ffmpeg stream metadata probing.
 
     For regular files, returns ``playable_path`` unchanged.
@@ -252,7 +251,7 @@ async def find_metadata_probe_file(playable_path: Optional[str]) -> Optional[str
             )
 
             # Group VOBs by title set (VTS_XX_Y.VOB)
-            title_sets: Dict[str, List[Tuple[str, int]]] = defaultdict(list)
+            title_sets: dict[str, list[tuple[str, int]]] = defaultdict(list)
             try:
                 for f in AsyncPath(video_ts_dir).glob("*.vob"):
                     af = AsyncPath(f)
@@ -263,7 +262,7 @@ async def find_metadata_probe_file(playable_path: Optional[str]) -> Optional[str
                         ts_num = name[4:6]
                         size = (await af.stat()).st_size
                         title_sets[ts_num].append((Path(f).as_posix(), size))
-            except (OSError, PermissionError):
+            except OSError, PermissionError:
                 _bluray_probe_file_cache[cache_key] = None
                 return None
 
@@ -298,14 +297,14 @@ async def find_metadata_probe_file(playable_path: Optional[str]) -> Optional[str
         _bluray_probe_file_cache[cache_key] = None
         return None
 
-    candidates: List[Tuple[str, int]] = []
+    candidates: list[tuple[str, int]] = []
     try:
         for f in ap_stream.rglob("*.m2ts"):
             af = AsyncPath(f)
             if not await af.is_file():
                 continue
             candidates.append((Path(f).as_posix(), (await af.stat()).st_size))
-    except (OSError, PermissionError):
+    except OSError, PermissionError:
         _bluray_probe_file_cache[cache_key] = None
         return None
 
@@ -320,8 +319,8 @@ async def find_metadata_probe_file(playable_path: Optional[str]) -> Optional[str
 
 
 async def find_cover_image(
-    title: str, year: Optional[int], media_type: str, cover_dir: Path
-) -> Optional[str]:
+    title: str, year: int | None, media_type: str, cover_dir: Path
+) -> str | None:
     """Find a cover image for the given media item."""
     media_folder = get_media_folder_path(title, year, media_type, cover_dir)
     cover_path = media_folder / "cover.jpg"

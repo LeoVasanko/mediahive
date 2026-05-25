@@ -34,7 +34,7 @@ REPO_ROOT = Path(__file__).parent.parent
 
 def load_gitea_config() -> dict:
     pyproject = REPO_ROOT / "pyproject.toml"
-    with open(pyproject, "rb") as f:
+    with Path(pyproject).open("rb") as f:
         data = tomllib.load(f)
     repo_url = data.get("project", {}).get("urls", {}).get("Repository")
     if not repo_url:
@@ -156,7 +156,7 @@ def upload_asset(
     size_mb = path.stat().st_size / (1024 * 1024)
     mime = "application/zip" if path.suffix == ".zip" else "application/octet-stream"
     print(f"Uploading {path.name} ({size_mb:.1f} MB) ...")
-    with open(path, "rb") as fh:
+    with Path(path).open("rb") as fh:
         resp = client.post(
             url,
             files={"attachment": (path.name, fh, mime)},

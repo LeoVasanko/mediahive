@@ -2,7 +2,6 @@
 
 import time
 from pathlib import Path
-from typing import List, Optional
 
 from aiopathlib import AsyncPath
 
@@ -84,9 +83,8 @@ def normalize_resolution_label(value: str | None) -> str | None:
     return mapping.get(normalized)
 
 
-async def get_added_timestamp(path: Path) -> Optional[int]:
-    """
-    Get the timestamp when a torrent was added to the collection.
+async def get_added_timestamp(path: Path) -> int | None:
+    """Get the timestamp when a torrent was added to the collection.
 
     Heuristic:
     - For directories: use ctime (most accurate for torrent folder creation)
@@ -95,11 +93,12 @@ async def get_added_timestamp(path: Path) -> Optional[int]:
 
     Returns:
         Unix timestamp as int, or None if path doesn't exist
+
     """
     ap = AsyncPath(path)
     try:
         stat_info = await ap.stat()
-    except (OSError, PermissionError):
+    except OSError, PermissionError:
         return None
 
     if await ap.is_dir():
@@ -124,7 +123,7 @@ async def get_directory_size(path: Path) -> int:
         for item in ap.rglob("*"):
             if await AsyncPath(item).is_file():
                 total += (await AsyncPath(item).stat()).st_size
-    except (OSError, PermissionError):
+    except OSError, PermissionError:
         pass
     return total
 
@@ -138,9 +137,8 @@ def format_size(size_bytes: int) -> str:
     return f"{size_bytes:.2f} PB"
 
 
-async def find_common_root(paths: List[Path]) -> Optional[Path]:
-    """
-    Find the common root directory for a list of paths.
+async def find_common_root(paths: list[Path]) -> Path | None:
+    """Find the common root directory for a list of paths.
 
     Returns None if paths are on different drives/mounts or have no common ancestor.
     """
@@ -198,11 +196,8 @@ async def find_common_root(paths: List[Path]) -> Optional[Path]:
     return Path(*common_parts)
 
 
-def make_relative_path(
-    path: Optional[str], root: Optional[str] = None
-) -> Optional[str]:
-    """
-    Convert an absolute path to a posix-style path relative to the given root.
+def make_relative_path(path: str | None, root: str | None = None) -> str | None:
+    """Convert an absolute path to a posix-style path relative to the given root.
 
     If root is None, returns the path as a posix string unchanged.
     """
@@ -225,7 +220,7 @@ def sanitize_filename(name: str) -> str:
     return name
 
 
-def get_media_folder_name(title: str, year: Optional[int], media_type: str) -> str:
+def get_media_folder_name(title: str, year: int | None, media_type: str) -> str:
     """Get the folder name for a media item."""
     sanitized_title = sanitize_filename(title)
     if media_type == "movie" and year:
@@ -234,7 +229,7 @@ def get_media_folder_name(title: str, year: Optional[int], media_type: str) -> s
 
 
 def get_media_folder_path(
-    title: str, year: Optional[int], media_type: str, cover_dir: Path
+    title: str, year: int | None, media_type: str, cover_dir: Path
 ) -> Path:
     """Get the full path to a media item's folder."""
     subdir = "movies" if media_type == "movie" else "series"

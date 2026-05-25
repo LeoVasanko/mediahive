@@ -2,7 +2,6 @@
 
 import re
 from pathlib import Path
-from typing import Optional, Tuple
 
 import PTN
 from aiopathlib import AsyncPath
@@ -10,11 +9,10 @@ from aiopathlib import AsyncPath
 from mediahive.hivescan.models import ContentHash, ContentType, ParsedContent
 from mediahive.hivescan.utils import normalize_resolution_label
 
-
 _EDGE_NON_ALPHANUMERICS_RE = re.compile(r"^[^0-9A-Za-z]+|[^0-9A-Za-z]+$")
 
 
-def strip_edge_non_alphanumerics(value: Optional[str]) -> Optional[str]:
+def strip_edge_non_alphanumerics(value: str | None) -> str | None:
     """Remove punctuation from the start and end of PTN scene tags."""
     if not value:
         return None
@@ -64,14 +62,14 @@ async def parse_download(path: Path) -> ParsedContent:
     )
 
 
-def parse_episode_from_filename(filename: str) -> Optional[Tuple[int, int]]:
-    """
-    Parse season and episode numbers from a filename.
+def parse_episode_from_filename(filename: str) -> tuple[int, int] | None:
+    """Parse season and episode numbers from a filename.
 
     Handles formats: S01E05, 1x05, Season 1 Episode 5
 
     Returns:
         Tuple of (season_number, episode_number) or None if not found
+
     """
     name = filename.lower()
 

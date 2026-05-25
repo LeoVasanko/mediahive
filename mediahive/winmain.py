@@ -155,7 +155,9 @@ def _save_playback_state(path: Path, state: dict[str, object]) -> None:
     tmp_path.replace(path)
 
 
-def _media_key_for_filepath(filepath: str, roots: list[Path]) -> tuple[str, Path] | None:
+def _media_key_for_filepath(
+    filepath: str, roots: list[Path]
+) -> tuple[str, Path] | None:
     """Resolve a filepath to a (relative_key, matched_root) tuple."""
     for root in roots:
         try:
@@ -195,7 +197,7 @@ def _mpcbe_request(path: str, timeout: float = MPC_BE_REQUEST_TIMEOUT) -> bool:
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return 200 <= resp.status < 300
-    except (urllib.error.URLError, TimeoutError, OSError):
+    except urllib.error.URLError, TimeoutError, OSError:
         return False
 
 
@@ -211,12 +213,10 @@ def _format_mpcbe_position(position_ms: int) -> str:
 
 
 def _seek_mpcbe_to_position(position_ms: int) -> bool:
-    query = urllib.parse.urlencode(
-        {
-            "wm_command": -1,
-            "position": _format_mpcbe_position(position_ms),
-        }
-    )
+    query = urllib.parse.urlencode({
+        "wm_command": -1,
+        "position": _format_mpcbe_position(position_ms),
+    })
     return _mpcbe_request(f"/command.html?{query}")
 
 
@@ -226,7 +226,7 @@ def _mpcbe_fetch_status() -> tuple[str, int, int, int] | None:
     try:
         with urllib.request.urlopen(req, timeout=MPC_BE_REQUEST_TIMEOUT) as resp:
             response_html = resp.read().decode("utf-8", errors="replace")
-    except (urllib.error.URLError, TimeoutError, OSError):
+    except urllib.error.URLError, TimeoutError, OSError:
         return None
 
     state_match = _STATE_RE.search(response_html)
@@ -255,13 +255,9 @@ def _start_gamepad_remote(
     seek_begin_hold_started_at: list[float | None] = [None, None, None, None]
     seek_begin_fired = [False, False, False, False]
     last_repeat_at = [
-        {
-            mask: 0.0
-            for mask in (
-                *_MPC_BE_COMMANDS.keys(),
-                *_MPC_BE_SEEK_MASK_TO_COMMANDS.keys(),
-            )
-        }
+        dict.fromkeys(
+            (*_MPC_BE_COMMANDS.keys(), *_MPC_BE_SEEK_MASK_TO_COMMANDS.keys()), 0.0
+        )
         for _ in range(4)
     ]
     request_pool = ThreadPoolExecutor(
@@ -405,13 +401,12 @@ def _start_gamepad_remote(
             player_filepath, \
             player_position_ms, \
             player_duration_ms, \
-            player_state
-        nonlocal \
+            player_state, \
             status_updated_at, \
             status_miss_count, \
             tracked_media_key, \
-            tracked_filepath
-        nonlocal resume_applied_for_key
+            tracked_filepath, \
+            resume_applied_for_key
         if status_future is None or not status_future.done():
             return
 
@@ -603,7 +598,7 @@ def _setup_logging() -> Path:
             prev.unlink()
         log_path.rename(prev)
 
-    log_file = open(log_path, "w", encoding="utf-8", buffering=1)  # line-buffered
+    log_file = Path(log_path).open("w", encoding="utf-8", buffering=1)  # line-buffered
 
     # Redirect raw stdout/stderr so print() and tracebacks go to the file
     sys.stdout = log_file

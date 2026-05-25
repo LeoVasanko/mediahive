@@ -5,16 +5,13 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
-import os
 from pathlib import Path
-from typing import Optional
 
 import msgspec
 
 from mediahive.config import load_config, save_config
 from mediahive.index_store import IndexStore
 from mediahive.models.events import ScanEvent, Task, Upsert
-from mediahive.models.data import TaskInfo
 
 logger = logging.getLogger("mediahive.root_registry")
 
@@ -40,8 +37,10 @@ def _normalize_path(path: str) -> str:
     if len(posix) >= 2 and posix[1] == ":":
         posix = posix[0].lower() + posix[1:]
     # Strip trailing slash (except root "/")
-    while len(posix) > 1 and posix.endswith("/") and not (
-        len(posix) == 3 and posix[1] == ":" and posix[2] == "/"
+    while (
+        len(posix) > 1
+        and posix.endswith("/")
+        and not (len(posix) == 3 and posix[1] == ":" and posix[2] == "/")
     ):
         posix = posix[:-1]
     return posix
@@ -92,17 +91,19 @@ class RootContext:
         self.name = name or root_id
         self.root_path = root_path
         self.status = "loading"
-        self.error: Optional[str] = None
+        self.error: str | None = None
 
         snapshot_path = root_path / ".mediahive" / "index.json"
-        self.store = IndexStore(snapshot_path, media_root=root_path.as_posix(), root_id=root_id)
+        self.store = IndexStore(
+            snapshot_path, media_root=root_path.as_posix(), root_id=root_id
+        )
 
         # Scanner is injected later by the supervisor
-        self.scanner: Optional[object] = None
+        self.scanner: object | None = None
 
         # Event queue and consumer
         self._events: asyncio.Queue[ScanEvent] = asyncio.Queue()
-        self._consumer_task: Optional[asyncio.Task] = None
+        self._consumer_task: asyncio.Task | None = None
 
     async def start(self) -> None:
         """Load snapshot and start event consumer."""
@@ -161,7 +162,9 @@ class RootContext:
             except asyncio.CancelledError:
                 return
             except Exception:
-                logger.exception("Error processing scan event for root %s", self.root_id)
+                logger.exception(
+                    "Error processing scan event for root %s", self.root_id
+                )
 
 
 # ---------------------------------------------------------------------------
@@ -181,7 +184,7 @@ class Supervisor:
     # Read helpers
     # ------------------------------------------------------------------
 
-    def get(self, root_id: str) -> Optional[RootContext]:
+    def get(self, root_id: str) -> RootContext | None:
         return self._contexts.get(root_id)
 
     def all_contexts(self) -> dict[str, RootContext]:
@@ -212,14 +215,15 @@ class Supervisor:
                 continue
             movies.extend(ctx.store.movies.values())
             series.extend(ctx.store.series.values())
-            total_movie_versions += sum(len(m.torrents) for m in ctx.store.movies.values())
+            total_movie_versions += sum(
+                len(m.torrents) for m in ctx.store.movies.values()
+            )
             total_series_episodes += sum(
                 sum(len(season.episodes) for season in s.seasons)
                 for s in ctx.store.series.values()
             )
 
         from datetime import datetime
-        from mediahive.models.data import IndexSnapshot, MediaStats
 
         return {
             "version": 7,
@@ -238,7 +242,9 @@ class Supervisor:
     # Atomic replacement
     # ------------------------------------------------------------------
 
-    async def replace_roots(self, roots: dict[str, str]) -> tuple[list[RootEntry], list[dict]]:
+    async def replace_roots(
+        self, roots: dict[str, str]
+    ) -> tuple[list[RootEntry], list[dict]]:
         """Atomically replace the active root set.
 
         Returns (accepted_entries, failed_entries_with_reason).
@@ -253,11 +259,19 @@ class Supervisor:
             for requested_name, path_str in roots.items():
                 p = Path(path_str).expanduser()
                 if not p.exists() or not p.is_dir():
-                    failed.append({"name": requested_name, "path": path_str, "reason": "not a directory"})
+                    failed.append({
+                        "name": requested_name,
+                        "path": path_str,
+                        "reason": "not a directory",
+                    })
                     continue
                 norm = _normalize_path(p.as_posix())
                 if norm in seen_paths:
-                    failed.append({"name": requested_name, "path": path_str, "reason": "duplicate path"})
+                    failed.append({
+                        "name": requested_name,
+                        "path": path_str,
+                        "reason": "duplicate path",
+                    })
                     continue
                 seen_paths.add(norm)
                 rid = compute_root_id(str(p))

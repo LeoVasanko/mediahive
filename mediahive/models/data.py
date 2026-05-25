@@ -1,5 +1,4 @@
-"""
-Data structures for mediahive and hivescan.
+"""Data structures for mediahive and hivescan.
 
 All types are msgspec.Structs for fast serialization.
 """

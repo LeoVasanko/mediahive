@@ -1,5 +1,4 @@
-"""
-Event types shared between scanner and WebSocket.
+"""Event types shared between scanner and WebSocket.
 
 These types are used as:
 - Internal scan events (scanner → server queue)

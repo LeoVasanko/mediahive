@@ -1,5 +1,4 @@
-"""
-Showreel generation module for media preview clips.
+"""Showreel generation module for media preview clips.
 
 Generates short video clips (reels) from movies and TV episodes using ffmpeg.
 Supports automatic black bar detection and removal, hardware-accelerated encoding,
@@ -15,7 +14,6 @@ import sys
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 from aiopathlib import AsyncPath
 
@@ -71,7 +69,7 @@ async def _run_ffmpeg(
         )
         try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             await _kill_proc(proc)
             try:
                 stdout, stderr = await proc.communicate()
@@ -133,7 +131,7 @@ def get_reel_source_extensions() -> list[str]:
     return REEL_SOURCE_EXTENSIONS.copy()
 
 
-def _to_media_path(path: Path, media_root: Optional[Path] = None) -> str:
+def _to_media_path(path: Path, media_root: Path | None = None) -> str:
     """Convert an absolute reel file path to a media-root-relative path when possible."""
     if media_root:
         try:
@@ -180,10 +178,9 @@ def get_reel_audio_options() -> list[str]:
 def get_expected_showreel_paths(
     media_folder: Path,
     timestamps: list[int] = SHOWREEL_TIMESTAMPS,
-    media_root: Optional[Path] = None,
+    media_root: Path | None = None,
 ) -> list[str]:
-    """
-    Compute the expected showreel paths without generating them.
+    """Compute the expected showreel paths without generating them.
 
     Args:
         media_folder: Folder for this specific media item
@@ -192,6 +189,7 @@ def get_expected_showreel_paths(
 
     Returns:
         List of relative paths where showreels will be created for this platform
+
     """
     paths = []
     extension = get_reel_extension()
@@ -211,10 +209,9 @@ def get_expected_episode_reel_path(
     media_folder: Path,
     season_num: int,
     episode_num: int,
-    media_root: Optional[Path] = None,
+    media_root: Path | None = None,
 ) -> str:
-    """
-    Compute the expected episode reel path without generating it.
+    """Compute the expected episode reel path without generating it.
 
     Args:
         media_folder: Folder for this series
@@ -224,6 +221,7 @@ def get_expected_episode_reel_path(
 
     Returns:
         Relative path where the reel will be created for this platform
+
     """
     output_path = (
         media_folder / f"S{season_num:02d}E{episode_num:02d}{get_reel_extension()}"
@@ -239,7 +237,7 @@ def get_expected_episode_reel_path(
 def get_existing_showreel_paths(
     media_folder: Path,
     timestamps: list[int] = SHOWREEL_TIMESTAMPS,
-    media_root: Optional[Path] = None,
+    media_root: Path | None = None,
 ) -> list[str]:
     """Return preferred existing showreel paths, one per reel slot, in AV1-first order."""
     source_sets = get_existing_showreel_source_sets(
@@ -253,7 +251,7 @@ def get_existing_showreel_paths(
 def get_existing_showreel_source_sets(
     media_folder: Path,
     timestamps: list[int] = SHOWREEL_TIMESTAMPS,
-    media_root: Optional[Path] = None,
+    media_root: Path | None = None,
 ) -> list[list[str]]:
     """Return all existing showreel source files for each reel slot in AV1-first order."""
     source_sets: list[list[str]] = []
@@ -272,7 +270,7 @@ def get_existing_episode_reel_path(
     media_folder: Path,
     season_num: int,
     episode_num: int,
-    media_root: Optional[Path] = None,
+    media_root: Path | None = None,
 ) -> str | None:
     """Return the preferred existing episode reel path in AV1-first order."""
     sources = get_existing_episode_reel_sources(
@@ -288,7 +286,7 @@ def get_existing_episode_reel_sources(
     media_folder: Path,
     season_num: int,
     episode_num: int,
-    media_root: Optional[Path] = None,
+    media_root: Path | None = None,
 ) -> list[str]:
     """Return all existing episode reel source files in AV1-first order."""
     ep_code = f"S{season_num:02d}E{episode_num:02d}"
@@ -319,15 +317,15 @@ async def episode_reel_exists(
     ).exists()
 
 
-def get_bluray_uri(video_path: str) -> Optional[str]:
-    """
-    Convert a Blu-ray index.bdmv path to an ffmpeg-compatible bluray: URI.
+def get_bluray_uri(video_path: str) -> str | None:
+    """Convert a Blu-ray index.bdmv path to an ffmpeg-compatible bluray: URI.
 
     Args:
         video_path: Path that may be a Blu-ray index.bdmv file
 
     Returns:
         bluray: URI if this is a Blu-ray disc, None otherwise
+
     """
     if not video_path.endswith(".bdmv"):
         return None
@@ -343,18 +341,18 @@ def get_bluray_uri(video_path: str) -> Optional[str]:
 
 
 # Cache for AV1 encoder availability
-_av1_encoder_cache: Optional[str] = None
+_av1_encoder_cache: str | None = None
 
 
 async def get_av1_encoder() -> str:
-    """
-    Detect the best available AV1 encoder.
+    """Detect the best available AV1 encoder.
 
     Prefers hardware encoders (NVIDIA av1_nvenc) over software (libsvtav1).
     Falls back to libsvtav1 if no hardware encoder is available.
 
     Returns:
         Encoder name to use with ffmpeg -c:v
+
     """
     global _av1_encoder_cache
     if _av1_encoder_cache is not None:
@@ -389,21 +387,20 @@ async def get_av1_encoder() -> str:
 
 
 def get_encoder_options(encoder: str) -> list[str]:
-    """
-    Get encoder-specific options for the given AV1 encoder.
+    """Get encoder-specific options for the given AV1 encoder.
 
     Args:
         encoder: The encoder name (av1_nvenc, libsvtav1)
 
     Returns:
         List of ffmpeg arguments for encoder settings
+
     """
     if encoder == "av1_nvenc":
         # NVIDIA hardware encoder - use constant quality mode
         return ["-cq", "35", "-preset", "p4"]
-    else:
-        # libsvtav1 software encoder
-        return ["-crf", "38", "-preset", "6"]
+    # libsvtav1 software encoder
+    return ["-crf", "38", "-preset", "6"]
 
 
 @dataclass
@@ -423,7 +420,9 @@ class MediaProbeInfo:
 _media_probe_cache: dict[str, MediaProbeInfo] = {}
 _duration_re = re.compile(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)")
 _dimension_re = re.compile(r"(\d{2,5})x(\d{2,5})")
-_dovi_profile_re = re.compile(r"DOVI configuration record:.*?profile:\s*(\d+)", re.I)
+_dovi_profile_re = re.compile(
+    r"DOVI configuration record:.*?profile:\s*(\d+)", re.IGNORECASE
+)
 _audio_stream_re = re.compile(r"Stream #\d+:\d+(?:\(([^)]+)\))?:\s+Audio:")
 _subtitle_stream_re = re.compile(r"Stream #\d+:\d+(?:\(([^)]+)\))?:\s+Subtitle:")
 
@@ -511,9 +510,8 @@ async def probe_media_info(video_path: str) -> MediaProbeInfo:
     return info
 
 
-async def detect_dovi_profile(video_path: str) -> Optional[int]:
-    """
-    Detect Dolby Vision profile from a video file.
+async def detect_dovi_profile(video_path: str) -> int | None:
+    """Detect Dolby Vision profile from a video file.
 
     Returns the DoVi profile number (5, 7, 8, etc.) or None if not DoVi.
     Profile 5: Dual-layer, no HDR10 base (needs conversion)
@@ -528,8 +526,7 @@ async def detect_dovi_profile(video_path: str) -> Optional[int]:
 
 
 def get_dovi_to_hdr10_filter() -> str:
-    """
-    Get the video filter string for converting DoVi to HDR10.
+    """Get the video filter string for converting DoVi to HDR10.
 
     Uses libplacebo to strip DoVi metadata while preserving HDR10 colorspace.
     No tonemapping is applied - this just converts the container format.
@@ -543,8 +540,7 @@ def get_dovi_to_hdr10_filter() -> str:
 
 
 async def is_hdr_video(video_path: str) -> bool:
-    """
-    Check if a video file is HDR using ffmpeg probe output.
+    """Check if a video file is HDR using ffmpeg probe output.
 
     Returns True if the video has HDR metadata (bt2020, SMPTE ST 2084, etc.)
     """
@@ -554,9 +550,8 @@ async def is_hdr_video(video_path: str) -> bool:
         return False
 
 
-async def detect_crop(video_path: str) -> Optional[str]:
-    """
-    Detect black bars in a video and return the crop filter string.
+async def detect_crop(video_path: str) -> str | None:
+    """Detect black bars in a video and return the crop filter string.
 
     Only runs on 16:9 (1.78:1) source videos, since other aspect ratios like
     2.35:1 or 4:3 are already correctly framed. Trusts cropping results only
@@ -571,6 +566,7 @@ async def detect_crop(video_path: str) -> Optional[str]:
     Returns:
         Crop filter string like "crop=1920:800:0:140" if black bars detected,
         or None if no cropping needed or detection failed.
+
     """
     # First, get source video dimensions to check if it's 16:9
     probe_info = await probe_media_info(video_path)
@@ -655,9 +651,8 @@ async def detect_crop(video_path: str) -> Optional[str]:
         return None
 
     # If cropping in both directions, both must be symmetric
-    if x >= 8 and y >= 8:
-        if not (horizontal_symmetric and vertical_symmetric):
-            return None
+    if x >= 8 and y >= 8 and not (horizontal_symmetric and vertical_symmetric):
+        return None
 
     # Align all coordinates to 8 pixels (shrink content area if needed)
     # x and y: round UP to next multiple of 8
@@ -676,10 +671,8 @@ async def detect_crop(video_path: str) -> Optional[str]:
     return crop_result
 
 
-async def get_video_duration(video_path: str) -> Optional[float]:
-    """
-    Get the duration of a video file in seconds using ffmpeg probe output.
-    """
+async def get_video_duration(video_path: str) -> float | None:
+    """Get the duration of a video file in seconds using ffmpeg probe output."""
     try:
         return (await probe_media_info(video_path)).duration
     except Exception:
@@ -693,8 +686,7 @@ async def generate_showreel_images(
     title: str | None = None,
     on_progress=None,
 ) -> list[str]:
-    """
-    Generate showreel video clips from a video file at specified timestamps.
+    """Generate showreel video clips from a video file at specified timestamps.
 
     Saves 10-second clips in a platform-native format, downscaled to max 720px width,
     preserving original color metadata. macOS emits MP4/H.265; other platforms emit WebM/AV1.
@@ -708,6 +700,7 @@ async def generate_showreel_images(
 
     Returns:
         List of relative paths to generated showreel video clips
+
     """
     if not video_path:
         logger.warning(
@@ -869,9 +862,8 @@ async def generate_episode_reel(
     media_folder: Path,
     season_num: int,
     episode_num: int,
-) -> Optional[str]:
-    """
-    Generate a single 10-second reel video clip for a TV episode.
+) -> str | None:
+    """Generate a single 10-second reel video clip for a TV episode.
 
     Saves a platform-native clip such as S01E05.mp4 on macOS or S01E05.webm elsewhere.
     The clip is downscaled to max 720px width while preserving original color metadata.
@@ -884,6 +876,7 @@ async def generate_episode_reel(
 
     Returns:
         Relative path to generated image, or None if failed
+
     """
     ep_code = f"S{season_num:02d}E{episode_num:02d}"
     if not video_path:

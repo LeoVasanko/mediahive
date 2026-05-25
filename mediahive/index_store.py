@@ -1,5 +1,4 @@
-"""
-In-memory index store with disk snapshot and WebSocket broadcast.
+"""In-memory index store with disk snapshot and WebSocket broadcast.
 
 The IndexStore is the single source of truth for the media index.
 All mutations happen synchronously in the asyncio event loop — no locks needed.
@@ -12,7 +11,6 @@ import logging
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 import msgspec
 from aiopathlib import AsyncPath
@@ -48,7 +46,12 @@ class IndexStore:
     # This would make IndexStore testable without FastAPI's WebSocket.
     """
 
-    def __init__(self, snapshot_path: Path, media_root: Optional[str] = None, root_id: Optional[str] = None):
+    def __init__(
+        self,
+        snapshot_path: Path,
+        media_root: str | None = None,
+        root_id: str | None = None,
+    ):
         self.snapshot_path = snapshot_path
         self.media_root = media_root
         self.root_id = root_id
@@ -62,7 +65,7 @@ class IndexStore:
 
         # Snapshot debounce state
         self._snapshot_dirty = False
-        self._snapshot_task: Optional[asyncio.Task] = None
+        self._snapshot_task: asyncio.Task | None = None
 
     # ------------------------------------------------------------------
     # Persistence

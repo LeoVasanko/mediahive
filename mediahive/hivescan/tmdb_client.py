@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""
-TMDb Client - Fetch movie and TV series metadata from The Movie Database (TMDb).
-"""
+"""TMDb Client - Fetch movie and TV series metadata from The Movie Database (TMDb)."""
 
 import asyncio
 import hashlib
@@ -10,7 +8,6 @@ import os
 import sys
 import urllib.parse
 from pathlib import Path
-from typing import Dict, Optional
 
 import httpx
 from aiopathlib import AsyncPath
@@ -28,10 +25,10 @@ TMDB_API_KEY = os.environ.get("TMDB_API_KEY", "6bd914e6a5df1c6d1ddf622cf2dbc232"
 TMDB_API_BASE = "https://api.themoviedb.org/3"
 
 # API response cache directory (can be overridden via set_cache_dir)
-_tmdb_cache_dir: Optional[Path] = None
+_tmdb_cache_dir: Path | None = None
 
 # Persistent async HTTP client for connection reuse
-_http_client: Optional[httpx.AsyncClient] = None
+_http_client: httpx.AsyncClient | None = None
 
 
 def set_cache_dir(cache_dir: Path) -> None:
@@ -65,7 +62,7 @@ def _get_http_client() -> httpx.AsyncClient:
 _NOT_FOUND = object()
 
 
-def _get_cache_path(endpoint: str, params: Dict[str, str]) -> Path:
+def _get_cache_path(endpoint: str, params: dict[str, str]) -> Path:
     """Generate a cache file path for an API request."""
     # Create a stable cache key from endpoint and sorted params
     cache_key = endpoint + "?" + urllib.parse.urlencode(sorted(params.items()))
@@ -88,7 +85,7 @@ async def _load_from_cache(cache_path: Path):
         return _NOT_FOUND
 
 
-async def _save_to_cache(cache_path: Path, data: Optional[Dict]):
+async def _save_to_cache(cache_path: Path, data: dict | None):
     """Save response to cache."""
     try:
         await AsyncPath(_get_cache_dir()).mkdir(parents=True, exist_ok=True)
@@ -105,8 +102,8 @@ async def _save_to_cache(cache_path: Path, data: Optional[Dict]):
 
 
 async def tmdb_api_request(
-    endpoint: str, params: Optional[Dict[str, str]] = None
-) -> Optional[Dict[str, str]]:
+    endpoint: str, params: dict[str, str] | None = None
+) -> dict[str, str] | None:
     """Make a request to the TMDb API with disk caching and connection reuse."""
     params = params or {}
 
@@ -144,7 +141,7 @@ async def tmdb_api_request(
         return None
 
 
-async def fetch_movie_details(movie_id: int) -> Optional[Dict]:
+async def fetch_movie_details(movie_id: int) -> dict | None:
     """Fetch detailed movie info including credits, similar, keywords, and alternative titles."""
     # Use append_to_response to get multiple data in one request
     data = await tmdb_api_request(
@@ -154,7 +151,7 @@ async def fetch_movie_details(movie_id: int) -> Optional[Dict]:
     return data
 
 
-async def fetch_series_details(series_id: int) -> Optional[Dict]:
+async def fetch_series_details(series_id: int) -> dict | None:
     """Fetch detailed TV series info including credits, similar, and keywords."""
     # Use append_to_response to get multiple data in one request
     data = await tmdb_api_request(
@@ -163,11 +160,8 @@ async def fetch_series_details(series_id: int) -> Optional[Dict]:
     return data
 
 
-async def fetch_season_details(
-    series_id: int, season_number: int
-) -> Optional[SeasonInfo]:
-    """
-    Fetch detailed season info including all episodes.
+async def fetch_season_details(series_id: int, season_number: int) -> SeasonInfo | None:
+    """Fetch detailed season info including all episodes.
 
     Returns season metadata with episode list including:
     - Episode names, overviews, air dates
@@ -231,8 +225,7 @@ def _map_person_gender(value: object) -> str | None:
 
 
 def _generate_title_variants(words: list[str], min_words: int = 2) -> list[str]:
-    """
-    Generate title variants by progressively removing words from both ends.
+    """Generate title variants by progressively removing words from both ends.
 
     Order: full title, then shorter from end, then shorter from start.
     """
@@ -272,8 +265,7 @@ def _normalize_for_match(text: str) -> set[str]:
 
 
 def _titles_match(original_title: str, tmdb_title: str, search_query: str) -> bool:
-    """
-    Check if TMDb result title reasonably matches our original title.
+    """Check if TMDb result title reasonably matches our original title.
 
     Uses word overlap to verify the result is relevant, preventing
     false matches from short queries like "The" or just a year.
@@ -325,11 +317,8 @@ def _titles_match(original_title: str, tmdb_title: str, search_query: str) -> bo
     )
 
 
-async def _search_movie_with_fallbacks(
-    title: str, year: Optional[int]
-) -> Optional[Dict]:
-    """
-    Search for a movie with progressive title shortening fallbacks.
+async def _search_movie_with_fallbacks(title: str, year: int | None) -> dict | None:
+    """Search for a movie with progressive title shortening fallbacks.
 
     PTN often includes edition names (THEATRICAL CUT, DIRECTOR'S CUT, etc.)
     or garbage at the beginning/end of the title.
@@ -340,7 +329,7 @@ async def _search_movie_with_fallbacks(
     variants = _generate_title_variants(words, min_words=2)
 
     def _result_matches(
-        top_result: Dict, original_title: str, search_query: str
+        top_result: dict, original_title: str, search_query: str
     ) -> bool:
         """Check if result matches against either title or original_title."""
         tmdb_title = top_result.get("title", "")
@@ -376,7 +365,7 @@ async def _search_movie_with_fallbacks(
     return None
 
 
-async def fetch_movie_info(title: str, year: Optional[int] = None) -> Optional[Info]:
+async def fetch_movie_info(title: str, year: int | None = None) -> Info | None:
     """Fetch comprehensive movie info from TMDb."""
     data = await _search_movie_with_fallbacks(title, year)
 
@@ -456,23 +445,22 @@ async def fetch_movie_info(title: str, year: Optional[int] = None) -> Optional[I
         rating=details.get("vote_average"),
         vote_count=details.get("vote_count"),
         overview=details.get("overview"),
-        genres=genres if genres else None,
+        genres=genres or None,
         release_date=details.get("release_date"),
         runtime=details.get("runtime"),
         status=details.get("status"),
         tagline=details.get("tagline"),
         poster_path=details.get("poster_path"),
         backdrop_path=details.get("backdrop_path"),
-        similar=similar if similar else None,
-        keywords=keywords if keywords else None,
-        cast=cast if cast else None,
+        similar=similar or None,
+        keywords=keywords or None,
+        cast=cast or None,
         director=director,
     )
 
 
-async def _search_series_with_fallbacks(title: str) -> Optional[Dict]:
-    """
-    Search for a TV series with progressive title shortening fallbacks.
+async def _search_series_with_fallbacks(title: str) -> dict | None:
+    """Search for a TV series with progressive title shortening fallbacks.
 
     PTN often includes extra text in the title at beginning or end.
     Results are validated with fuzzy matching to prevent false positives.
@@ -493,7 +481,7 @@ async def _search_series_with_fallbacks(title: str) -> Optional[Dict]:
     return None
 
 
-async def fetch_series_info(title: str) -> Optional[Info]:
+async def fetch_series_info(title: str) -> Info | None:
     """Fetch comprehensive TV series info from TMDb."""
     data = await _search_series_with_fallbacks(title)
 
@@ -561,17 +549,17 @@ async def fetch_series_info(title: str) -> Optional[Info]:
         rating=details.get("vote_average"),
         vote_count=details.get("vote_count"),
         overview=details.get("overview"),
-        genres=genres if genres else None,
+        genres=genres or None,
         release_date=first_air_date,
         status=details.get("status"),
         tagline=details.get("tagline"),
         poster_path=details.get("poster_path"),
         backdrop_path=details.get("backdrop_path"),
-        similar=similar if similar else None,
-        keywords=keywords if keywords else None,
-        cast=cast if cast else None,
-        creators=creators if creators else None,
+        similar=similar or None,
+        keywords=keywords or None,
+        cast=cast or None,
+        creators=creators or None,
         number_of_seasons=details.get("number_of_seasons"),
         number_of_episodes=details.get("number_of_episodes"),
-        networks=networks if networks else None,
+        networks=networks or None,
     )

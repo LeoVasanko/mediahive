@@ -1,5 +1,4 @@
-"""
-TMDb data structures.
+"""TMDb data structures.
 
 All types are msgspec.Structs for fast serialization.
 """
@@ -7,7 +6,6 @@ All types are msgspec.Structs for fast serialization.
 from __future__ import annotations
 
 import msgspec
-
 
 # ---------------------------------------------------------------------------
 # Sub-types (shared by TMDb results and index items)

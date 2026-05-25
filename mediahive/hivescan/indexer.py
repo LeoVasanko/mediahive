@@ -3,8 +3,8 @@
 import asyncio
 import hashlib
 import logging
+from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import AsyncIterator, Dict, List, Optional, Tuple
 
 from mediahive.hivescan.images import (
     download_backdrop_image,
@@ -52,7 +52,7 @@ logger = logging.getLogger("hivescan.indexer")
 
 
 async def _build_torrent_info(
-    item: ParsedContent, media_root: Optional[str] = None
+    item: ParsedContent, media_root: str | None = None
 ) -> Torrent:
     """Build torrent info for a single torrent."""
     playable_file = await find_playable_file(item.path)
@@ -86,10 +86,10 @@ async def _build_torrent_info(
 
 
 async def _cache_cast_profiles(
-    info: Optional[Info],
+    info: Info | None,
     media_folder: Path,
-    media_root: Optional[str] = None,
-) -> Optional[Info]:
+    media_root: str | None = None,
+) -> Info | None:
     """Replace TMDb cast profile paths with cached local image paths."""
     if not info or not info.cast:
         return info
@@ -121,15 +121,14 @@ async def _cache_cast_profiles(
 
 
 async def _collect_episode_files(
-    items: List[ParsedContent],
-) -> Dict[Tuple[int, int], List[Dict]]:
-    """
-    Collect all episode files from a list of torrent items.
+    items: list[ParsedContent],
+) -> dict[tuple[int, int], list[dict]]:
+    """Collect all episode files from a list of torrent items.
 
     Returns dict mapping (season, episode) to list of file info dicts.
     """
-    all_episode_files: Dict[Tuple[int, int], List[Dict]] = {}
-    probe_cache: Dict[str, object] = {}
+    all_episode_files: dict[tuple[int, int], list[dict]] = {}
+    probe_cache: dict[str, object] = {}
 
     async def get_probe(path: str):
         cached = probe_cache.get(path)
@@ -148,26 +147,24 @@ async def _collect_episode_files(
                 all_episode_files[key] = []
             for file_path, file_size in files:
                 probe = await get_probe(file_path)
-                all_episode_files[key].append(
-                    {
-                        "path": file_path,
-                        "size": file_size,
-                        "probed_resolution": probe.resolution,
-                        "audio_languages": probe.audio_languages,
-                        "subtitle_languages": probe.subtitle_languages,
-                        "is_hdr": probe.is_hdr,
-                        "has_dolby_vision": probe.has_dolby_vision,
-                        "has_dolby_atmos": probe.has_dolby_atmos,
-                        "resolution": item.resolution,
-                        "quality": item.quality,
-                        "network": item.network,
-                        "codec": item.codec,
-                        "audio": item.audio,
-                        "encoder": item.encoder,
-                        "torrent_path": item.path.as_posix(),
-                        "torrent_title": item.title,
-                    }
-                )
+                all_episode_files[key].append({
+                    "path": file_path,
+                    "size": file_size,
+                    "probed_resolution": probe.resolution,
+                    "audio_languages": probe.audio_languages,
+                    "subtitle_languages": probe.subtitle_languages,
+                    "is_hdr": probe.is_hdr,
+                    "has_dolby_vision": probe.has_dolby_vision,
+                    "has_dolby_atmos": probe.has_dolby_atmos,
+                    "resolution": item.resolution,
+                    "quality": item.quality,
+                    "network": item.network,
+                    "codec": item.codec,
+                    "audio": item.audio,
+                    "encoder": item.encoder,
+                    "torrent_path": item.path.as_posix(),
+                    "torrent_title": item.title,
+                })
 
         # Handle individual episodes from PTN parsing
         if item.episode is not None and item.season is not None:
@@ -196,40 +193,38 @@ async def _collect_episode_files(
                                     item.content_hash.path
                                 )
                             size = item.content_hash.size if item.content_hash else 0
-                            all_episode_files[key].append(
-                                {
-                                    "path": playable,
-                                    "size": size,
-                                    "probed_resolution": probe.resolution,
-                                    "audio_languages": probe.audio_languages,
-                                    "subtitle_languages": probe.subtitle_languages,
-                                    "is_hdr": probe.is_hdr,
-                                    "has_dolby_vision": probe.has_dolby_vision,
-                                    "has_dolby_atmos": probe.has_dolby_atmos,
-                                    "resolution": item.resolution,
-                                    "quality": item.quality,
-                                    "network": item.network,
-                                    "codec": item.codec,
-                                    "audio": item.audio,
-                                    "encoder": item.encoder,
-                                    "torrent_path": item.path.as_posix(),
-                                    "torrent_title": item.title,
-                                }
-                            )
+                            all_episode_files[key].append({
+                                "path": playable,
+                                "size": size,
+                                "probed_resolution": probe.resolution,
+                                "audio_languages": probe.audio_languages,
+                                "subtitle_languages": probe.subtitle_languages,
+                                "is_hdr": probe.is_hdr,
+                                "has_dolby_vision": probe.has_dolby_vision,
+                                "has_dolby_atmos": probe.has_dolby_atmos,
+                                "resolution": item.resolution,
+                                "quality": item.quality,
+                                "network": item.network,
+                                "codec": item.codec,
+                                "audio": item.audio,
+                                "encoder": item.encoder,
+                                "torrent_path": item.path.as_posix(),
+                                "torrent_title": item.title,
+                            })
 
     return all_episode_files
 
 
 def _build_episodes_data(
-    episodes_in_season: Dict[int, List[Dict]],
-    tmdb_episodes: Dict[int, EpisodeInfo],
+    episodes_in_season: dict[int, list[dict]],
+    tmdb_episodes: dict[int, EpisodeInfo],
     series_folder: Path,
     season_num: int,
     generate_showreels: bool,
-    episode_reel_tasks: List,
+    episode_reel_tasks: list,
     series_title: str,
-    media_root: Optional[str] = None,
-) -> List[Episode]:
+    media_root: str | None = None,
+) -> list[Episode]:
     """Build episode data list for a season."""
     episodes_data = []
 
@@ -256,9 +251,13 @@ def _build_episodes_data(
                     episode_num,
                     media_root=Path(media_root) if media_root else None,
                 )
-                episode_reel_tasks.append(
-                    (best_file, series_folder, season_num, episode_num, series_title)
-                )
+                episode_reel_tasks.append((
+                    best_file,
+                    series_folder,
+                    season_num,
+                    episode_num,
+                    series_title,
+                ))
 
         torrents = {}
         for f in episode_files:
@@ -290,7 +289,7 @@ def _build_episodes_data(
             rating=tmdb_ep.vote_average if tmdb_ep else None,
             director=tmdb_ep.director if tmdb_ep else None,
             reel_image=reel_path,
-            reel_sources=reel_sources if reel_sources else None,
+            reel_sources=reel_sources or None,
             torrents=torrents,
         )
         episodes_data.append(episode_data)
@@ -299,19 +298,19 @@ def _build_episodes_data(
 
 
 async def _build_seasons_data(
-    all_episode_files: Dict[Tuple[int, int], List[Dict]],
-    tmdb_id: Optional[int],
+    all_episode_files: dict[tuple[int, int], list[dict]],
+    tmdb_id: int | None,
     series_folder: Path,
     display_title: str,
     fetch_covers: bool,
     generate_showreels: bool,
-    season_cache: Dict,
-    episode_reel_tasks: List,
-    media_root: Optional[str] = None,
-) -> List[Season]:
+    season_cache: dict,
+    episode_reel_tasks: list,
+    media_root: str | None = None,
+) -> list[Season]:
     """Build seasons data structure for a series."""
     # Group episodes by season
-    seasons_map: Dict[int, Dict[int, List[Dict]]] = {}
+    seasons_map: dict[int, dict[int, list[dict]]] = {}
     for (season_num, episode_num), files in all_episode_files.items():
         if season_num not in seasons_map:
             seasons_map[season_num] = {}
@@ -323,7 +322,7 @@ async def _build_seasons_data(
 
         # Fetch TMDb season details if we have a TMDb ID
         tmdb_season = None
-        tmdb_episodes: Dict[int, EpisodeInfo] = {}
+        tmdb_episodes: dict[int, EpisodeInfo] = {}
 
         if tmdb_id:
             cache_key = (tmdb_id, season_num)
@@ -379,18 +378,17 @@ async def _process_movies(
     cover_dir: Path,
     fetch_covers: bool,
     generate_showreels: bool,
-    media_root: Optional[str] = None,
-    root_id: Optional[str] = None,
-) -> AsyncIterator[Tuple[Movie, Optional[Tuple[str, Path, str]]]]:
-    """
-    Async generator that processes all movies.
+    media_root: str | None = None,
+    root_id: str | None = None,
+) -> AsyncIterator[tuple[Movie, tuple[str, Path, str] | None]]:
+    """Async generator that processes all movies.
 
     Yields (Movie, showreel_task_or_None) for each movie as it is processed.
     """
     # In-memory cache for TMDb lookups
-    movie_tmdb_cache: Dict[str, Optional[Info]] = {}
+    movie_tmdb_cache: dict[str, Info | None] = {}
 
-    async def get_movie_tmdb(title: str, year: Optional[int]) -> Optional[Info]:
+    async def get_movie_tmdb(title: str, year: int | None) -> Info | None:
         cache_key = f"{title.lower()}:{year}"
         if cache_key in movie_tmdb_cache:
             return movie_tmdb_cache[cache_key]
@@ -413,7 +411,7 @@ async def _process_movies(
         )
 
     # Group by title+year
-    movie_groups: Dict[str, List[ParsedContent]] = {}
+    movie_groups: dict[str, list[ParsedContent]] = {}
     for item in valid_movies:
         key = f"{item.title.lower()}:{item.year or 0}"
         if key not in movie_groups:
@@ -421,8 +419,8 @@ async def _process_movies(
         movie_groups[key].append(item)
 
     # Re-group by TMDb ID
-    tmdb_movie_groups: Dict[int, Dict] = {}
-    no_tmdb_movie_groups: Dict[str, Dict] = {}
+    tmdb_movie_groups: dict[int, dict] = {}
+    no_tmdb_movie_groups: dict[str, dict] = {}
 
     if movie_groups:
         logger.info(
@@ -550,8 +548,8 @@ async def _process_movies(
             newest=newest,
             cover_path=make_relative_path(cover_path, media_root),
             backdrop_path=make_relative_path(backdrop_path, media_root),
-            showreel_images=showreel_paths if showreel_paths else None,
-            showreel_source_sets=showreel_source_sets if showreel_source_sets else None,
+            showreel_images=showreel_paths or None,
+            showreel_source_sets=showreel_source_sets or None,
             torrents=torrents,
             root_id=root_id,
         )
@@ -593,9 +591,10 @@ async def _process_movies(
                 ),
             )
             best_version = torrents[best_relpath]
-            if best_version.playable_file and not best_version.playable_file.endswith(
-                (".bdmv", ".ifo")
-            ):
+            if best_version.playable_file and not best_version.playable_file.endswith((
+                ".bdmv",
+                ".ifo",
+            )):
                 abs_playable = (
                     (Path(media_root) / best_version.playable_file).as_posix()
                     if media_root
@@ -621,8 +620,8 @@ async def _process_movies(
             year=year,
             newest=newest,
             cover_path=make_relative_path(cover_path, media_root),
-            showreel_images=showreel_paths if showreel_paths else None,
-            showreel_source_sets=showreel_source_sets if showreel_source_sets else None,
+            showreel_images=showreel_paths or None,
+            showreel_source_sets=showreel_source_sets or None,
             torrents=torrents,
             root_id=root_id,
         )
@@ -634,19 +633,18 @@ async def _process_series(
     cover_dir: Path,
     fetch_covers: bool,
     generate_showreels: bool,
-    media_root: Optional[str] = None,
-    root_id: Optional[str] = None,
-) -> AsyncIterator[Tuple[Series, List[Tuple[str, Path, int, int, str]]]]:
-    """
-    Async generator that processes all series.
+    media_root: str | None = None,
+    root_id: str | None = None,
+) -> AsyncIterator[tuple[Series, list[tuple[str, Path, int, int, str]]]]:
+    """Async generator that processes all series.
 
     Yields (Series, episode_reel_tasks) for each series as it is processed.
     """
     # In-memory cache for TMDb lookups
-    series_tmdb_cache: Dict[str, Optional[Info]] = {}
-    season_cache: Dict[Tuple[int, int], Optional[SeasonInfo]] = {}
+    series_tmdb_cache: dict[str, Info | None] = {}
+    season_cache: dict[tuple[int, int], SeasonInfo | None] = {}
 
-    async def get_series_tmdb(title: str) -> Optional[Info]:
+    async def get_series_tmdb(title: str) -> Info | None:
         cache_key = title.lower()
         if cache_key in series_tmdb_cache:
             return series_tmdb_cache[cache_key]
@@ -671,7 +669,7 @@ async def _process_series(
         )
 
     # Group by title
-    series_groups: Dict[str, List[ParsedContent]] = {}
+    series_groups: dict[str, list[ParsedContent]] = {}
     for item in valid_series:
         key = item.title.lower()
         if key not in series_groups:
@@ -679,8 +677,8 @@ async def _process_series(
         series_groups[key].append(item)
 
     # Re-group by TMDb ID
-    tmdb_groups: Dict[int, Dict] = {}
-    no_tmdb_groups: Dict[str, Dict] = {}
+    tmdb_groups: dict[int, dict] = {}
+    no_tmdb_groups: dict[str, dict] = {}
 
     if series_groups:
         logger.info(
@@ -753,7 +751,7 @@ async def _process_series(
 
         # Collect and build episode data
         all_episode_files = await _collect_episode_files(items)
-        ep_reel_tasks: List[Tuple[str, Path, int, int, str]] = []
+        ep_reel_tasks: list[tuple[str, Path, int, int, str]] = []
         seasons_data = await _build_seasons_data(
             all_episode_files,
             tmdb_id,
@@ -781,7 +779,7 @@ async def _process_series(
             id=series_id,
             title=display_title,
             info=tmdb_info,
-            alternative_titles=different_titles if different_titles else None,
+            alternative_titles=different_titles or None,
             newest=newest,
             cover_path=make_relative_path(cover_path, media_root),
             backdrop_path=make_relative_path(backdrop_path, media_root),
@@ -805,7 +803,7 @@ async def _process_series(
         series_folder = get_media_folder_path(title, None, "series", cover_dir)
 
         all_episode_files = await _collect_episode_files(items)
-        ep_reel_tasks: List[Tuple[str, Path, int, int, str]] = []
+        ep_reel_tasks: list[tuple[str, Path, int, int, str]] = []
         seasons_data = await _build_seasons_data(
             all_episode_files,
             None,

@@ -11,7 +11,6 @@ from fastapi.responses import Response
 from .data import Movie, Series
 from .events import Remove, ScanEvent, Task, Upsert
 
-
 # ---------------------------------------------------------------------------
 # WebSocket message types
 # ---------------------------------------------------------------------------

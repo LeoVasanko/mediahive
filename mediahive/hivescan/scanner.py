@@ -1,5 +1,4 @@
-"""
-Scan orchestration — background tasks for continuous media scanning.
+"""Scan orchestration — background tasks for continuous media scanning.
 
 All scanning logic lives here in hivescan.  Communication with the mediahive
 server happens exclusively through an async ``send`` callable that pushes
@@ -14,10 +13,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import uuid
+from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Awaitable, Callable, List, Optional
 
 from aiopathlib import AsyncPath
 
@@ -69,10 +67,10 @@ class RootScanner:
         self._scanignore = ScanIgnore(media_root)
 
         # Runtime state
-        self._scan_task: Optional[asyncio.Task] = None
+        self._scan_task: asyncio.Task | None = None
         self._showreel_queue: asyncio.Queue = asyncio.Queue()
-        self._showreel_worker_task: Optional[asyncio.Task] = None
-        self._rescan_worker_task: Optional[asyncio.Task] = None
+        self._showreel_worker_task: asyncio.Task | None = None
+        self._rescan_worker_task: asyncio.Task | None = None
         self._seen_mtimes: dict[str, int] = {}
 
     # ------------------------------------------------------------------
@@ -96,15 +94,23 @@ class RootScanner:
 
     async def stop(self) -> None:
         """Cancel all background tasks."""
-        for task in (self._scan_task, self._showreel_worker_task, self._rescan_worker_task):
+        for task in (
+            self._scan_task,
+            self._showreel_worker_task,
+            self._rescan_worker_task,
+        ):
             if task and not task.done():
                 task.cancel()
         # Wait briefly for graceful shutdown
-        for task in (self._scan_task, self._showreel_worker_task, self._rescan_worker_task):
+        for task in (
+            self._scan_task,
+            self._showreel_worker_task,
+            self._rescan_worker_task,
+        ):
             if task and not task.done():
                 try:
                     await asyncio.wait_for(task, timeout=2.0)
-                except (asyncio.TimeoutError, asyncio.CancelledError):
+                except TimeoutError, asyncio.CancelledError:
                     pass
 
     def is_scanning(self) -> bool:
@@ -139,9 +145,9 @@ class RootScanner:
         except Exception:
             logger.exception("Rescan loop error")
 
-    async def _discover_downloads(self, task_id: str) -> List[ParsedContent]:
+    async def _discover_downloads(self, task_id: str) -> list[ParsedContent]:
         """Recursively walk the media root, respecting scanignore rules."""
-        downloads: List[ParsedContent] = []
+        downloads: list[ParsedContent] = []
         media_root_str = self.media_root.as_posix()
         dirs_visited = 0
 
@@ -196,7 +202,7 @@ class RootScanner:
                         child_dirs.append(item)
                     else:
                         child_files.append(item)
-            except (OSError, PermissionError):
+            except OSError, PermissionError:
                 logger.debug("Cannot list directory: %s", directory)
                 return
 
@@ -207,14 +213,19 @@ class RootScanner:
                     mtime = int(stat_info.st_mtime)
                 except OSError:
                     return
-                if relpath not in self._seen_mtimes or self._seen_mtimes[relpath] != mtime:
+                if (
+                    relpath not in self._seen_mtimes
+                    or self._seen_mtimes[relpath] != mtime
+                ):
                     self._seen_mtimes[relpath] = mtime
                     downloads.append(await parse_download(directory))
                 return
 
             if child_dirs:
                 dirs_visited += 1
-                rel = make_relative_path(str(directory), media_root_str) or str(directory)
+                rel = make_relative_path(str(directory), media_root_str) or str(
+                    directory
+                )
                 if dirs_visited % 5 == 1:
                     await _report(f"Scanning: {rel} ({len(downloads)} found)")
                     logger.info("Scanning: %s (%d found so far)", rel, len(downloads))
@@ -229,7 +240,10 @@ class RootScanner:
                             mtime = int(stat_info.st_mtime)
                         except OSError:
                             continue
-                        if relpath in self._seen_mtimes and self._seen_mtimes[relpath] == mtime:
+                        if (
+                            relpath in self._seen_mtimes
+                            and self._seen_mtimes[relpath] == mtime
+                        ):
                             continue
                         self._seen_mtimes[relpath] = mtime
                         downloads.append(await parse_download(child_file))
@@ -251,7 +265,7 @@ class RootScanner:
         root_ap = AsyncPath(self.media_root)
         try:
             root_children = await asyncio.to_thread(lambda: list(root_ap.iterdir()))
-        except (OSError, PermissionError):
+        except OSError, PermissionError:
             logger.error("Cannot list media root: %s", self.media_root)
             return downloads
 
@@ -284,12 +298,11 @@ class RootScanner:
         return downloads
 
     async def _run_scan(self) -> None:
-        """
-        Full scan pipeline:
-          1. Discover downloads
-          2. Categorise → movies / series
-          3. Iterate async generators, send each item as Upsert
-          4. Queue showreel tasks
+        """Full scan pipeline:
+        1. Discover downloads
+        2. Categorise → movies / series
+        3. Iterate async generators, send each item as Upsert
+        4. Queue showreel tasks
         """
         task_id = f"scan-{uuid.uuid4().hex[:8]}"
         media_root_str = self.media_root.as_posix()
@@ -538,8 +551,8 @@ class RootScanner:
                             media_folder, media_root=media_root_path
                         )
                         paths = [sources[0] for sources in source_sets if sources]
-                        movie.showreel_images = paths if paths else None
-                        movie.showreel_source_sets = source_sets if source_sets else None
+                        movie.showreel_images = paths or None
+                        movie.showreel_source_sets = source_sets or None
                         await self._send(Upsert(kind="movie", item=movie))
                         await self._send(
                             Task(
@@ -552,7 +565,9 @@ class RootScanner:
                             )
                         )
                     else:
-                        logger.warning("Showreel generation returned nothing: %s", title)
+                        logger.warning(
+                            "Showreel generation returned nothing: %s", title
+                        )
                         await self._send(
                             Task(
                                 data=TaskInfo(
@@ -620,9 +635,7 @@ class RootScanner:
                                                 media_root_str,
                                             )
                                         )
-                                        episode.reel_sources = (
-                                            reel_sources if reel_sources else None
-                                        )
+                                        episode.reel_sources = reel_sources or None
                         await self._send(Upsert(kind="series", item=series))
                         await self._send(
                             Task(
@@ -658,13 +671,13 @@ class RootScanner:
                 return
             except Exception:
                 logger.exception(
-                    "Showreel worker error (queue size=%d)", self._showreel_queue.qsize()
+                    "Showreel worker error (queue size=%d)",
+                    self._showreel_queue.qsize(),
                 )
                 try:
                     self._showreel_queue.task_done()
                 except ValueError:
                     pass
-
 
 
 # ---------------------------------------------------------------------------

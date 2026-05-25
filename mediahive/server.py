@@ -1,5 +1,4 @@
-"""
-FastAPI server for MediaHive.
+"""FastAPI server for MediaHive.
 
 Serves media files, the Vue frontend, and runs the continuous scanning
 pipeline with live WebSocket updates.  Excluded paths are controlled by
@@ -17,7 +16,6 @@ import os
 import re
 import subprocess
 import sys
-import tempfile
 import urllib.error
 import urllib.request
 from contextlib import asynccontextmanager
@@ -39,7 +37,7 @@ from mediahive.models.protocol import (
     PlayMediaRequest,
     RootsRequest,
 )
-from mediahive.root_registry import Supervisor, compute_root_id
+from mediahive.root_registry import Supervisor
 
 logger = logging.getLogger("mediahive.server")
 
@@ -339,7 +337,10 @@ async def _activate_all_roots() -> None:
         return
 
     await _attach_scanners()
-    logger.info("Background root activation complete; %d root(s) active", len(supervisor.all_contexts()))
+    logger.info(
+        "Background root activation complete; %d root(s) active",
+        len(supervisor.all_contexts()),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -518,9 +519,7 @@ async def open_folder(root_id: str, request: Request):
             if target_path.is_file():
                 if not _select_file_in_windows_explorer(target_path):
                     select_arg = f'/n,/select,"{native_path}"'
-                    subprocess.Popen(
-                        ["explorer.exe", select_arg], **_POPEN_KWARGS
-                    )
+                    subprocess.Popen(["explorer.exe", select_arg], **_POPEN_KWARGS)
             else:
                 subprocess.Popen(["explorer.exe", native_path], **_POPEN_KWARGS)
         elif sys.platform == "darwin":
@@ -569,7 +568,7 @@ def _mpcbe_request(path: str, timeout: float = 0.75) -> bool:
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return 200 <= resp.status < 300
-    except (urllib.error.URLError, TimeoutError, OSError):
+    except urllib.error.URLError, TimeoutError, OSError:
         return False
 
 

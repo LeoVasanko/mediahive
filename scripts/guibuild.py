@@ -73,7 +73,7 @@ def fetch_ffmpeg() -> Path:
         ffmpeg_entry = next(
             name for name in zf.namelist() if name.endswith("/bin/ffmpeg.exe")
         )
-        with zf.open(ffmpeg_entry) as src, open(dest, "wb") as out:
+        with zf.open(ffmpeg_entry) as src, Path(dest).open("wb") as out:
             out.write(src.read())
 
     print(f"ffmpeg staged at {dest} ({dest.stat().st_size // 1024 // 1024} MB)")
@@ -108,7 +108,7 @@ def fetch_macos_arm64_binaries() -> dict[str, Path]:
                 for name in zf.namelist()
                 if Path(name).name == tool_name and not name.endswith("/")
             )
-            with zf.open(entry_name) as src, open(dest, "wb") as out:
+            with zf.open(entry_name) as src, Path(dest).open("wb") as out:
                 out.write(src.read())
 
         dest.chmod(dest.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)

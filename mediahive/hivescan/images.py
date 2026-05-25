@@ -1,13 +1,11 @@
 """TMDb image downloading functions."""
 
-import httpx
 from pathlib import Path
-from typing import Optional
 
+import httpx
 from aiopathlib import AsyncPath
 
 from mediahive.hivescan.utils import get_media_folder_path, sanitize_filename
-
 
 # TMDb image configuration
 TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p"
@@ -16,7 +14,7 @@ DEFAULT_BACKDROP_SIZE = "w1280"
 DEFAULT_PROFILE_SIZE = "w185"
 
 # Shared async HTTP client (created lazily)
-_image_client: Optional[httpx.AsyncClient] = None
+_image_client: httpx.AsyncClient | None = None
 
 
 def _get_image_client() -> httpx.AsyncClient:
@@ -31,9 +29,7 @@ def _get_image_client() -> httpx.AsyncClient:
     return _image_client
 
 
-async def _download_image(
-    url: str, output_path: Path, description: str
-) -> Optional[str]:
+async def _download_image(url: str, output_path: Path, description: str) -> str | None:
     """Download an image from URL to output path."""
     ap = AsyncPath(output_path)
     if await ap.exists():
@@ -54,11 +50,11 @@ async def _download_image(
 async def download_cover_image(
     poster_path: str,
     title: str,
-    year: Optional[int],
+    year: int | None,
     media_type: str,
     cover_dir: Path,
     size: str = DEFAULT_POSTER_SIZE,
-) -> Optional[str]:
+) -> str | None:
     """Download a cover image from TMDb."""
     if not poster_path:
         return None
@@ -77,11 +73,11 @@ async def download_cover_image(
 async def download_backdrop_image(
     backdrop_path: str,
     title: str,
-    year: Optional[int],
+    year: int | None,
     media_type: str,
     cover_dir: Path,
     size: str = DEFAULT_BACKDROP_SIZE,
-) -> Optional[str]:
+) -> str | None:
     """Download a backdrop image from TMDb."""
     if not backdrop_path:
         return None
@@ -101,7 +97,7 @@ async def download_season_poster(
     poster_path: str,
     media_folder: Path,
     season_num: int,
-) -> Optional[str]:
+) -> str | None:
     """Download a season poster image from TMDb."""
     if not poster_path:
         return None
@@ -122,7 +118,7 @@ async def download_cast_profile(
     cast_name: str,
     cast_index: int,
     size: str = DEFAULT_PROFILE_SIZE,
-) -> Optional[str]:
+) -> str | None:
     """Download a cached cast profile image from TMDb."""
     if not profile_path:
         return None

@@ -9,9 +9,8 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from fastapi_vue.hostutil import parse_endpoint
-
 from buildutil import find_dev_tool, find_install_tool, logger
+from fastapi_vue.hostutil import parse_endpoint
 
 
 class ProcessGroup:
@@ -33,7 +32,7 @@ class ProcessGroup:
         return proc
 
     async def wait(
-        self, *waitables: "asyncio.subprocess.Process | Coroutine[Any, Any, Any]"
+        self, *waitables: asyncio.subprocess.Process | Coroutine[Any, Any, Any]
     ) -> None:
         """Wait for processes/coroutines to complete, raise SystemExit on failure."""
 
@@ -175,7 +174,7 @@ def setup_fastapi(
 
     host = endpoints[0]["host"]
     port = endpoints[0]["port"]
-    reload_dir = module.split(".")[0]  # Don't reload on frontend changes
+    reload_dir = module.split(".", maxsplit=1)[0]  # Don't reload on frontend changes
 
     cmd = [
         sys.executable,

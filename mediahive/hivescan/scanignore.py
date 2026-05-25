@@ -1,5 +1,4 @@
-"""
-Gitignore-style path matcher for controlling which directories the scanner visits.
+"""Gitignore-style path matcher for controlling which directories the scanner visits.
 
 Reads patterns from ``<media_root>/.mediahive/scanignore``.  The file uses the
 same syntax as ``.gitignore``:
@@ -30,8 +29,6 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import List, Tuple
-
 
 # Built-in patterns that are always excluded (before user file)
 _BUILTIN_EXCLUDES: list[str] = [
@@ -75,13 +72,11 @@ def _pattern_to_regex(pattern: str) -> re.Pattern[str]:
                     parts.append("(?:.+/)?")
                     i += 3
                     continue
-                else:
-                    parts.append(".*")
-                    i += 2
-                    continue
-            else:
-                parts.append("[^/]*")
-                i += 1
+                parts.append(".*")
+                i += 2
+                continue
+            parts.append("[^/]*")
+            i += 1
         elif c == "?":
             parts.append("[^/]")
             i += 1
@@ -112,7 +107,7 @@ class ScanIgnore:
 
     def __init__(self, media_root: Path) -> None:
         self.media_root = media_root.resolve()
-        self._rules: List[Tuple[bool, re.Pattern[str]]] = []  # (negated, regex)
+        self._rules: list[tuple[bool, re.Pattern[str]]] = []  # (negated, regex)
         self._load_builtins()
         self._load_file()
 

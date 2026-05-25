@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
-"""
-Torrent Scanner - Scans for .torrent files and analyzes their trackers.
-"""
+"""Torrent Scanner - Scans for .torrent files and analyzes their trackers."""
 
 import argparse
 import glob
 import hashlib
 import shutil
-from pathlib import Path
+from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Iterator
+from pathlib import Path
 
 import bencodepy
+
 from rtorrent_client import RTorrentClient
 
 
@@ -40,8 +39,7 @@ class TorrentInfo:
         return self.path.parent.parent
 
     def get_expected_data_path(self) -> Path:
-        """
-        Get the expected path where downloaded data should exist.
+        """Get the expected path where downloaded data should exist.
 
         For multi-file torrents: download_dir/torrent_name/ (directory)
         For single-file torrents: download_dir/torrent_name (file)
@@ -49,11 +47,11 @@ class TorrentInfo:
         return self.get_download_directory() / self.name
 
     def verify_download_exists(self) -> tuple[bool, str]:
-        """
-        Verify that the downloaded data exists on disk.
+        """Verify that the downloaded data exists on disk.
 
         Returns:
             Tuple of (exists: bool, message: str)
+
         """
         expected_path = self.get_expected_data_path()
 
@@ -69,27 +67,26 @@ class TorrentInfo:
             if file_count == 0:
                 return False, f"Directory exists but is empty: {expected_path}"
             return True, f"Directory exists with {file_count} files"
-        else:
-            # Single-file torrent: expect a file
-            if not expected_path.exists():
-                return False, f"File not found: {expected_path}"
-            if expected_path.is_dir():
-                return False, f"Expected file but found directory: {expected_path}"
-            return True, f"File exists: {expected_path}"
+        # Single-file torrent: expect a file
+        if not expected_path.exists():
+            return False, f"File not found: {expected_path}"
+        if expected_path.is_dir():
+            return False, f"Expected file but found directory: {expected_path}"
+        return True, f"File exists: {expected_path}"
 
 
 def parse_torrent(filepath: Path) -> TorrentInfo | None:
-    """
-    Parse a .torrent file and extract relevant information.
+    """Parse a .torrent file and extract relevant information.
 
     Args:
         filepath: Path to the .torrent file
 
     Returns:
         TorrentInfo object or None if parsing fails
+
     """
     try:
-        with open(filepath, "rb") as f:
+        with Path(filepath).open("rb") as f:
             data = bencodepy.decode(f.read())
     except Exception as e:
         print(f"Error parsing {filepath}: {e}")
@@ -154,14 +151,14 @@ def parse_torrent(filepath: Path) -> TorrentInfo | None:
 
 
 def scan_torrent_directories(paths: list[str]) -> Iterator[Path]:
-    """
-    Scan directories for .torrent files.
+    """Scan directories for .torrent files.
 
     Args:
         paths: List of directory paths or glob patterns to scan
 
     Yields:
         Path objects for each .torrent file found
+
     """
     for pattern in paths:
         for dir_path in glob.glob(pattern):
@@ -174,8 +171,7 @@ def scan_torrent_directories(paths: list[str]) -> Iterator[Path]:
 def find_torrents_with_tracker(
     tracker_domain: str, paths: list[str]
 ) -> list[TorrentInfo]:
-    """
-    Find all torrents that have a specific tracker domain.
+    """Find all torrents that have a specific tracker domain.
 
     Args:
         tracker_domain: Domain to search for in tracker URLs (e.g., "hdbits.org")
@@ -183,6 +179,7 @@ def find_torrents_with_tracker(
 
     Returns:
         List of TorrentInfo objects for matching torrents
+
     """
     matching_torrents = []
 
@@ -373,39 +370,36 @@ Examples:
                     print(f"  {status} {download_path}")
                 else:
                     print(f"  {status} {torrent_info['name']} (no data path)")
-            else:
-                # Remove from rtorrent (keeps downloaded files)
-                if client.remove_torrent(torrent_info["hash"]):
-                    removed_from_rtorrent += 1
+            # Remove from rtorrent (keeps downloaded files)
+            elif client.remove_torrent(torrent_info["hash"]):
+                removed_from_rtorrent += 1
 
-                    # Delete the .torrent file if it exists
-                    tied_file = torrent_info["tied_file"]
-                    if tied_file:
-                        torrent_file = Path(tied_file)
-                        if torrent_file.exists():
-                            try:
-                                torrent_file.unlink()
-                                removed_torrent_files += 1
-                            except Exception:
-                                pass
-
-                    # Delete the downloaded files
-                    if download_path and download_path.exists():
+                # Delete the .torrent file if it exists
+                tied_file = torrent_info["tied_file"]
+                if tied_file:
+                    torrent_file = Path(tied_file)
+                    if torrent_file.exists():
                         try:
-                            if download_path.is_dir():
-                                shutil.rmtree(download_path)
-                            else:
-                                download_path.unlink()
-                            removed_downloads += 1
-                            print(f"  [DEL] {download_path}")
-                        except Exception as e:
-                            print(f"  [ERR] {download_path}: {e}")
-                    else:
-                        print(f"  [DEL] {torrent_info['name']} (no data)")
+                            torrent_file.unlink()
+                            removed_torrent_files += 1
+                        except Exception:
+                            pass
+
+                # Delete the downloaded files
+                if download_path and download_path.exists():
+                    try:
+                        if download_path.is_dir():
+                            shutil.rmtree(download_path)
+                        else:
+                            download_path.unlink()
+                        removed_downloads += 1
+                        print(f"  [DEL] {download_path}")
+                    except Exception as e:
+                        print(f"  [ERR] {download_path}: {e}")
                 else:
-                    print(
-                        f"  [ERR] {torrent_info['name']}: failed to remove from rtorrent"
-                    )
+                    print(f"  [DEL] {torrent_info['name']} (no data)")
+            else:
+                print(f"  [ERR] {torrent_info['name']}: failed to remove from rtorrent")
 
         print()
         if dry_run:
