@@ -17,7 +17,7 @@ def _configure_windows_event_loop_policy() -> None:
     asyncio.set_event_loop_policy(policy_cls())
 
 
-def main():
+def main() -> None:
     _configure_windows_event_loop_policy()
 
     parser = argparse.ArgumentParser(

@@ -2,6 +2,7 @@
 
 import asyncio
 import glob
+import operator
 from collections import defaultdict
 from pathlib import Path
 
@@ -216,7 +217,7 @@ async def find_playable_file(path: Path) -> str | None:
         _playable_file_cache[cache_key] = None
         return None
 
-    video_files.sort(key=lambda x: x[1], reverse=True)
+    video_files.sort(key=operator.itemgetter(1), reverse=True)
     result = video_files[0][0]
     _playable_file_cache[cache_key] = result
     return result
@@ -312,7 +313,7 @@ async def find_metadata_probe_file(playable_path: str | None) -> str | None:
         _bluray_probe_file_cache[cache_key] = None
         return None
 
-    candidates.sort(key=lambda x: x[1], reverse=True)
+    candidates.sort(key=operator.itemgetter(1), reverse=True)
     result = candidates[0][0]
     _bluray_probe_file_cache[cache_key] = result
     return result

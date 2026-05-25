@@ -85,14 +85,11 @@ async def _load_from_cache(cache_path: Path):
         return _NOT_FOUND
 
 
-async def _save_to_cache(cache_path: Path, data: dict | None):
+async def _save_to_cache(cache_path: Path, data: dict | None) -> None:
     """Save response to cache."""
     try:
         await AsyncPath(_get_cache_dir()).mkdir(parents=True, exist_ok=True)
-        if data is None:
-            text = json.dumps({"_cached_none": True})
-        else:
-            text = json.dumps(data)
+        text = json.dumps({"_cached_none": True}) if data is None else json.dumps(data)
         await AsyncPath(cache_path).write_text(text, encoding="utf-8")
     except Exception:
         pass  # Cache write failures are not critical
@@ -144,20 +141,18 @@ async def tmdb_api_request(
 async def fetch_movie_details(movie_id: int) -> dict | None:
     """Fetch detailed movie info including credits, similar, keywords, and alternative titles."""
     # Use append_to_response to get multiple data in one request
-    data = await tmdb_api_request(
+    return await tmdb_api_request(
         f"/movie/{movie_id}",
         {"append_to_response": "credits,similar,keywords,alternative_titles"},
     )
-    return data
 
 
 async def fetch_series_details(series_id: int) -> dict | None:
     """Fetch detailed TV series info including credits, similar, and keywords."""
     # Use append_to_response to get multiple data in one request
-    data = await tmdb_api_request(
+    return await tmdb_api_request(
         f"/tv/{series_id}", {"append_to_response": "credits,similar,keywords"}
     )
-    return data
 
 
 async def fetch_season_details(series_id: int, season_number: int) -> SeasonInfo | None:
@@ -238,12 +233,10 @@ def _generate_title_variants(words: list[str], min_words: int = 2) -> list[str]:
     variants.append(" ".join(words))
 
     # Then try removing from end (most common: edition names at end)
-    for num_words in range(len(words) - 1, min_words - 1, -1):
-        variants.append(" ".join(words[:num_words]))
+    variants.extend(" ".join(words[:num_words]) for num_words in range(len(words) - 1, min_words - 1, -1))
 
     # Then try removing from start (garbage at beginning)
-    for start in range(1, len(words) - min_words + 1):
-        variants.append(" ".join(words[start:]))
+    variants.extend(" ".join(words[start:]) for start in range(1, len(words) - min_words + 1))
 
     # Finally try middle portions (remove from both ends)
     for start in range(1, len(words) - min_words):

@@ -31,7 +31,7 @@ def _derive_name(path: str) -> str:
     return p.name or p.anchor.strip("/\\").lower() or "media"
 
 
-def main():
+def main() -> None:
     _configure_windows_event_loop_policy()
 
     parser = argparse.ArgumentParser(

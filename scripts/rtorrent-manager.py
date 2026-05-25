@@ -164,8 +164,7 @@ def scan_torrent_directories(paths: list[str]) -> Iterator[Path]:
         for dir_path in glob.glob(pattern):
             torrent_dir = Path(dir_path)
             if torrent_dir.is_dir():
-                for torrent_file in torrent_dir.glob("*.torrent"):
-                    yield torrent_file
+                yield from torrent_dir.glob("*.torrent")
 
 
 def find_torrents_with_tracker(
@@ -203,7 +202,7 @@ def format_size(size_bytes: int | None) -> str:
     return f"{size_bytes:.2f} PB"
 
 
-def main():
+def main() -> None:
     """Main entry point for the torrent scanner."""
     parser = argparse.ArgumentParser(
         description="Scan and manage torrent files",

@@ -9,7 +9,7 @@ from pathlib import Path
 class SCGITransport(xmlrpc.client.Transport):
     """SCGI transport for communicating with rtorrent via Unix socket."""
 
-    def __init__(self, socket_path: str):
+    def __init__(self, socket_path: str) -> None:
         super().__init__()
         self.socket_path = socket_path
 
@@ -48,7 +48,7 @@ class SCGITransport(xmlrpc.client.Transport):
 class RTorrentClient:
     """Client for communicating with rtorrent via XMLRPC over SCGI socket."""
 
-    def __init__(self, socket_path: str = "/home/user/rtorrent/.session/rpc.socket"):
+    def __init__(self, socket_path: str = "/home/user/rtorrent/.session/rpc.socket") -> None:
         self.socket_path = socket_path
         transport = SCGITransport(socket_path)
         self.proxy = xmlrpc.client.ServerProxy(
@@ -59,7 +59,7 @@ class RTorrentClient:
         """Get set of info hashes for all currently loaded torrents."""
         try:
             downloads = self.proxy.download_list("")
-            return set(h.upper() for h in downloads)
+            return {h.upper() for h in downloads}
         except Exception as e:
             print(f"Error getting loaded torrents: {e}")
             return set()

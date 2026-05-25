@@ -12,6 +12,7 @@ defined in ``.mediahive/scanignore`` (gitignore-style syntax).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import uuid
 from collections.abc import Awaitable, Callable
@@ -59,7 +60,7 @@ class RootScanner:
         root_id: str,
         media_root: Path,
         send: Send,
-    ):
+    ) -> None:
         self.root_id = root_id
         self.media_root = media_root
         self._send = send
@@ -108,10 +109,8 @@ class RootScanner:
             self._rescan_worker_task,
         ):
             if task and not task.done():
-                try:
+                with contextlib.suppress(TimeoutError, asyncio.CancelledError):
                     await asyncio.wait_for(task, timeout=2.0)
-                except TimeoutError, asyncio.CancelledError:
-                    pass
 
     def is_scanning(self) -> bool:
         return self._scan_task is not None and not self._scan_task.done()
@@ -266,7 +265,7 @@ class RootScanner:
         try:
             root_children = await asyncio.to_thread(lambda: list(root_ap.iterdir()))
         except OSError, PermissionError:
-            logger.error("Cannot list media root: %s", self.media_root)
+            logger.exception("Cannot list media root: %s", self.media_root)
             return downloads
 
         for item_async in root_children:
@@ -302,7 +301,7 @@ class RootScanner:
         1. Discover downloads
         2. Categorise → movies / series
         3. Iterate async generators, send each item as Upsert
-        4. Queue showreel tasks
+        4. Queue showreel tasks.
         """
         task_id = f"scan-{uuid.uuid4().hex[:8]}"
         media_root_str = self.media_root.as_posix()
@@ -674,10 +673,8 @@ class RootScanner:
                     "Showreel worker error (queue size=%d)",
                     self._showreel_queue.qsize(),
                 )
-                try:
+                with contextlib.suppress(ValueError):
                     self._showreel_queue.task_done()
-                except ValueError:
-                    pass
 
 
 # ---------------------------------------------------------------------------

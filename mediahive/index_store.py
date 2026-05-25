@@ -7,6 +7,7 @@ debounced background task.
 """
 
 import asyncio
+import contextlib
 import logging
 import os
 from datetime import datetime
@@ -51,7 +52,7 @@ class IndexStore:
         snapshot_path: Path,
         media_root: str | None = None,
         root_id: str | None = None,
-    ):
+    ) -> None:
         self.snapshot_path = snapshot_path
         self.media_root = media_root
         self.root_id = root_id
@@ -205,10 +206,8 @@ class IndexStore:
         """Force-write a snapshot immediately (e.g. on shutdown)."""
         if self._snapshot_task and not self._snapshot_task.done():
             self._snapshot_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._snapshot_task
-            except asyncio.CancelledError:
-                pass
         await self._write_snapshot()
 
     # ------------------------------------------------------------------

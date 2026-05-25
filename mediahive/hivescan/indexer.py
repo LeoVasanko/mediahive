@@ -400,10 +400,7 @@ async def _process_movies(
         return await find_playable_file(item.path) is not None
 
     # Filter movies with playable files
-    valid_movies = []
-    for item in categories[ContentType.MOVIE]:
-        if await has_playable(item):
-            valid_movies.append(item)
+    valid_movies = [item for item in categories[ContentType.MOVIE] if await has_playable(item)]
     skipped = len(categories[ContentType.MOVIE]) - len(valid_movies)
     if skipped > 0:
         logger.debug(
@@ -429,7 +426,7 @@ async def _process_movies(
             len(categories[ContentType.MOVIE]),
         ) if movie_groups else None
 
-    for idx, (movie_key, items) in enumerate(movie_groups.items(), 1):
+    for idx, (_movie_key, items) in enumerate(movie_groups.items(), 1):
         first_item = items[0]
         logger.debug(
             "    [%d/%d] %s (%s)",
@@ -658,10 +655,7 @@ async def _process_series(
         return len(await find_episode_files(item.path)) > 0
 
     # Filter series with video content
-    valid_series = []
-    for item in categories[ContentType.SERIES]:
-        if await has_video_content(item):
-            valid_series.append(item)
+    valid_series = [item for item in categories[ContentType.SERIES] if await has_video_content(item)]
     skipped = len(categories[ContentType.SERIES]) - len(valid_series)
     if skipped > 0:
         logger.info(
@@ -687,7 +681,7 @@ async def _process_series(
             len(categories[ContentType.SERIES]),
         )
 
-    for idx, (series_key, items) in enumerate(series_groups.items(), 1):
+    for idx, (_series_key, items) in enumerate(series_groups.items(), 1):
         first_item = items[0]
         logger.debug("    [%d/%d] %s", idx, len(series_groups), first_item.title)
 

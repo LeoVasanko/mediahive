@@ -10,6 +10,6 @@ from buildutil import build
 
 
 class CustomBuildHook(BuildHookInterface):
-    def initialize(self, version, build_data):
+    def initialize(self, version, build_data) -> None:
         super().initialize(version, build_data)
         build("frontend")

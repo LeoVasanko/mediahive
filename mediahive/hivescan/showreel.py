@@ -6,6 +6,7 @@ and HDR passthrough.
 """
 
 import asyncio
+import contextlib
 import logging
 import re
 import shlex
@@ -75,7 +76,7 @@ async def _run_ffmpeg(
                 stdout, stderr = await proc.communicate()
             except Exception:
                 stdout, stderr = b"", b""
-            logger.error(
+            logger.exception(
                 "ffmpeg command timed out. cmd=%s stderr=%s",
                 shlex.join(cmd),
                 _decode_stderr(stderr),
@@ -113,10 +114,8 @@ async def _kill_proc(proc: asyncio.subprocess.Process | None) -> None:
     """Kill a subprocess immediately if it is still running."""
     if proc is not None and proc.returncode is None:
         proc.kill()
-        try:
+        with contextlib.suppress(Exception):
             await asyncio.wait_for(proc.wait(), timeout=2)
-        except Exception:
-            pass
 
 
 # Showreel timestamp positions in seconds (5, 10, 15, 20, 25 minutes)
@@ -763,7 +762,7 @@ async def generate_showreel_images(
 
     # Detect Dolby Vision profile for tonemapping (profiles 5/7 need conversion)
     dovi_profile = await detect_dovi_profile(ffmpeg_input)
-    needs_tonemap = dovi_profile is not None and dovi_profile in (5, 7)
+    needs_tonemap = dovi_profile is not None and dovi_profile in {5, 7}
     if needs_tonemap:
         logger.info("    DoVi profile %d detected, will convert to HDR10", dovi_profile)
 
@@ -924,7 +923,7 @@ async def generate_episode_reel(
 
     # Detect Dolby Vision profile for tonemapping (profiles 5/7 need conversion)
     dovi_profile = await detect_dovi_profile(ffmpeg_input)
-    needs_tonemap = dovi_profile is not None and dovi_profile in (5, 7)
+    needs_tonemap = dovi_profile is not None and dovi_profile in {5, 7}
     if needs_tonemap:
         logger.info("    DoVi profile %d detected, will convert to HDR10", dovi_profile)
 

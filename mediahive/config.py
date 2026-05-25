@@ -1,7 +1,7 @@
-"""Platform-appropriate config persistence for MediaHive.
+r"""Platform-appropriate config persistence for MediaHive.
 
 Config file location:
-  Windows:  %APPDATA%\\mediahive\\config.toml
+  Windows:  %APPDATA%\mediahive\config.toml
   macOS:    ~/Library/Application Support/mediahive/config.toml
   Linux:    $XDG_CONFIG_HOME/mediahive/config.toml  (~/.config/mediahive/config.toml)
 """

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import logging
 from pathlib import Path
@@ -86,7 +87,7 @@ class RootEntry(msgspec.Struct):
 class RootContext:
     """Runtime container for a single media root."""
 
-    def __init__(self, root_id: str, root_path: Path, name: str | None = None):
+    def __init__(self, root_id: str, root_path: Path, name: str | None = None) -> None:
         self.root_id = root_id
         self.name = name or root_id
         self.root_path = root_path
@@ -134,10 +135,8 @@ class RootContext:
 
         if self._consumer_task and not self._consumer_task.done():
             self._consumer_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._consumer_task
-            except asyncio.CancelledError:
-                pass
 
         try:
             await self.store.flush_snapshot()
@@ -175,7 +174,7 @@ class RootContext:
 class Supervisor:
     """Manages the active set of RootContexts and handles atomic replacement."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         # Active contexts keyed by root_id
         self._contexts: dict[str, RootContext] = {}
         self._lock = asyncio.Lock()
@@ -211,7 +210,7 @@ class Supervisor:
         total_movie_versions = 0
         total_series_episodes = 0
         for ctx in self._contexts.values():
-            if ctx.status != "ready" and ctx.status != "scanning":
+            if ctx.status not in {"ready", "scanning"}:
                 continue
             movies.extend(ctx.store.movies.values())
             series.extend(ctx.store.series.values())

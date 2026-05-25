@@ -184,7 +184,7 @@ async def find_common_root(paths: list[Path]) -> Path | None:
 
     # Find common prefix
     common_parts = []
-    for parts in zip(*all_parts):
+    for parts in zip(*all_parts, strict=False):
         if len(set(parts)) == 1:
             common_parts.append(parts[0])
         else:
@@ -216,8 +216,7 @@ def sanitize_filename(name: str) -> str:
     """Sanitize a string for use as a filename."""
     for char in ["/", "\\", ":", "*", "?", '"', "<", ">", "|"]:
         name = name.replace(char, "_")
-    name = name.strip(". ")
-    return name
+    return name.strip(". ")
 
 
 def get_media_folder_name(title: str, year: int | None, media_type: str) -> str:

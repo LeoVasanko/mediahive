@@ -18,7 +18,7 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 import aiofiles
@@ -248,10 +248,7 @@ def _etag_matches_if_none_match(if_none_match: str | None, etag: str) -> bool:
         return v
 
     wanted = normalize(etag)
-    for candidate in if_none_match.split(","):
-        if normalize(candidate) == wanted:
-            return True
-    return False
+    return any(normalize(candidate) == wanted for candidate in if_none_match.split(","))
 
 
 def _validate_root_paths(roots: dict[str, str]) -> dict[str, str]:
@@ -283,7 +280,7 @@ def _validate_root_paths(roots: dict[str, str]) -> dict[str, str]:
 async def _attach_scanners() -> None:
     """Ensure every active root context has a running scanner."""
     for ctx in supervisor.all_contexts().values():
-        if ctx.scanner is None and ctx.status in ("ready", "loading"):
+        if ctx.scanner is None and ctx.status in {"ready", "loading"}:
             try:
                 scanner = RootScanner(ctx.root_id, ctx.root_path, ctx.send_event)
                 await scanner.start()
@@ -361,10 +358,8 @@ async def lifespan(app: FastAPI):
     yield
 
     activation_task.cancel()
-    try:
+    with suppress(asyncio.CancelledError):
         await activation_task
-    except asyncio.CancelledError:
-        pass
 
     await supervisor.shutdown()
 
@@ -464,7 +459,7 @@ async def trigger_root_scan(root_id: str):
 
 
 @app.websocket("/api/roots/{root_id}/ws")
-async def ws_endpoint(ws: WebSocket, root_id: str):
+async def ws_endpoint(ws: WebSocket, root_id: str) -> None:
     """Live index updates and task progress for a single root."""
     ctx = supervisor.get(root_id)
     if ctx is None:

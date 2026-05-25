@@ -16,7 +16,7 @@ from fastapi_vue.hostutil import parse_endpoint
 class ProcessGroup:
     """Manage async subprocesses with automatic cleanup, like TaskGroup for processes."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._procs: list[asyncio.subprocess.Process] = []
         self._cmds: dict[int, str] = {}  # pid -> command name
 
@@ -59,7 +59,7 @@ class ProcessGroup:
         """Wait for one process to exit, terminate others, then wait for all."""
         await self._cleanup(immediate=exc_type is not None)
 
-    async def _cleanup(self, immediate: bool = False):
+    async def _cleanup(self, immediate: bool = False) -> None:
         running = [p for p in self._procs if p.returncode is None]
         if not running:
             return

@@ -1,1 +1,1 @@
-"""MediaHive - Media Browser Server"""
+"""MediaHive - Media Browser Server."""

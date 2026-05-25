@@ -84,13 +84,12 @@ def find_dist_files(version: str) -> list[Path]:
     Raises FileNotFoundError listing every missing file if any are absent.
     """
     dist_dir = REPO_ROOT / "dist"
-    ver = re.escape(version)
     wheel = next((p for p in dist_dir.glob(f"mediahive-{version}-*.whl")), None)
     sdist = next(
         (
             p
             for p in dist_dir.glob(f"mediahive-{version}.*")
-            if p.suffix in (".gz", ".zip") and p.name != f"mediahive-{version}.zip"
+            if p.suffix in {".gz", ".zip"} and p.name != f"mediahive-{version}.zip"
         ),
         None,
     )

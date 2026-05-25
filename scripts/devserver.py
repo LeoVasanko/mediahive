@@ -49,7 +49,7 @@ async def run_devserver(
         await pg.spawn(*vite, cwd=front)
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(
         description="Run Vite and FastAPI development servers",
         formatter_class=argparse.RawDescriptionHelpFormatter,
