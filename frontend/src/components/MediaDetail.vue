@@ -145,18 +145,25 @@
                 <div v-if="overview" class="meta-row">
                   <span class="meta-value meta-synopsis">{{ overview }}</span>
                 </div>
-                <div v-if="movieDirector" class="meta-row">
-                  <span class="meta-label">Director</span>
-                  <span class="meta-value">{{ movieDirector }}</span>
-                </div>
-                <div v-if="movieStatus || movieReleaseDate" class="meta-summary">
-                  <span v-if="movieStatus" class="meta-summary-item">{{ movieStatus }}</span>
-                  <span v-if="movieReleaseDate" class="meta-summary-item">{{
-                    movieReleaseDate
-                  }}</span>
+                <div v-if="movieDirector || movieStatus || movieReleaseDate" class="meta-grid">
+                  <template v-if="movieDirector">
+                    <span class="meta-label">Directed by</span>
+                    <span class="meta-value">{{ movieDirector }}</span>
+                  </template>
+                  <template v-if="movieStatus || movieReleaseDate">
+                    <span v-if="movieStatus" class="meta-label">{{ movieStatus }}</span>
+                    <span v-else class="meta-label"></span>
+                    <span v-if="movieReleaseDate" class="meta-value">{{ movieReleaseDate }}</span>
+                    <span v-else class="meta-value"></span>
+                  </template>
                 </div>
                 <div v-if="movieKeywords && movieKeywords.length > 0" class="meta-keywords-section">
-                  <span class="meta-value keywords">{{ movieKeywords.join(", ") }}</span>
+                  <span
+                    v-for="(keyword, keywordIndex) in movieKeywords"
+                    :key="`${keyword}-${keywordIndex}`"
+                    class="meta-keyword"
+                    >{{ formatKeywordLabel(keyword) }}</span
+                  >
                 </div>
               </div>
             </div>
@@ -449,7 +456,17 @@ const movieRuntime = computed(() => {
 
 const movieReleaseDate = computed(() => {
   if (props.item.type !== "movies") return null
-  return (props.item.data as Movie).info?.release_date
+  const releaseDate = (props.item.data as Movie).info?.release_date
+  if (!releaseDate) return null
+
+  const parsedDate = new Date(releaseDate)
+  if (Number.isNaN(parsedDate.getTime())) return releaseDate
+
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(parsedDate)
 })
 
 const movieStatus = computed(() => {
@@ -461,6 +478,11 @@ const movieKeywords = computed(() => {
   if (props.item.type !== "movies") return null
   return (props.item.data as Movie).info?.keywords
 })
+
+function formatKeywordLabel(keyword: string): string {
+  // Keep multi-word keywords together while visually narrowing internal spacing.
+  return keyword.trim().replace(/\s+/g, "\u202F")
+}
 
 function getCastPlaceholderUrl(gender?: CastMember["gender"]): string {
   return gender === "female" ? castPlaceholderFemaleUrl : castPlaceholderMaleUrl
@@ -871,6 +893,14 @@ onUnmounted(() => {
   gap: 4px;
 }
 
+.meta-grid {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 12px;
+  row-gap: 8px;
+  align-items: baseline;
+}
+
 .meta-label {
   color: #77d38a;
   font-size: 0.75rem;
@@ -901,17 +931,27 @@ onUnmounted(() => {
 }
 
 .meta-summary-item {
+  color: #8ee59b;
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   white-space: nowrap;
 }
 
 .meta-keywords-section {
   padding-top: 2px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  row-gap: 1px;
 }
 
-.meta-value.keywords {
+.meta-keyword {
   color: var(--text-primary);
   font-size: 0.72rem;
-  line-height: 1.6;
+  line-height: 1.1;
+  white-space: nowrap;
 }
 
 .cast-list {
