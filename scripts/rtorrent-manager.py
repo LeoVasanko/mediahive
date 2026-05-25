@@ -338,7 +338,8 @@ Examples:
                 print(f"\nDry run: {added} would be added, {skipped} already loaded")
             else:
                 print(
-                    f"\nRtorrent results: {added} added, {skipped} skipped, {failed} failed"
+                    f"\nRtorrent results: {added} added, "
+                    f"{skipped} skipped, {failed} failed"
                 )
 
     # Clean up unregistered torrents from rtorrent
@@ -402,11 +403,13 @@ Examples:
         print()
         if dry_run:
             print(
-                f"Dry run: {len(unregistered)} would be removed (rtorrent + .torrent + downloads)"
+                f"Dry run: {len(unregistered)} would be removed "
+                "(rtorrent + .torrent + downloads)"
             )
         else:
             print(
-                f"Cleanup: {removed_from_rtorrent} from rtorrent, {removed_torrent_files} .torrents, {removed_downloads} downloads"
+                f"Cleanup: {removed_from_rtorrent} from rtorrent, "
+                f"{removed_torrent_files} .torrents, {removed_downloads} downloads"
             )
     else:
         print("No unregistered torrents found.")

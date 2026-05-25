@@ -46,7 +46,8 @@ def _log_ffmpeg_not_found_once(cmd: list[str]) -> None:
         return
     _ffmpeg_not_found_logged = True
     logger.error(
-        "ffmpeg executable was not found on PATH. Install ffmpeg and restart MediaHive. Command: %s",
+        "ffmpeg executable was not found on PATH. "
+        "Install ffmpeg and restart MediaHive. Command: %s",
         shlex.join(cmd),
     )
 
@@ -77,7 +78,7 @@ async def _run_ffmpeg(
             await _kill_proc(proc)
             try:
                 stdout, stderr = await proc.communicate()
-            except (OSError, asyncio.SubprocessError):
+            except OSError, asyncio.SubprocessError:
                 stdout, stderr = b"", b""
             logger.exception(
                 "ffmpeg command timed out. cmd=%s stderr=%s",
@@ -89,7 +90,8 @@ async def _run_ffmpeg(
         if proc.returncode != 0:
             if allow_nonzero_exit:
                 logger.debug(
-                    "ffmpeg command exited non-zero as expected for probe. cmd=%s returncode=%s",
+                    "ffmpeg command exited non-zero as expected for probe. "
+                    "cmd=%s returncode=%s",
                     shlex.join(cmd),
                     proc.returncode,
                 )
@@ -108,7 +110,7 @@ async def _run_ffmpeg(
     except asyncio.CancelledError:
         await _kill_proc(proc)
         raise
-    except (OSError, asyncio.SubprocessError):
+    except OSError, asyncio.SubprocessError:
         logger.exception("Unexpected error running ffmpeg command: %s", shlex.join(cmd))
         return None
 
@@ -134,7 +136,7 @@ def get_reel_source_extensions() -> list[str]:
 
 
 def _to_media_path(path: Path, media_root: Path | None = None) -> str:
-    """Convert an absolute reel file path to a media-root-relative path when possible."""
+    """Convert an absolute reel path to media-root-relative when possible."""
     if media_root:
         try:
             return path.relative_to(media_root).as_posix()
@@ -241,7 +243,7 @@ def get_existing_showreel_paths(
     timestamps: list[int] = SHOWREEL_TIMESTAMPS,
     media_root: Path | None = None,
 ) -> list[str]:
-    """Return preferred existing showreel paths, one per reel slot, in AV1-first order."""
+    """Return preferred showreel paths, one per reel slot, in AV1-first order."""
     source_sets = get_existing_showreel_source_sets(
         media_folder,
         timestamps=timestamps,
@@ -255,7 +257,7 @@ def get_existing_showreel_source_sets(
     timestamps: list[int] = SHOWREEL_TIMESTAMPS,
     media_root: Path | None = None,
 ) -> list[list[str]]:
-    """Return all existing showreel source files for each reel slot in AV1-first order."""
+    """Return all showreel source files per reel slot in AV1-first order."""
     source_sets: list[list[str]] = []
     for reel_num in range(1, len(timestamps) + 1):
         sources = [
@@ -446,9 +448,7 @@ async def probe_media_info(video_path: str) -> MediaProbeInfo:
 
     info = MediaProbeInfo()
     cmd = ["ffmpeg", "-hide_banner", "-i", video_path]
-    ffmpeg_result = await _run_ffmpeg(
-        cmd, timeout_seconds=30, allow_nonzero_exit=True
-    )
+    ffmpeg_result = await _run_ffmpeg(cmd, timeout_seconds=30, allow_nonzero_exit=True)
     if ffmpeg_result is None:
         _media_probe_cache[video_path] = info
         return info
@@ -695,7 +695,8 @@ async def generate_showreel_images(
     """Generate showreel video clips from a video file at specified timestamps.
 
     Saves 10-second clips in a platform-native format, downscaled to max 720px width,
-    preserving original color metadata. macOS emits MP4/H.265; other platforms emit WebM/AV1.
+    preserving original color metadata.
+    macOS emits MP4/H.265; other platforms emit WebM/AV1.
 
     Args:
         video_path: Path to the video file (or index.bdmv for Blu-ray discs)
@@ -842,7 +843,8 @@ async def generate_showreel_images(
                 on_progress(reel_num)
         else:
             logger.error(
-                "    Showreel reel%d failed for %s: output file was not created. cmd=%s",
+                "    Showreel reel%d failed for %s: "
+                "output file was not created. cmd=%s",
                 reel_num,
                 title or "unknown",
                 shlex.join(cmd),

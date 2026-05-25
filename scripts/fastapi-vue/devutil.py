@@ -1,4 +1,7 @@
-"""Utilities meant for devserver script, used only in source repository with dev deps."""
+"""Utilities for the devserver script in the source repository.
+
+Used only with development dependencies.
+"""
 
 import asyncio
 import subprocess
@@ -14,7 +17,10 @@ from fastapi_vue.hostutil import parse_endpoint
 
 
 class ProcessGroup:
-    """Manage async subprocesses with automatic cleanup, like TaskGroup for processes."""
+    """Manage async subprocesses with automatic cleanup.
+
+    Acts like TaskGroup for processes.
+    """
 
     def __init__(self) -> None:
         self._procs: list[asyncio.subprocess.Process] = []
@@ -98,7 +104,10 @@ class ProcessGroup:
 
 
 async def check_ports_free(*urls: str) -> None:
-    """Verify URLs are not responding (ports are free). Raise SystemExit if any respond."""
+    """Verify URLs are not responding (ports are free).
+
+    Raise SystemExit if any endpoint responds.
+    """
 
     async def check(client: httpx.AsyncClient, url: str) -> None:
         with suppress(httpx.RequestError):

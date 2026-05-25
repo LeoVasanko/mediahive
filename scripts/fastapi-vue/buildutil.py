@@ -143,7 +143,9 @@ def find_dev_tool() -> list[str]:
 
     if name == "bun":
         logger.warning(
-            "Bun has a bug in WS proxying (https://github.com/oven-sh/bun/issues/9882). Consider using npm instead."
+            "Bun has a bug in WS proxying "
+            "(https://github.com/oven-sh/bun/issues/9882). "
+            "Consider using npm instead."
         )
 
     return [tool, *dev_args[name]]

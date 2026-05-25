@@ -559,7 +559,9 @@ class RootScanner:
                                     id=task_id,
                                     status="completed",
                                     progress=1,
-                                    detail=f"Showreel: {title} ({len(generated)} reels)",
+                                    detail=(
+                                        f"Showreel: {title} ({len(generated)} reels)"
+                                    ),
                                 )
                             )
                         )

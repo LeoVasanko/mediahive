@@ -41,7 +41,10 @@ def main() -> None:
         "media_folders",
         nargs="*",
         metavar="MEDIA_FOLDER",
-        help="One or more media folders to index (default: none — configure via UI or API)",
+        help=(
+            "One or more media folders to index "
+            "(default: none — configure via UI or API)"
+        ),
     )
     parser.add_argument(
         "-l",

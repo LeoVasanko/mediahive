@@ -139,7 +139,7 @@ async def tmdb_api_request(
 
 
 async def fetch_movie_details(movie_id: int) -> dict | None:
-    """Fetch detailed movie info including credits, similar, keywords, and alternative titles."""
+    """Fetch movie info including credits, similar, keywords, and alt titles."""
     # Use append_to_response to get multiple data in one request
     return await tmdb_api_request(
         f"/movie/{movie_id}",

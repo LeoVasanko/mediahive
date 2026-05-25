@@ -3,7 +3,8 @@
 Usage:
     uv run scripts/winbuild.py
 
-This runs in the project environment where dependencies are available via pyproject.toml.
+This runs in the project environment where dependencies
+are available via pyproject.toml.
 
 This script:
     1. Reads the version from pyproject.toml
@@ -248,7 +249,8 @@ def main() -> None:
             ensure_macos_icon()
         else:
             print(
-                "Skipping ffmpeg bundling on this platform (uses system ffmpeg if available)."
+                "Skipping ffmpeg bundling on this platform "
+                "(uses system ffmpeg if available)."
             )
         build_wheel()
         build_executable()
