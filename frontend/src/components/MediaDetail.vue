@@ -1039,6 +1039,12 @@ html:not(.mouse-active) .cast-card.nav-focused::after {
     align-self: auto;
   }
 
+  .synopsis-box {
+    width: clamp(120px, 36vw, 180px);
+    max-width: 100%;
+    margin: 0 auto;
+  }
+
   .cast-list {
     position: static;
     top: auto;
