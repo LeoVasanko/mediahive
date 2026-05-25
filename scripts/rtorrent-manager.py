@@ -2,7 +2,6 @@
 """Torrent Scanner - Scans for .torrent files and analyzes their trackers."""
 
 import argparse
-import glob
 import hashlib
 import shutil
 from collections.abc import Iterator
@@ -12,6 +11,23 @@ from pathlib import Path
 import bencodepy
 
 from rtorrent_client import RTorrentClient
+
+
+def _expand_path_pattern(pattern: str) -> list[Path]:
+    """Expand a user-provided path or glob pattern with pathlib."""
+    expanded = Path(pattern).expanduser()
+    pattern_text = str(expanded)
+    has_glob = any(ch in pattern_text for ch in "*?[")
+
+    if not has_glob:
+        return [expanded] if expanded.exists() else []
+
+    normalized = pattern_text.replace("\\", "/")
+    if expanded.is_absolute():
+        root = Path(expanded.anchor)
+        remainder = normalized[len(expanded.anchor) :].lstrip("/")
+        return list(root.glob(remainder)) if remainder else []
+    return list(Path().glob(normalized))
 
 
 @dataclass
@@ -160,8 +176,7 @@ def scan_torrent_directories(paths: list[str]) -> Iterator[Path]:
 
     """
     for pattern in paths:
-        for dir_path in glob.glob(pattern):
-            torrent_dir = Path(dir_path)
+        for torrent_dir in _expand_path_pattern(pattern):
             if torrent_dir.is_dir():
                 yield from torrent_dir.glob("*.torrent")
 
@@ -237,7 +252,7 @@ Examples:
     # Expand glob patterns
     expanded_paths = []
     for pattern in args.paths:
-        matches = glob.glob(pattern)
+        matches = [str(path) for path in _expand_path_pattern(pattern)]
         if matches:
             expanded_paths.extend(matches)
         else:
