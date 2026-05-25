@@ -1,9 +1,11 @@
 <template>
-  <div
+  <component
+    :is="href ? 'a' : 'div'"
     class="media-card"
     v-bind="navAttributes"
     :data-item-id="item.id"
-    @click="$emit('click')"
+    :href="href || undefined"
+    @click="handleClick"
     @keydown.enter.prevent="$emit('click')"
   >
     <div class="media-card-poster">
@@ -78,7 +80,7 @@
         </div>
       </template>
     </div>
-  </div>
+  </component>
 </template>
 
 <script setup lang="ts">
@@ -91,11 +93,29 @@ const props = defineProps<{
   item: MediaItem
   navRow?: number
   navCol?: number
+  href?: string
 }>()
 
-defineEmits<{
+const emit = defineEmits<{
   click: []
 }>()
+
+function handleClick(event: MouseEvent) {
+  // Let modified clicks (middle-click, ctrl+click, etc.) navigate natively
+  if (
+    event.button !== 0 ||
+    event.ctrlKey ||
+    event.metaKey ||
+    event.shiftKey ||
+    event.altKey
+  ) {
+    return
+  }
+  // Prevent default navigation for plain left-clicks and synthetic clicks
+  // so that parent handlers can manage side-effects and routing
+  event.preventDefault()
+  emit("click")
+}
 
 const navAttributes = computed(() => {
   if (props.navRow !== undefined && props.navCol !== undefined) {

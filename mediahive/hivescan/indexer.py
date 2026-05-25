@@ -474,7 +474,7 @@ async def _process_movies(
 
         display_title = tmdb_info.title
         content_hash = hashlib.md5(f"movie:{tmdb_id}".encode()).hexdigest()[:12]
-        item_id = f"{root_id}:{content_hash}" if root_id else content_hash
+        item_id = content_hash
         media_folder = get_media_folder_path(display_title, year, "movie", cover_dir)
 
         # Find/download cover
@@ -562,7 +562,7 @@ async def _process_movies(
         title = group_data["title"]
         year = group_data["year"]
         content_hash = hashlib.md5(f"movie:{title}:{year}".encode()).hexdigest()[:12]
-        item_id = f"{root_id}:{content_hash}" if root_id else content_hash
+        item_id = content_hash
 
         cover_path = (
             await find_cover_image(title, year, "movie", cover_dir)
@@ -721,7 +721,7 @@ async def _process_series(
 
         display_title = tmdb_info.title
         content_hash = hashlib.md5(f"series:{tmdb_id}".encode()).hexdigest()[:12]
-        series_id = f"{root_id}:{content_hash}" if root_id else content_hash
+        series_id = content_hash
 
         logger.debug("  [%d/%d] %s", series_idx, len(tmdb_groups), display_title)
 
@@ -795,7 +795,7 @@ async def _process_series(
         items = group_data["items"]
         title = group_data["title"]
         content_hash = hashlib.md5(f"series:{title}".encode()).hexdigest()[:12]
-        series_id = f"{root_id}:{content_hash}" if root_id else content_hash
+        series_id = content_hash
 
         cover_path = (
             await find_cover_image(title, None, "series", cover_dir)

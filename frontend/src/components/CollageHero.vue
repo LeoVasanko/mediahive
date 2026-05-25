@@ -3,8 +3,9 @@
     <!-- Diagonal collage grid -->
     <div class="collage-grid">
       <template v-for="(item, index) in collageItems" :key="item.id">
-        <div
-          :ref="(el) => setItemRef(el as HTMLElement, index)"
+        <component
+          :is="index !== 0 ? 'a' : 'div'"
+          :ref="(el: HTMLElement | null) => setItemRef(el, index)"
           class="collage-item"
           :class="[
             `collage-item-${index}`,
@@ -16,7 +17,8 @@
             },
           ]"
           v-bind="getItemAttrs(index)"
-          @click="handleItemClick(item, index)"
+          :href="index !== 0 ? getItemHref(item) : undefined"
+          @click="handleItemClick($event, item, index)"
           @focus="focusedIndex = index"
         >
           <!-- Featured item with hexagonal clip -->
@@ -109,7 +111,13 @@
               <button class="btn btn-primary" @click.stop="handlePlay(item)">
                 ▶ {{ getPlayLabel(item) }}
               </button>
-              <button class="btn btn-secondary" @click.stop="$emit('info', item)">ℹ Info</button>
+              <a
+                class="btn btn-secondary"
+                :href="getItemHref(item)"
+                @click.prevent="$emit('info', item)"
+              >
+                ℹ Info
+              </a>
             </div>
           </div>
           <div class="collage-item-hover" v-else>
@@ -118,7 +126,7 @@
               >★ {{ getRating(item)?.toFixed(1) }}</span
             >
           </div>
-        </div>
+        </component>
       </template>
     </div>
   </section>
@@ -425,7 +433,7 @@ function handleKeyDown(e: KeyboardEvent) {
       const item = collageItems.value[focusedIndex.value]
       e.preventDefault()
       e.stopPropagation()
-      if (item) handleItemClick(item, focusedIndex.value)
+      if (item) activateItem(item, focusedIndex.value)
     }
     return
   }
@@ -606,12 +614,35 @@ function getPlayLabel(item: MediaItem): string {
   return props.hasResumePosition(getPlayableFile(item)) ? "Continue" : "Play"
 }
 
-function handleItemClick(item: MediaItem, index: number) {
+function getItemHref(item: MediaItem): string {
+  return `#/${item.type}/${item.id}`
+}
+
+function activateItem(item: MediaItem, index: number) {
   if (index === 0) {
     emit("info", item)
   } else {
     emit("select", item)
   }
+}
+
+function handleItemClick(event: MouseEvent, item: MediaItem, index: number) {
+  if (index === 0) {
+    emit("info", item)
+    return
+  }
+  // Let modified clicks navigate natively
+  if (
+    event.button !== 0 ||
+    event.ctrlKey ||
+    event.metaKey ||
+    event.shiftKey ||
+    event.altKey
+  ) {
+    return
+  }
+  event.preventDefault()
+  emit("select", item)
 }
 </script>
 
@@ -642,6 +673,8 @@ function handleItemClick(item: MediaItem, index: number) {
     filter 0.3s ease,
     opacity 0.3s ease,
     visibility 0.3s ease;
+  text-decoration: none;
+  color: inherit;
 }
 
 /* Media (images and videos) fill the collage item */

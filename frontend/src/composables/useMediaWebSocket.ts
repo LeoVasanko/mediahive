@@ -89,6 +89,7 @@ export function useMediaWebSocket() {
     const torrentsB = annotateTorrents(b.torrents, b.root_id)
     return {
       ...a,
+      id: getContentHash(a.id),
       torrents: mergeTorrentDicts(torrentsA, torrentsB),
       info: a.info || b.info,
       cover_path: a.cover_path || b.cover_path,
@@ -171,6 +172,7 @@ export function useMediaWebSocket() {
     }
     return {
       ...a,
+      id: getContentHash(a.id),
       seasons: Array.from(seasonMap.values()).sort((a, b) => a.season_number - b.season_number),
       info: a.info || b.info,
       cover_path: a.cover_path || b.cover_path,

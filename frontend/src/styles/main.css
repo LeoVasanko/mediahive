@@ -473,6 +473,8 @@ html:not(.mouse-active) .btn-secondary.nav-focused {
     box-shadow var(--transition-medium);
   position: relative;
   outline: none;
+  text-decoration: none;
+  color: inherit;
 }
 
 html.mouse-active .media-card:hover,

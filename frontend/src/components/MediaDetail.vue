@@ -106,14 +106,14 @@
             </div>
 
             <div v-if="limitedMovieCast.length > 0" class="cast-list" data-sync-scroll-row="true">
-              <div
+              <a
                 v-for="(castMember, castIndex) in limitedMovieCast"
                 :key="`${castMember.name}-${castMember.character || ''}`"
                 class="cast-card media-card"
                 v-bind="navAttrs(2, movieVersions.length + castIndex)"
-                role="button"
+                :href="`#/?q=${encodeURIComponent(castMember.name)}`"
                 :title="`Search for ${castMember.name}`"
-                @click="handleCastSelect(castMember.name)"
+                @click.prevent="handleCastSelect(castMember.name)"
               >
                 <img
                   v-if="castMember.profile_path && !castMember.profile_path.startsWith('/')"
@@ -133,7 +133,7 @@
                     castMember.character
                   }}</span>
                 </div>
-              </div>
+              </a>
             </div>
 
             <!-- Main content -->

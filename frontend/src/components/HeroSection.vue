@@ -20,7 +20,13 @@
         <button class="btn btn-primary" @click="handlePlay" :disabled="!playableFile">
           ▶ Play
         </button>
-        <button class="btn btn-secondary" @click="$emit('info', item)">ℹ More Info</button>
+        <a
+          class="btn btn-secondary"
+          :href="detailHref"
+          @click.prevent="$emit('info', item)"
+        >
+          ℹ More Info
+        </a>
       </div>
     </div>
   </section>
@@ -83,6 +89,10 @@ const overview = computed(() => {
   }
   const o = (props.item.data as Series).info?.overview
   return o ? (o.length > 200 ? o.slice(0, 200) + "..." : o) : null
+})
+
+const detailHref = computed(() => {
+  return `#/${props.item.type}/${props.item.id}`
 })
 
 const playableFile = computed(() => {

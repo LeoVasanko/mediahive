@@ -73,15 +73,10 @@ class IndexStore:
     # ------------------------------------------------------------------
 
     def _maybe_migrate_id(self, item_id: str) -> str:
-        """Normalize item ID to this store's current root_id namespace."""
-        if not self.root_id:
-            return item_id
+        """Strip any legacy root_id prefix, leaving only the content hash."""
         if ":" in item_id:
-            # If snapshot was created under a different root_id prefix,
-            # remap to current root_id while preserving content hash.
-            _, content_hash = item_id.split(":", 1)
-            return f"{self.root_id}:{content_hash}"
-        return f"{self.root_id}:{item_id}"
+            return item_id.split(":", 1)[1]
+        return item_id
 
     async def load_snapshot(self) -> None:
         """Load index from disk snapshot (recovery on startup)."""
@@ -216,6 +211,7 @@ class IndexStore:
 
     def upsert_movie(self, item: Movie) -> bool:
         """Insert or update a movie. Returns True if it was a real change."""
+        item.id = self._maybe_migrate_id(item.id)
         if not item.root_id and self.root_id:
             item.root_id = self.root_id
         existing = self.movies.get(item.id)
@@ -229,6 +225,7 @@ class IndexStore:
 
     def upsert_series(self, item: Series) -> bool:
         """Insert or update a series. Returns True if it was a real change."""
+        item.id = self._maybe_migrate_id(item.id)
         if not item.root_id and self.root_id:
             item.root_id = self.root_id
         existing = self.series.get(item.id)
@@ -242,12 +239,14 @@ class IndexStore:
 
     def remove_movie(self, item_id: str) -> None:
         """Remove a movie from the index and broadcast."""
+        item_id = self._maybe_migrate_id(item_id)
         self.movies.pop(item_id, None)
         self._schedule_snapshot()
         self._broadcast(Remove(kind="movie", id=item_id))
 
     def remove_series(self, item_id: str) -> None:
         """Remove a series from the index and broadcast."""
+        item_id = self._maybe_migrate_id(item_id)
         self.series.pop(item_id, None)
         self._schedule_snapshot()
         self._broadcast(Remove(kind="series", id=item_id))
