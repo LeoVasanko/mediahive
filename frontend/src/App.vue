@@ -412,6 +412,10 @@ function saveFocusForPage(page: string) {
 
 // Restore focus state for a page, or find the last viewed item
 function restoreFocusForPage(page: string) {
+  // Don't steal focus from the search input while the user is typing
+  const active = document.activeElement
+  if (active?.closest(".header-search")) return
+
   // First try to find the last viewed item and focus it
   if (lastViewedItemId.value) {
     // Use nextTick + timeout to ensure DOM is updated after navigation
