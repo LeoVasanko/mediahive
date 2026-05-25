@@ -3,9 +3,8 @@
     <!-- Diagonal collage grid -->
     <div class="collage-grid">
       <template v-for="(item, index) in collageItems" :key="item.id">
-        <component
-          :is="index !== 0 ? 'a' : 'div'"
-          :ref="(el: HTMLElement | null) => setItemRef(el, index)"
+        <a
+          :ref="(el: unknown) => setItemRef(el as HTMLElement | null, index)"
           class="collage-item"
           :class="[
             `collage-item-${index}`,
@@ -17,8 +16,8 @@
             },
           ]"
           v-bind="getItemAttrs(index)"
-          :href="index !== 0 ? getItemHref(item) : undefined"
-          @click="handleItemClick($event, item, index)"
+          :href="getItemHref(item)"
+          @click="handleItemClick($event, item)"
           @focus="focusedIndex = index"
         >
           <!-- Featured item with hexagonal clip -->
@@ -107,18 +106,6 @@
               <span v-if="getResolution(item)" class="meta-quality">{{ getResolution(item) }}</span>
             </div>
             <p v-if="getOverview(item)" class="collage-overview">{{ getOverview(item) }}</p>
-            <div class="collage-buttons">
-              <button class="btn btn-primary" @click.stop="handlePlay(item)">
-                ▶ {{ getPlayLabel(item) }}
-              </button>
-              <a
-                class="btn btn-secondary"
-                :href="getItemHref(item)"
-                @click.prevent="$emit('info', item)"
-              >
-                ℹ Info
-              </a>
-            </div>
           </div>
           <div class="collage-item-hover" v-else>
             <span class="hover-title">{{ item.title }}</span>
@@ -126,7 +113,7 @@
               >★ {{ getRating(item)?.toFixed(1) }}</span
             >
           </div>
-        </component>
+        </a>
       </template>
     </div>
   </section>
@@ -433,7 +420,7 @@ function handleKeyDown(e: KeyboardEvent) {
       const item = collageItems.value[focusedIndex.value]
       e.preventDefault()
       e.stopPropagation()
-      if (item) activateItem(item, focusedIndex.value)
+      if (item) activateItem(item)
     }
     return
   }
@@ -476,12 +463,9 @@ function isItemVisible(index: number): boolean {
 const props = defineProps<{
   items: MediaItem[]
   featuredItem?: MediaItem | null
-  hasResumePosition: (filePath: string | null) => boolean
 }>()
 
 const emit = defineEmits<{
-  play: [string]
-  info: [MediaItem]
   select: [MediaItem]
 }>()
 
@@ -589,48 +573,15 @@ function getOverview(item: MediaItem): string | null {
   return overview.length > 150 ? overview.slice(0, 150) + "..." : overview
 }
 
-function getPlayableFile(item: MediaItem): string | null {
-  if (item.type === "movies") {
-    const movie = item.data as Movie
-    return Object.values(movie.torrents || {})[0]?.playable_file ?? null
-  }
-  const series = item.data as Series
-  for (const season of series.seasons || []) {
-    for (const episode of season.episodes || []) {
-      for (const torrent of Object.values(episode.torrents || {})) {
-        if (torrent.playable_file) return torrent.playable_file
-      }
-    }
-  }
-  return null
-}
-
-function handlePlay(item: MediaItem) {
-  const file = getPlayableFile(item)
-  if (file) emit("play", file)
-}
-
-function getPlayLabel(item: MediaItem): string {
-  return props.hasResumePosition(getPlayableFile(item)) ? "Continue" : "Play"
-}
-
 function getItemHref(item: MediaItem): string {
   return `#/${item.type}/${item.id}`
 }
 
-function activateItem(item: MediaItem, index: number) {
-  if (index === 0) {
-    emit("info", item)
-  } else {
-    emit("select", item)
-  }
+function activateItem(item: MediaItem) {
+  emit("select", item)
 }
 
-function handleItemClick(event: MouseEvent, item: MediaItem, index: number) {
-  if (index === 0) {
-    emit("info", item)
-    return
-  }
+function handleItemClick(event: MouseEvent, item: MediaItem) {
   // Let modified clicks navigate natively
   if (
     event.button !== 0 ||
@@ -1087,16 +1038,6 @@ html:not(.mouse-active) .collage-item.nav-focused .hex-focus-outline {
   line-height: 1.4;
   margin-bottom: 16px;
   max-width: 450px;
-}
-
-.collage-buttons {
-  display: flex;
-  gap: 10px;
-}
-
-.collage-buttons .btn {
-  padding: 10px 24px;
-  font-size: 0.95rem;
 }
 
 /* Hover info for non-featured items */

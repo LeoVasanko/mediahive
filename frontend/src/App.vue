@@ -84,9 +84,6 @@
               :key="`movie-hero-${movieCollageItems.length}-${movieFeaturedItem?.id || 'none'}`"
               :items="movieCollageItems"
               :featured-item="movieFeaturedItem"
-              :has-resume-position="hasResumePosition"
-              @play="handlePlay"
-              @info="showDetail"
               @select="showDetail"
             />
             <!-- Spacer for header overlay -->
@@ -110,9 +107,6 @@
               :key="`series-hero-${seriesCollageItems.length}-${seriesFeaturedItem?.id || 'none'}`"
               :items="seriesCollageItems"
               :featured-item="seriesFeaturedItem"
-              :has-resume-position="hasResumePosition"
-              @play="handlePlay"
-              @info="showDetail"
               @select="showDetail"
             />
             <!-- Spacer for header overlay -->
@@ -140,9 +134,6 @@
             :key="`search-hero-${searchCollageItems.length}-${searchFeaturedItem?.id || 'none'}`"
             :items="searchCollageItems"
             :featured-item="searchFeaturedItem"
-            :has-resume-position="hasResumePosition"
-            @play="handlePlay"
-            @info="showDetail"
             @select="showDetail"
           />
           <!-- Spacer for header overlay -->

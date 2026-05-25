@@ -251,91 +251,6 @@ html.mouse-active .header-settings-btn:hover {
   padding-top: 40px;
 }
 
-/* Hero section - kept for backwards compatibility but not used */
-.hero {
-  position: relative;
-  height: 70vh;
-  max-height: 600px;
-  min-height: 400px;
-  display: flex;
-  align-items: flex-end;
-  padding: 0 4% 8%;
-  background-color: var(--bg-primary);
-  overflow: hidden;
-}
-
-.hero-background {
-  position: absolute;
-  top: 0;
-  right: 0;
-  width: 60%;
-  height: 100%;
-  background-size: contain;
-  background-position: right top;
-  background-repeat: no-repeat;
-  mask-image: linear-gradient(
-    to left,
-    rgba(0, 0, 0, 0.6) 0%,
-    rgba(0, 0, 0, 0.3) 60%,
-    transparent 100%
-  );
-  -webkit-mask-image: linear-gradient(
-    to left,
-    rgba(0, 0, 0, 0.6) 0%,
-    rgba(0, 0, 0, 0.3) 60%,
-    transparent 100%
-  );
-}
-
-.hero::after {
-  content: "";
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 200px;
-  background: var(--gradient-fade);
-}
-
-.hero-content {
-  position: relative;
-  z-index: 1;
-  max-width: 600px;
-}
-
-.hero-title {
-  font-size: 3rem;
-  font-weight: 700;
-  margin-bottom: 16px;
-  text-shadow: 2px 2px 4px var(--shadow-color);
-}
-
-.hero-meta {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  margin-bottom: 16px;
-  font-size: 1rem;
-}
-
-.hero-year {
-  color: var(--text-secondary);
-}
-
-.hero-quality {
-  background: var(--bg-secondary);
-  padding: 4px 8px;
-  border-radius: 4px;
-  font-size: 0.8rem;
-  font-weight: 600;
-}
-
-.hero-buttons {
-  display: flex;
-  gap: 12px;
-  margin-top: 24px;
-}
-
 /* Blinking animation for button focus */
 @keyframes btn-outline-blink {
   0%,
@@ -853,16 +768,7 @@ html.mouse-active .release-item:hover {
     --section-padding: 3%;
   }
 
-  .hero {
-    height: 50vh;
-    min-height: 300px;
-  }
-
-  .hero-title {
-    font-size: 1.5rem;
-  }
-
-  .header-nav {
+    .header-nav {
     gap: 10px;
   }
 
