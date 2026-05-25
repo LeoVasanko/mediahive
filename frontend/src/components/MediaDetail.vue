@@ -729,6 +729,7 @@ onUnmounted(() => {
 /* Movie page layout (inline within main content) */
 .movie-page {
   background-color: var(--bg-primary);
+  --movie-nav-bar-width: calc(40vw + 0.8rem);
 }
 
 .movie-menu-backdrop {
@@ -745,9 +746,9 @@ onUnmounted(() => {
   content: "";
   position: absolute;
   top: 300px;
-  /* Start clipped edge at reel 2/3 split bottom (y=300): 40vw - 0.8rem. */
+  /* Align clipped edge after reel 2/5; breakpoints move to 3/5 and 4/5 with proportional slant compensation. */
   left: calc(-50vw + 50% - 1.6rem);
-  width: calc(40vw + 0.8rem);
+  width: var(--movie-nav-bar-width);
   max-width: calc(100vw - 24px);
   height: var(--header-height);
   background: linear-gradient(to bottom, rgba(5, 7, 10, 0.72) 0%, rgba(5, 7, 10, 0.5) 100%);
@@ -763,6 +764,18 @@ onUnmounted(() => {
   clip-path: polygon(0 0, 100% 0, calc(100% - (var(--header-height) * 0.1067)) 100%, 0 100%);
   pointer-events: none;
   z-index: 30;
+}
+
+@media (max-width: 1280px) {
+  .movie-page {
+    --movie-nav-bar-width: calc(60vw + 0.4rem);
+  }
+}
+
+@media (max-width: 900px) {
+  .movie-page {
+    --movie-nav-bar-width: 80vw;
+  }
 }
 
 /* Modal body with backdrop - full viewport width, fits backdrop height */
@@ -1034,11 +1047,11 @@ onUnmounted(() => {
 
 .cast-list {
   --sync-row-tail: 0px;
-  --cast-safe-start: 40vw;
+  --cast-safe-start: var(--movie-nav-bar-width);
   --cast-safe-end: 32px;
   --sync-row-right-deadzone: 32px;
   position: absolute;
-  top: calc(-1 * (var(--header-height) + 30px));
+  top: calc(-1 * (var(--header-height) + 2.5rem));
   left: calc(-50vw + 50%);
   width: 100vw;
   margin: 0;
