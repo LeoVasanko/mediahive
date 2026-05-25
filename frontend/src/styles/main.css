@@ -138,6 +138,13 @@ html.mouse-active ::-webkit-scrollbar-thumb:hover {
   -webkit-backdrop-filter: blur(10px) saturate(115%);
 }
 
+@media (max-width: 900px) {
+  .header-after-hero {
+    /* Match the reduced browse hero height at <=900px. */
+    top: clamp(350px, 50vh, 600px);
+  }
+}
+
 /* Spacer to reserve space for header in layout */
 .header-spacer {
   height: calc(var(--header-height) + 20px);
@@ -777,14 +784,6 @@ html.mouse-active .release-item:hover {
     --section-padding: 3%;
   }
 
-    .header-nav {
-    gap: 10px;
-  }
-
-  .search-input {
-    width: 140px;
-  }
-
   .modal-title {
     font-size: 1.5rem;
   }
@@ -797,13 +796,6 @@ html.mouse-active .release-item:hover {
 @media (max-width: 480px) {
   :root {
     --card-width: 100px;
-    --header-height: 48px;
-  }
-
-  .header-logo {
-    height: 32px;
-    width: 32px;
-    margin-right: 12px;
   }
 
   .media-card-info {

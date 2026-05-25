@@ -41,109 +41,105 @@ const SYNC_SCROLL_EASING_MS = 220
 const SYNC_SCROLL_TAIL_VAR = "--sync-row-tail"
 const SYNC_SCROLL_RIGHT_DEADZONE_VAR = "--sync-row-right-deadzone"
 
+// ---------------------------------------------------------------------------
+// Synced scroll state — global virtual offset, per-row clamping
+// ---------------------------------------------------------------------------
+
 let syncedRowsFrame: number | null = null
 let syncedRowsCurrentOffset = 0
 let syncedRowsTargetOffset = 0
-// Kept for backward compatibility; tail is now per-row via CSS custom properties.
-let syncedRowsTailPx = 0
 let lastSyncedAnchorCol: number | null = null
 let lastSyncedRowsAnimationAt: number | null = null
-const outOfBoundsHandlers = new Set<OutOfBoundsNavigationHandler>()
 
-function resolveOutOfBoundsNavigation(
-  context: OutOfBoundsNavigationContext,
-): HTMLElement | null {
-  const handlers = Array.from(outOfBoundsHandlers)
-  for (let i = handlers.length - 1; i >= 0; i--) {
-    const result = handlers[i]?.(context)
-    if (result) return result
+// Global metrics measured once from the first synced row. All calculations use
+// these same values for every row to avoid per-row DOM query inconsistencies.
+interface ScrollMetrics {
+  cardWidth: number
+  stride: number // cardWidth + gap
+  paddingLeft: number
+  viewportWidth: number
+  rightDeadzone: number
+}
+let gMetrics: ScrollMetrics | null = null
+
+function invalidateMetrics() {
+  gMetrics = null
+}
+
+function measureGlobalMetrics(): boolean {
+  const rows = getSyncedRows()
+  for (const row of rows) {
+    const cards = row.querySelectorAll<HTMLElement>(`.media-card[${FOCUSABLE_ATTR}]`)
+    if (cards.length < 2) continue
+    const r1 = cards[0].getBoundingClientRect()
+    const r2 = cards[1].getBoundingClientRect()
+    if (r1.width <= 0) continue
+    const cardWidth = r1.width
+    const stride = r2.left - r1.left
+    const rowStyle = window.getComputedStyle(row)
+    const paddingLeft = parseFloat(rowStyle.paddingLeft || "0")
+    const viewportWidth = row.clientWidth
+    const deadzoneInset = Math.max(paddingLeft, (viewportWidth - cardWidth) * SYNC_SCROLL_DEADZONE_RATIO)
+    const rightDeadzoneRaw = rowStyle.getPropertyValue(SYNC_SCROLL_RIGHT_DEADZONE_VAR).trim()
+    const rightDeadzone = Number.isFinite(parseFloat(rightDeadzoneRaw))
+      ? Math.max(0, parseFloat(rightDeadzoneRaw))
+      : deadzoneInset
+    gMetrics = { cardWidth, stride, paddingLeft, viewportWidth, rightDeadzone }
+    return true
   }
-  return null
+  return false
+}
+
+function getMetrics(): ScrollMetrics | null {
+  if (!gMetrics) {
+    measureGlobalMetrics()
+  }
+  return gMetrics
+}
+
+// On first navigation into a view, snap the global virtual offset to whatever
+// the first synced row is already scrolled to. This avoids animating from 0
+// every time the view is entered.
+function initCurrentOffsetFromDOM() {
+  if (syncedRowsCurrentOffset !== 0) return
+  const rows = getSyncedRows()
+  for (const row of rows) {
+    const sl = row.scrollLeft
+    if (sl > 0) {
+      syncedRowsCurrentOffset = sl
+      syncedRowsTargetOffset = sl
+      return
+    }
+  }
 }
 
 function getSyncedRows(): HTMLElement[] {
   return Array.from(document.querySelectorAll<HTMLElement>(`[${SYNC_SCROLL_ROW_ATTR}="true"]`))
 }
 
-function getSyncedRowMetrics(rows: HTMLElement[]) {
-  for (const row of rows) {
-    const cards = Array.from(row.querySelectorAll<HTMLElement>(`.media-card[${FOCUSABLE_ATTR}]`))
-    if (cards.length === 0) continue
+function getRowItemCount(row: HTMLElement): number {
+  return row.querySelectorAll<HTMLElement>(`.media-card[${FOCUSABLE_ATTR}]`).length
+}
 
-    const firstRect = cards[0].getBoundingClientRect()
-    const cardWidth = firstRect.width
-    if (cardWidth <= 0) continue
-
-    const rowStyle = window.getComputedStyle(row)
-    const paddingLeft = parseFloat(rowStyle.paddingLeft || "0")
-    const rightDeadzoneRaw = rowStyle.getPropertyValue(SYNC_SCROLL_RIGHT_DEADZONE_VAR).trim()
-    const rightDeadzoneOverride = rightDeadzoneRaw ? parseFloat(rightDeadzoneRaw) : NaN
-    let gap = parseFloat(rowStyle.columnGap || rowStyle.gap || "0")
-
-    if (cards.length > 1) {
-      const secondRect = cards[1].getBoundingClientRect()
-      gap = Math.max(0, secondRect.left - firstRect.left - cardWidth)
-    }
-
-    return {
-      cardWidth,
-      stride: cardWidth + gap,
-      paddingLeft,
-      viewportWidth: row.clientWidth,
-      rightDeadzoneOverride: Number.isFinite(rightDeadzoneOverride)
-        ? Math.max(0, rightDeadzoneOverride)
-        : null,
-    }
-  }
-
-  return null
+// The maximum scroll offset for a row: the exact offset that would put its
+// last item at the right edge of the safe zone. Computed purely from global
+// metrics and item count — no DOM queries.
+function getRowMaxScroll(row: HTMLElement): number {
+  const m = getMetrics()
+  if (!m) return 0
+  const n = getRowItemCount(row)
+  if (n === 0) return 0
+  const lastCol = n - 1
+  const lastItemLeft = m.paddingLeft + lastCol * m.stride
+  const maxVisibleLeft = Math.max(
+    m.paddingLeft,
+    m.viewportWidth - m.cardWidth - m.rightDeadzone,
+  )
+  return Math.max(0, lastItemLeft - maxVisibleLeft)
 }
 
 function clampRowScrollOffset(row: HTMLElement, offset: number): number {
-  const maxOffset = Math.max(0, row.scrollWidth - row.clientWidth)
-  return Math.min(Math.max(offset, 0), maxOffset)
-}
-
-function getRowMaxOffset(row: HTMLElement): number {
-  return Math.max(0, row.scrollWidth - row.clientWidth)
-}
-
-function getRowTail(row: HTMLElement): number {
-  const raw = row.style.getPropertyValue(SYNC_SCROLL_TAIL_VAR).trim()
-  return raw ? parseFloat(raw) : 0
-}
-
-function getRowNaturalMaxOffset(row: HTMLElement): number {
-  return Math.max(0, getRowMaxOffset(row) - getRowTail(row))
-}
-
-function getTailNeededForOffset(offset: number, row: HTMLElement): number {
-  const naturalMax = getRowNaturalMaxOffset(row)
-  if (!Number.isFinite(naturalMax)) return 0
-  return Math.max(0, offset - naturalMax)
-}
-
-function setRowTail(row: HTMLElement, tailPx: number) {
-  const nextTail = Math.max(0, tailPx)
-  row.style.setProperty(SYNC_SCROLL_TAIL_VAR, `${nextTail}px`)
-}
-
-/** @deprecated Use setRowTail() for per-row tail values. */
-function setSyncedRowsTail(tailPx: number, rows: HTMLElement[] = getSyncedRows()) {
-  const nextTail = Math.max(0, tailPx)
-  syncedRowsTailPx = nextTail
-  for (const row of rows) {
-    row.style.setProperty(SYNC_SCROLL_TAIL_VAR, `${nextTail}px`)
-  }
-}
-
-// Reference the deprecated function so TS doesn't complain; it may be called
-// by external code.
-void setSyncedRowsTail
-
-/** @deprecated Tail is now per-row. Kept for external compatibility. */
-export function getSyncedRowsTailPx(): number {
-  return syncedRowsTailPx
+  return Math.min(Math.max(offset, 0), getRowMaxScroll(row))
 }
 
 function applySyncedRowScroll(offset: number, rows: HTMLElement[] = getSyncedRows()) {
@@ -152,16 +148,18 @@ function applySyncedRowScroll(offset: number, rows: HTMLElement[] = getSyncedRow
   }
 }
 
-function resetAllRowTails(rows: HTMLElement[] = getSyncedRows()) {
+function setAllRowTails(tailPx: number, rows: HTMLElement[] = getSyncedRows()) {
+  const value = `${Math.max(0, tailPx)}px`
   for (const row of rows) {
-    setRowTail(row, 0)
+    row.style.setProperty(SYNC_SCROLL_TAIL_VAR, value)
   }
 }
 
 function resetSyncedRows(immediate: boolean = false) {
   lastSyncedAnchorCol = null
   syncedRowsTargetOffset = 0
-  resetAllRowTails()
+  invalidateMetrics()
+  setAllRowTails(0)
 
   if (immediate) {
     syncedRowsCurrentOffset = 0
@@ -222,53 +220,45 @@ function updateSyncedRowTarget(anchorCol: number, anchorRow: HTMLElement | null 
   const rows = getSyncedRows()
   if (rows.length === 0) return
 
-  const metrics = getSyncedRowMetrics(rows)
-  if (!metrics) return
+  initCurrentOffsetFromDOM()
 
-  const currentOffset = syncedRowsCurrentOffset
-  const effectiveAnchorOffset = currentOffset
-  const deadzoneInset = Math.max(
-    metrics.paddingLeft,
-    (metrics.viewportWidth - metrics.cardWidth) * SYNC_SCROLL_DEADZONE_RATIO,
-  )
-  const rightDeadzone = metrics.rightDeadzoneOverride ?? deadzoneInset
-  const minVisibleLeft = deadzoneInset
+  const m = getMetrics()
+  if (!m) return
+
+  const itemLeft = m.paddingLeft + anchorCol * m.stride
   const maxVisibleLeft = Math.max(
-    minVisibleLeft,
-    metrics.viewportWidth - metrics.cardWidth - rightDeadzone,
+    m.paddingLeft,
+    m.viewportWidth - m.cardWidth - m.rightDeadzone,
   )
-  const itemLeft = metrics.paddingLeft + anchorCol * metrics.stride
-  const viewportLeft = itemLeft - effectiveAnchorOffset
 
-  let desiredOffset =
-    viewportLeft < minVisibleLeft
-      ? Math.max(0, itemLeft - minVisibleLeft)
-      : viewportLeft > maxVisibleLeft
-        ? Math.max(0, itemLeft - maxVisibleLeft)
-        : currentOffset
+  // Ideal unclamped offset: position the anchor column at the right edge of
+  // the safe zone, or 0 if it fits without scrolling.
+  let desiredOffset = Math.max(0, itemLeft - maxVisibleLeft)
 
-  // If the anchor row fits entirely on screen (no scrollable overflow), keep
-  // it left-aligned and do not generate tail padding for it.
-  if (anchorRow && getRowMaxOffset(anchorRow) === 0) {
+  // Clamp to the anchor row's own limit so the global target is always
+  // reachable by the row that drove the navigation.
+  if (anchorRow) {
+    desiredOffset = Math.min(desiredOffset, getRowMaxScroll(anchorRow))
+  }
+
+  // If the anchor row fits entirely on screen, keep it left-aligned.
+  if (anchorRow && getRowMaxScroll(anchorRow) === 0) {
     desiredOffset = 0
   }
 
-  // Compute and apply per-row tail: each row gets exactly the tail it needs
-  // to reach the desired virtual offset. Rows that don't need tail keep what
-  // they have (or get none). This is strictly per-row — no global minimum.
+  // Tail is a fixed viewport constant applied to all rows.
+  const fixedTail = m.rightDeadzone
   let anyTailChanged = false
   for (const row of rows) {
-    const neededTail = getTailNeededForOffset(desiredOffset, row)
-    const currentTail = getRowTail(row)
-    const nextTail = Math.max(currentTail, neededTail)
-    if (Math.abs(nextTail - currentTail) >= 0.5) {
-      setRowTail(row, nextTail)
+    const currentTailRaw = row.style.getPropertyValue(SYNC_SCROLL_TAIL_VAR).trim()
+    const currentTail = currentTailRaw ? parseFloat(currentTailRaw) : 0
+    if (Math.abs(fixedTail - currentTail) >= 0.5) {
+      row.style.setProperty(SYNC_SCROLL_TAIL_VAR, `${fixedTail}px`)
       anyTailChanged = true
     }
   }
   if (anyTailChanged) {
-    // Force synchronous layout recalculation so that scrollWidth reflects
-    // the new tail padding before we compute clamped scroll positions.
+    // Force layout recalc so scrollWidth is up to date before we clamp.
     for (const row of rows) {
       void row.scrollWidth
     }
@@ -278,14 +268,10 @@ function updateSyncedRowTarget(anchorCol: number, anchorRow: HTMLElement | null 
   syncedRowsTargetOffset = desiredOffset
 
   if (!anchorRow) {
-    resetAllRowTails(rows)
+    setAllRowTails(0, rows)
     for (const row of rows) {
       void row.scrollWidth
     }
-  }
-
-  if (syncedRowsFrame === null) {
-    syncedRowsCurrentOffset = currentOffset
   }
 
   if (Math.abs(syncedRowsTargetOffset - syncedRowsCurrentOffset) < 0.5) {
@@ -344,6 +330,7 @@ function syncRowsToElement(element: HTMLElement) {
 }
 
 function handleSyncedRowResize() {
+  invalidateMetrics()
   if (lastSyncedAnchorCol === null) {
     resetSyncedRows(true)
     return
@@ -383,20 +370,32 @@ function ensureElementVisibleVertically(element: HTMLElement) {
   }
 }
 
-/**
- * Get all focusable elements in the DOM, grouped by row
- */
+// ---------------------------------------------------------------------------
+// Element finding / navigation (unchanged logic, uses getMetrics() now)
+// ---------------------------------------------------------------------------
+
+function resolveOutOfBoundsNavigation(
+  context: OutOfBoundsNavigationContext,
+): HTMLElement | null {
+  const handlers = Array.from(outOfBoundsHandlers)
+  for (let i = handlers.length - 1; i >= 0; i--) {
+    const result = handlers[i]?.(context)
+    if (result) return result
+  }
+  return null
+}
+
+const outOfBoundsHandlers = new Set<OutOfBoundsNavigationHandler>()
+
 function getFocusableElements(): FocusableElement[] {
   const elements = document.querySelectorAll(`[${FOCUSABLE_ATTR}]`)
   const result: FocusableElement[] = []
 
   elements.forEach((el) => {
     const htmlEl = el as HTMLElement
-    // Skip hidden elements
     if (htmlEl.offsetParent === null) return
 
     const rect = htmlEl.getBoundingClientRect()
-    // Skip elements not in viewport or zero-sized
     if (rect.width === 0 || rect.height === 0) return
 
     const row = parseInt(htmlEl.getAttribute(ROW_ATTR) || "0", 10)
@@ -412,9 +411,6 @@ function getFocusableElements(): FocusableElement[] {
   return result
 }
 
-/**
- * Get elements grouped by row
- */
 function getElementsByRow(): Map<number, FocusableElement[]> {
   const elements = getFocusableElements()
   const byRow = new Map<number, FocusableElement[]>()
@@ -426,7 +422,6 @@ function getElementsByRow(): Map<number, FocusableElement[]> {
     byRow.get(el.row)!.push(el)
   }
 
-  // Sort each row by column
   for (const [, rowElements] of byRow) {
     rowElements.sort((a, b) => a.col - b.col)
   }
@@ -434,10 +429,6 @@ function getElementsByRow(): Map<number, FocusableElement[]> {
   return byRow
 }
 
-/**
- * Find element by row and col indices
- * @param useEntryCol - if true, check for entry-col override on elements
- */
 function findElementAt(
   row: number,
   col: number,
@@ -447,7 +438,6 @@ function findElementAt(
   const rowElements = byRow.get(row)
   if (!rowElements || rowElements.length === 0) return null
 
-  // Check if any element in this row has an entry-col override
   if (useEntryCol) {
     for (const el of rowElements) {
       const entryCol = el.element.getAttribute(ENTRY_COL_ATTR)
@@ -459,11 +449,9 @@ function findElementAt(
     }
   }
 
-  // Find exact match or nearest col
   const exact = rowElements.find((e) => e.col === col)
   if (exact) return exact
 
-  // Find nearest col in this row
   let nearest = rowElements[0]
   let nearestDist = Math.abs(nearest.col - col)
 
@@ -495,7 +483,6 @@ function findElementClosestToLogicalViewportX(
   for (const candidate of rowElements) {
     let candidateCenterX: number
     if (metrics) {
-      // Compare using global synced offset so capped rows do not skew vertical matching.
       candidateCenterX =
         metrics.paddingLeft +
         candidate.col * metrics.stride -
@@ -522,9 +509,6 @@ function findElementClosestToLogicalViewportX(
   return nearest
 }
 
-/**
- * Find next element in direction using row/col indices
- */
 function findNextElement(
   current: HTMLElement,
   direction: NavDirection,
@@ -534,8 +518,7 @@ function findNextElement(
   const byRow = getElementsByRow()
 
   if (direction === "left" || direction === "right") {
-    // Horizontal: move within same row by col index
-    desiredCol.value = null // Reset desired col on horizontal movement
+    desiredCol.value = null
 
     const rowElements = byRow.get(currentRow)
     if (!rowElements) return null
@@ -543,7 +526,6 @@ function findNextElement(
     const delta = direction === "right" ? 1 : -1
     const targetCol = currentCol + delta
 
-    // Find element with target col in this row
     const target = rowElements.find((e) => e.col === targetCol)
     if (target?.element) return target.element
 
@@ -555,7 +537,6 @@ function findNextElement(
       byRow,
     })
   } else {
-    // Vertical: move to adjacent row, try to maintain column
     const sortedRows = Array.from(byRow.keys()).sort((a, b) => a - b)
     const currentRowIdx = sortedRows.indexOf(currentRow)
 
@@ -575,16 +556,12 @@ function findNextElement(
     }
 
     const targetRow = sortedRows[targetRowIdx]
-
-    // Use desired col if set, otherwise use current col
     const targetCol = desiredCol.value ?? currentCol
 
-    // Set desired col if not already set (first vertical move in a sequence)
     if (desiredCol.value === null) {
       desiredCol.value = currentCol
     }
 
-    // Use entry column hook for vertical navigation when present.
     const entryTarget = findElementAt(targetRow, targetCol, true)
     const targetRowElements = byRow.get(targetRow) ?? []
     const hasEntryOverride = targetRowElements.some((el) => el.element.hasAttribute(ENTRY_COL_ATTR))
@@ -592,22 +569,14 @@ function findNextElement(
       return entryTarget?.element || null
     }
 
-    const syncedRows = getSyncedRows()
-    const metrics = getSyncedRowMetrics(syncedRows)
-    const logicalCurrentCenterX = metrics
-      ? metrics.paddingLeft +
-        currentCol * metrics.stride -
-        syncedRowsCurrentOffset +
-        metrics.cardWidth / 2
-      : (() => {
-          const currentRect = current.getBoundingClientRect()
-          return currentRect.left + currentRect.width / 2
-        })()
+    const m = getMetrics()
+    const currentRect = current.getBoundingClientRect()
+    const actualCurrentCenterX = currentRect.left + currentRect.width / 2
     const closestByViewport = findElementClosestToLogicalViewportX(
       targetRow,
-      logicalCurrentCenterX,
+      actualCurrentCenterX,
       targetCol,
-      metrics,
+      m,
     )
     const resolved = closestByViewport?.element || entryTarget?.element || null
     if (resolved) return resolved
@@ -622,19 +591,14 @@ function findNextElement(
   }
 }
 
-/**
- * Focus an element and scroll it into view
- */
 function focusElement(element: HTMLElement | null) {
   if (!element) return
 
-  // Remove focus from previous element
   if (focusedElement.value && focusedElement.value !== element) {
     focusedElement.value.classList.remove("nav-focused")
     focusedElement.value.blur()
   }
 
-  // Add focus to new element
   element.classList.add("nav-focused")
   element.focus({ preventScroll: true })
 
@@ -644,9 +608,6 @@ function focusElement(element: HTMLElement | null) {
   focusedElement.value = element
 }
 
-/**
- * Get current focus state (row, col) for saving
- */
 function getFocusState(): { row: number; col: number } | null {
   if (!focusedElement.value) return null
   const row = parseInt(focusedElement.value.getAttribute(ROW_ATTR) || "0", 10)
@@ -654,9 +615,6 @@ function getFocusState(): { row: number; col: number } | null {
   return { row, col }
 }
 
-/**
- * Restore focus to element with given row/col
- */
 function restoreFocusState(state: { row: number; col: number } | null) {
   if (!state) return
 
@@ -668,9 +626,6 @@ function restoreFocusState(state: { row: number; col: number } | null) {
   }
 }
 
-/**
- * Focus element at specific row/col after a delay (for page transitions)
- */
 function focusAt(row: number, col: number, delay: number = 100) {
   setTimeout(() => {
     const target = findElementAt(row, col)
@@ -680,28 +635,20 @@ function focusAt(row: number, col: number, delay: number = 100) {
   }, delay)
 }
 
-/**
- * Check if we should allow navigation from an input element
- */
 function shouldAllowNavigationFromInput(target: HTMLElement, direction: string): boolean {
   if (target.tagName !== "INPUT" && target.tagName !== "TEXTAREA" && !target.isContentEditable) {
-    return true // Not an input, allow navigation
+    return true
   }
 
-  // Always allow up/down navigation from inputs
   if (direction === "up" || direction === "down") {
     return true
   }
 
-  // For left/right, only capture if input is empty
   const inputEl = target as HTMLInputElement | HTMLTextAreaElement
   const value = inputEl.value || ""
   return value.length === 0
 }
 
-/**
- * Handle keyboard navigation
- */
 function handleKeyDown(event: KeyboardEvent) {
   const target = event.target as HTMLElement
 
@@ -714,7 +661,6 @@ function handleKeyDown(event: KeyboardEvent) {
 
   if (!direction) return
 
-  // Check if we should allow navigation from this element
   if (!shouldAllowNavigationFromInput(target, direction)) {
     return
   }
@@ -722,10 +668,8 @@ function handleKeyDown(event: KeyboardEvent) {
   event.preventDefault()
   isNavigating.value = true
 
-  // Get current focused element or find the first one
   let current = focusedElement.value
 
-  // If no element is focused, try to get the currently focused element from DOM
   if (!current) {
     const activeElement = document.activeElement as HTMLElement
     if (activeElement && activeElement.hasAttribute(FOCUSABLE_ATTR)) {
@@ -733,7 +677,6 @@ function handleKeyDown(event: KeyboardEvent) {
     }
   }
 
-  // If still no current, focus the first available element
   if (!current) {
     const elements = getFocusableElements()
     if (elements.length > 0) {
@@ -742,16 +685,12 @@ function handleKeyDown(event: KeyboardEvent) {
     return
   }
 
-  // Find and focus the next element using index-based navigation
   const next = findNextElement(current, direction)
   if (next) {
     focusElement(next)
   }
 }
 
-/**
- * Handle Enter key to activate focused element
- */
 function handleEnterKey(event: KeyboardEvent) {
   if (event.key !== "Enter") return
   if (event.defaultPrevented) return
@@ -768,10 +707,6 @@ function handleEnterKey(event: KeyboardEvent) {
   }
 }
 
-/**
- * Install global keyboard navigation handlers
- * Should be called once at app initialization
- */
 export function installKeyboardNavigation() {
   if (handlersInstalled) return
   handlersInstalled = true
@@ -782,18 +717,15 @@ export function installKeyboardNavigation() {
   document.addEventListener("keydown", handleEnterKey)
   window.addEventListener("resize", handleSyncedRowResize, { passive: true })
 
-  // Handle mouse clicks to update focus state
   document.addEventListener("click", (event) => {
     const target = event.target as HTMLElement
     const focusable = target.closest(`[${FOCUSABLE_ATTR}]`) as HTMLElement | null
     if (focusable) {
-      desiredCol.value = null // Reset desired col on mouse click
+      desiredCol.value = null
       focusElement(focusable)
     }
   })
 
-  // Middle-click commonly opens links in a background tab.
-  // Scroll after activation so the source page keeps the clicked item in the safe zone.
   document.addEventListener("auxclick", (event) => {
     if (event.button !== 1) return
     const target = event.target as HTMLElement
@@ -804,7 +736,6 @@ export function installKeyboardNavigation() {
     }
   })
 
-  // Handle focus events from tab navigation
   document.addEventListener("focusin", (event) => {
     const target = event.target as HTMLElement
     if (target.hasAttribute(FOCUSABLE_ATTR)) {
@@ -813,17 +744,13 @@ export function installKeyboardNavigation() {
       }
       focusedElement.value = target
       target.classList.add("nav-focused")
-      desiredCol.value = null // Reset desired col on focus change
+      desiredCol.value = null
     } else {
       resetSyncedRows()
     }
   })
 }
 
-/**
- * Composable to access keyboard navigation state
- * @deprecated Use installKeyboardNavigation() at app init instead
- */
 export function useKeyboardNavigation() {
   return {
     focusedElement,
@@ -835,10 +762,6 @@ export function useKeyboardNavigation() {
   }
 }
 
-/**
- * Helper to generate navigation attributes for a focusable element
- * @param entryCol - optional column to focus when entering this row vertically
- */
 export function navAttrs(row: number, col: number, entryCol?: number) {
   const attrs: Record<string, string | number> = {
     [FOCUSABLE_ATTR]: "true",
