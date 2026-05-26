@@ -1,7 +1,8 @@
 type GamepadAction = "up" | "down" | "left" | "right" | "select" | "back" | "menu"
 
 const GAMEPAD_AXIS_THRESHOLD = 0.55
-const GAMEPAD_REPEAT_MS = 180
+const GAMEPAD_REPEAT_MS = 90
+const GAMEPAD_VERTICAL_REPEAT_MS = 140
 
 const KEY_BY_ACTION: Partial<Record<GamepadAction, string>> = {
   up: "ArrowUp",
@@ -32,6 +33,24 @@ const gamepadLastTriggerAt: Record<GamepadAction, number> = {
   menu: 0,
 }
 
+const rawButtonLastTriggerAt: Record<number, number> = {
+  2: 0,
+  3: 0,
+  4: 0,
+  5: 0,
+}
+
+function applyRawButtonEvent(button: number, now: number) {
+  const canTrigger = now - (rawButtonLastTriggerAt[button] ?? 0) >= GAMEPAD_REPEAT_MS
+  if (!canTrigger) return
+  rawButtonLastTriggerAt[button] = now
+  const event = new CustomEvent("mediahive:gamepad-button", {
+    detail: { button },
+    cancelable: true,
+  })
+  window.dispatchEvent(event)
+}
+
 let gamepadFrameId: number | null = null
 let gamepadInstalled = false
 
@@ -53,10 +72,12 @@ function applyGamepadAction(action: GamepadAction, isPressed: boolean, now: numb
 
   if (!isPressed) return
 
-  const shouldRepeat =
-    action === "up" || action === "down" || action === "left" || action === "right"
+  const isVertical = action === "up" || action === "down"
+  const isHorizontal = action === "left" || action === "right"
+  const shouldRepeat = isVertical || isHorizontal
+  const repeatMs = isVertical ? GAMEPAD_VERTICAL_REPEAT_MS : GAMEPAD_REPEAT_MS
   const canTrigger =
-    !wasPressed || (shouldRepeat && now - gamepadLastTriggerAt[action] >= GAMEPAD_REPEAT_MS)
+    !wasPressed || (shouldRepeat && now - gamepadLastTriggerAt[action] >= repeatMs)
   if (!canTrigger) return
 
   gamepadLastTriggerAt[action] = now
@@ -106,11 +127,30 @@ function pollGamepad() {
       left = left || Boolean(gamepad.buttons[14]?.pressed) || axisX <= -GAMEPAD_AXIS_THRESHOLD
       right = right || Boolean(gamepad.buttons[15]?.pressed) || axisX >= GAMEPAD_AXIS_THRESHOLD
 
-      // Xbox mapping on standard gamepads: A=0, B=1
+      // Xbox mapping on standard gamepads: A=0, B=1, X=2, Y=3
       select = select || Boolean(gamepad.buttons[0]?.pressed)
       back = back || Boolean(gamepad.buttons[1]?.pressed)
-      // Y/Triangle button opens contextual release list where supported.
+      // X/Square = backspace (handled by raw button event)
+      // Y/Triangle = space (handled by raw button event)
       menu = menu || Boolean(gamepad.buttons[3]?.pressed)
+
+      if (gamepad.buttons[2]?.pressed) {
+        applyRawButtonEvent(2, now)
+      }
+      if (gamepad.buttons[3]?.pressed) {
+        applyRawButtonEvent(3, now)
+      }
+
+      // Shoulder buttons for cursor movement (handled by raw button event)
+      const lb = Boolean(gamepad.buttons[4]?.pressed)
+      const rb = Boolean(gamepad.buttons[5]?.pressed)
+
+      if (lb) {
+        applyRawButtonEvent(4, now)
+      }
+      if (rb) {
+        applyRawButtonEvent(5, now)
+      }
     }
 
     applyGamepadAction("up", up, now)

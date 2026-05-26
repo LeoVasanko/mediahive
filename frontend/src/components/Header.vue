@@ -48,6 +48,13 @@
         @focus="handleSearchFocus"
         @keydown.escape="handleEscape"
       />
+      <HexKeyboard
+        v-model="localSearch"
+        :visible="hexKeyboardVisible"
+        :search-ref="searchInputRef"
+        @close="hexKeyboardVisible = false"
+        @submit="hexKeyboardVisible = false"
+      />
     </div>
 
     <div v-if="mpcBeConnected" class="player-indicator" title="MPC-BE is connected">
@@ -146,6 +153,7 @@ import { useRouter } from "vue-router"
 import { navAttrs } from "../composables/useKeyboardNavigation"
 import logoUrl from "../assets/mediahive.webp"
 import { fetchRoots, replaceRoots, pickFolderAndAddRoot } from "../api"
+import HexKeyboard from "./HexKeyboard.vue"
 
 interface RootEntry {
   root_id: string
@@ -285,9 +293,32 @@ watch(
 )
 
 function handleEscape() {
+  if (hexKeyboardVisible.value) {
+    hexKeyboardVisible.value = false
+    return
+  }
   // Clear search and blur
   localSearch.value = ""
   searchInputRef.value?.blur()
+}
+
+const hexKeyboardVisible = ref(false)
+
+function onGamepadAction(event: Event) {
+  const customEvent = event as CustomEvent<{ action?: string }>
+  const action = customEvent.detail?.action
+  if (!action) return
+
+  // Only handle when search input is focused
+  const active = document.activeElement
+  if (!active || !searchInputRef.value || active !== searchInputRef.value) return
+
+  if (action === "select") {
+    event.preventDefault()
+    if (!hexKeyboardVisible.value) {
+      hexKeyboardVisible.value = true
+    }
+  }
 }
 
 function focusSearchInput() {
@@ -316,10 +347,12 @@ function handleKeydown(e: KeyboardEvent) {
 
 onMounted(() => {
   window.addEventListener("keydown", handleKeydown)
+  window.addEventListener("mediahive:gamepad-action", onGamepadAction)
 })
 
 onUnmounted(() => {
   window.removeEventListener("keydown", handleKeydown)
+  window.removeEventListener("mediahive:gamepad-action", onGamepadAction)
 })
 </script>
 
