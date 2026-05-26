@@ -3,18 +3,24 @@
     <Transition name="hex-keyboard-fade">
       <div v-if="visible" ref="keyboardRef" class="hex-keyboard" @click.stop @keydown="handleKeyDown">
         <div ref="gridRef" class="hex-keyboard-grid">
-          <template v-for="(key, index) in layoutKeys" :key="key.id">
+          <div
+            v-for="(row, rowIndex) in rows"
+            :key="rowIndex"
+            class="hex-keyboard-row"
+            :class="`hex-keyboard-row-${rowIndex}`"
+          >
             <button
-              :ref="(el: unknown) => setKeyRef(el as HTMLElement | null, index)"
+              v-for="key in row"
+              :key="key.id"
+              :ref="(el: unknown) => setKeyRef(el as HTMLElement | null, key.globalIndex)"
               class="hex-key"
               :class="[
-                `hex-key-${index}`,
-                `hex-key-row-${getCoord(index).row}`,
+                `hex-key-row-${getCoord(key.globalIndex).row}`,
                 {
                   'hex-key-blue': key.bg === 'blue',
                   'hex-key-yellow': key.bg === 'yellow',
                   'hex-key-red': key.bg === 'red',
-                  'hex-key-pressed': isPressed(index),
+                  'hex-key-pressed': isPressed(key.globalIndex),
                 },
               ]"
               tabindex="-1"
@@ -22,7 +28,7 @@
             >
               <span class="hex-key-label" :class="{ 'hex-key-label-large': key.id === 'sp' }">{{ key.label }}</span>
             </button>
-          </template>
+          </div>
           <!-- Green focus outline rendered separately on top -->
           <svg
             v-if="focusedIndex !== null"
@@ -50,6 +56,10 @@ interface KeyDef {
   bg?: "blue" | "yellow" | "red"
 }
 
+interface RowKeyDef extends KeyDef {
+  globalIndex: number
+}
+
 const props = defineProps<{
   visible: boolean
   modelValue: string
@@ -74,6 +84,16 @@ function isPressed(index: number): boolean {
   if (!ts) return false
   return Date.now() - ts < 1000
 }
+
+const rows = computed<RowKeyDef[][]>(() => {
+  const result: RowKeyDef[][] = [[], [], [], []]
+  for (let i = 0; i < layoutKeys.length; i++) {
+    const key = layoutKeys[i]
+    const coord = getCoord(i)
+    result[coord.row].push({ ...key, globalIndex: i })
+  }
+  return result
+})
 
 // Four-row layout with honeycomb staggering
 // Each row shifted 0.5 cell left relative to the one below:
@@ -470,16 +490,32 @@ onUnmounted(() => {
 
 .hex-keyboard-grid {
   position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
   --key-h: 56px;
   --key-w: calc(0.866 * var(--key-h));
-  width: calc(var(--key-w) * 12.5);
-  height: calc(var(--key-h) * 3.25);
 }
 
+.hex-keyboard-row {
+  display: flex;
+}
+
+/* Overlap: each row overlaps the previous by 0.25 * key-h */
+.hex-keyboard-row:not(:first-child) {
+  margin-top: calc(var(--key-h) * -0.25);
+}
+
+/* Row horizontal offsets for honeycomb staggering */
+.hex-keyboard-row-0 { margin-left: 0; }
+.hex-keyboard-row-1 { margin-left: calc(var(--key-w) * 0.5); }
+.hex-keyboard-row-2 { margin-left: calc(var(--key-w) * 1.0); }
+.hex-keyboard-row-3 { margin-left: calc(var(--key-w) * 1.5); }
+
 .hex-key {
-  position: absolute;
+  position: relative;
   height: var(--key-h);
-  aspect-ratio: 0.866 / 1;
+  width: var(--key-w);
   border: none;
   color: #ffffff;
   font-size: 0.95rem;
@@ -564,54 +600,6 @@ onUnmounted(() => {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.4; }
 }
-
-/* Row positioning */
-/* Row 0 (numbers + BS) — shift 0 */
-.hex-key-0  { top: calc(var(--key-h) * 0.00); left: calc(var(--key-w) * 0.0); }
-.hex-key-1  { top: calc(var(--key-h) * 0.00); left: calc(var(--key-w) * 1.0); }
-.hex-key-2  { top: calc(var(--key-h) * 0.00); left: calc(var(--key-w) * 2.0); }
-.hex-key-3  { top: calc(var(--key-h) * 0.00); left: calc(var(--key-w) * 3.0); }
-.hex-key-4  { top: calc(var(--key-h) * 0.00); left: calc(var(--key-w) * 4.0); }
-.hex-key-5  { top: calc(var(--key-h) * 0.00); left: calc(var(--key-w) * 5.0); }
-.hex-key-6  { top: calc(var(--key-h) * 0.00); left: calc(var(--key-w) * 6.0); }
-.hex-key-7  { top: calc(var(--key-h) * 0.00); left: calc(var(--key-w) * 7.0); }
-.hex-key-8  { top: calc(var(--key-h) * 0.00); left: calc(var(--key-w) * 8.0); }
-.hex-key-9  { top: calc(var(--key-h) * 0.00); left: calc(var(--key-w) * 9.0); }
-.hex-key-10 { top: calc(var(--key-h) * 0.00); left: calc(var(--key-w) * 10.0); }
-
-/* Row 1 (QWERTY) — shift 0.5 */
-.hex-key-11 { top: calc(var(--key-h) * 0.75); left: calc(var(--key-w) * 0.5); }
-.hex-key-12 { top: calc(var(--key-h) * 0.75); left: calc(var(--key-w) * 1.5); }
-.hex-key-13 { top: calc(var(--key-h) * 0.75); left: calc(var(--key-w) * 2.5); }
-.hex-key-14 { top: calc(var(--key-h) * 0.75); left: calc(var(--key-w) * 3.5); }
-.hex-key-15 { top: calc(var(--key-h) * 0.75); left: calc(var(--key-w) * 4.5); }
-.hex-key-16 { top: calc(var(--key-h) * 0.75); left: calc(var(--key-w) * 5.5); }
-.hex-key-17 { top: calc(var(--key-h) * 0.75); left: calc(var(--key-w) * 6.5); }
-.hex-key-18 { top: calc(var(--key-h) * 0.75); left: calc(var(--key-w) * 7.5); }
-.hex-key-19 { top: calc(var(--key-h) * 0.75); left: calc(var(--key-w) * 8.5); }
-.hex-key-20 { top: calc(var(--key-h) * 0.75); left: calc(var(--key-w) * 9.5); }
-
-/* Row 2 (ASDF) — shift 1.0 */
-.hex-key-21 { top: calc(var(--key-h) * 1.50); left: calc(var(--key-w) * 1.0); }
-.hex-key-22 { top: calc(var(--key-h) * 1.50); left: calc(var(--key-w) * 2.0); }
-.hex-key-23 { top: calc(var(--key-h) * 1.50); left: calc(var(--key-w) * 3.0); }
-.hex-key-24 { top: calc(var(--key-h) * 1.50); left: calc(var(--key-w) * 4.0); }
-.hex-key-25 { top: calc(var(--key-h) * 1.50); left: calc(var(--key-w) * 5.0); }
-.hex-key-26 { top: calc(var(--key-h) * 1.50); left: calc(var(--key-w) * 6.0); }
-.hex-key-27 { top: calc(var(--key-h) * 1.50); left: calc(var(--key-w) * 7.0); }
-.hex-key-28 { top: calc(var(--key-h) * 1.50); left: calc(var(--key-w) * 8.0); }
-.hex-key-29 { top: calc(var(--key-h) * 1.50); left: calc(var(--key-w) * 9.0); }
-
-/* Row 3 (ZXCV + Space + Close) — shift 1.5 */
-.hex-key-30 { top: calc(var(--key-h) * 2.25); left: calc(var(--key-w) * 1.5); }
-.hex-key-31 { top: calc(var(--key-h) * 2.25); left: calc(var(--key-w) * 2.5); }
-.hex-key-32 { top: calc(var(--key-h) * 2.25); left: calc(var(--key-w) * 3.5); }
-.hex-key-33 { top: calc(var(--key-h) * 2.25); left: calc(var(--key-w) * 4.5); }
-.hex-key-34 { top: calc(var(--key-h) * 2.25); left: calc(var(--key-w) * 5.5); }
-.hex-key-35 { top: calc(var(--key-h) * 2.25); left: calc(var(--key-w) * 6.5); }
-.hex-key-36 { top: calc(var(--key-h) * 2.25); left: calc(var(--key-w) * 7.5); }
-.hex-key-37 { top: calc(var(--key-h) * 2.25); left: calc(var(--key-w) * 8.5); }
-.hex-key-38 { top: calc(var(--key-h) * 2.25); left: calc(var(--key-w) * 9.5); }
 
 /* Transition */
 .hex-keyboard-fade-enter-active,
