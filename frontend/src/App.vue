@@ -1654,8 +1654,9 @@ async function handleOpenFolder(folderPath: string, explicitRootId?: string | nu
   display: flex;
   justify-content: center;
   align-items: center;
+  margin-top: 5rem;
   padding: 60px 20px;
   color: var(--text-secondary);
-  font-size: 1.1rem;
+  font-size: 2rem;
 }
 </style>
