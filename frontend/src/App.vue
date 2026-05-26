@@ -150,7 +150,7 @@
             </section>
           </template>
         </template>
-        <template v-else>
+        <template v-else-if="!isSearching">
           <!-- Empty hero area to maintain layout -->
           <div class="empty-hero"></div>
           <!-- Spacer for header overlay -->
@@ -172,8 +172,6 @@ import type {
   Series,
   MediaItem,
   EpisodeWithSeries,
-  MatchedPerson,
-  MatchedEpisode,
   TaskInfo,
 } from "./types"
 import {
@@ -191,6 +189,7 @@ import Header from "./components/Header.vue"
 import CollageHero from "./components/CollageHero.vue"
 import MediaRow from "./components/MediaRow.vue"
 import MediaDetail from "./components/MediaDetail.vue"
+import type { SearchResultItem, SearchResponseMessage } from "./search-worker"
 
 // Initialize keyboard navigation
 const { getFocusState, restoreFocusState, focusAt, focusElement } = useKeyboardNavigation()
@@ -370,19 +369,7 @@ function onGamepadAction(event: Event) {
 // Focus episode info for navigating to series detail from search
 const focusEpisode = ref<{ seasonNumber: number; episodeNumber: number } | null>(null)
 
-// Search result categories
-interface SearchCategory {
-  name: string
-  items: MediaItem[]
-}
-
-interface ScoredMediaItem {
-  item: MediaItem
-  score: number
-  matchType: "movies" | "series" | "people" | "other"
-}
-
-const searchCategories = ref<SearchCategory[]>([])
+const searchCategories = ref<{ name: string; items: MediaItem[] }[]>([])
 
 // Focus state per page for Escape navigation
 const focusStateMap = new Map<string, { row: number; col: number }>()
@@ -901,277 +888,59 @@ const seriesByGenre = computed(() => {
   return categories
 })
 
-// Calculate relevance score for a match
-// Higher score = more relevant (beginning of name > word boundary > mid-word)
-function normalizeSearchText(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim()
-    .replace(/\s+/g, " ")
-}
+// Search worker
+let searchWorker: Worker | null = null
+let pendingSearchId = 0
+let workerHasIndex = false
 
-function normalizePathSearchText(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[\\/]+/g, "/")
-    .replace(/[^a-z0-9/]+/g, " ")
-    .trim()
-    .replace(/\s+/g, " ")
-}
-
-function getTermMatchScore(term: string, field: string): number {
-  const index = field.indexOf(term)
-  if (index < 0) return 0
-
-  if (index === 0) return 100
-
-  const charBefore = field[index - 1]
-  if (/\s/.test(charBefore)) return 80
-
-  if (index < field.length / 2) return 50
-
-  return 30
-}
-
-function getPathTermMatchScore(term: string, field: string): number {
-  const index = field.indexOf(term)
-  if (index < 0) return 0
-
-  if (index === 0) return 100
-
-  const charBefore = field[index - 1]
-  if (/\s|\//.test(charBefore)) return 80
-
-  if (index < field.length / 2) return 50
-
-  return 30
-}
-
-function getRelevanceScore(query: string, field: string): number {
-  const normalizedField = normalizeSearchText(field)
-  const normalizedQuery = normalizeSearchText(query)
-
-  if (!normalizedField || !normalizedQuery) return 0
-
-  let bestScore = 0
-  const exactIndex = normalizedField.indexOf(normalizedQuery)
-
-  // Exact phrase gets the strongest preference.
-  if (exactIndex >= 0) {
-    if (exactIndex === 0) {
-      bestScore = 110
-    } else {
-      const charBefore = normalizedField[exactIndex - 1]
-      if (/\s/.test(charBefore)) {
-        bestScore = 95
-      } else if (exactIndex < normalizedField.length / 2) {
-        bestScore = 75
-      } else {
-        bestScore = 60
-      }
+function getSearchWorker(): Worker {
+  if (!searchWorker) {
+    searchWorker = new Worker(new URL("./search-worker.ts", import.meta.url), {
+      type: "module",
+    })
+    searchWorker.onmessage = (event: MessageEvent<SearchResponseMessage>) => {
+      const { id, results, categories } = event.data
+      // Ignore stale results
+      if (id !== pendingSearchId) return
+      searchResults.value = results.map(rehydrateSearchResult)
+      searchCategories.value = categories.map((cat) => ({
+        name: cat.name,
+        items: cat.items.map(rehydrateSearchResult),
+      }))
+      isSearching.value = false
     }
   }
-
-  const terms = normalizedQuery.split(" ")
-  if (terms.length > 1) {
-    let matchedTerms = 0
-    let termScoreTotal = 0
-
-    for (const term of terms) {
-      const termScore = getTermMatchScore(term, normalizedField)
-      if (termScore > 0) {
-        matchedTerms += 1
-        termScoreTotal += termScore
-      }
-    }
-
-    if (matchedTerms > 0) {
-      const coverage = matchedTerms / terms.length
-      const averageScore = termScoreTotal / matchedTerms
-      const combinedScore = Math.round(averageScore * (0.6 + coverage * 0.4))
-      if (combinedScore > bestScore) bestScore = combinedScore
-    }
-  }
-
-  return bestScore
+  return searchWorker
 }
 
-function getPathRelevanceScore(query: string, field: string): number {
-  const normalizedField = normalizePathSearchText(field)
-  const normalizedQuery = normalizePathSearchText(query)
-
-  if (!normalizedField || !normalizedQuery) return 0
-
-  let bestScore = 0
-  const exactIndex = normalizedField.indexOf(normalizedQuery)
-
-  if (exactIndex >= 0) {
-    if (exactIndex === 0) {
-      bestScore = 110
-    } else {
-      const charBefore = normalizedField[exactIndex - 1]
-      if (/\s|\//.test(charBefore)) {
-        bestScore = 95
-      } else if (exactIndex < normalizedField.length / 2) {
-        bestScore = 75
-      } else {
-        bestScore = 60
-      }
-    }
-  }
-
-  const terms = normalizedQuery.split(" ")
-  if (terms.length > 1) {
-    let matchedTerms = 0
-    let termScoreTotal = 0
-
-    for (const term of terms) {
-      const termScore = getPathTermMatchScore(term, normalizedField)
-      if (termScore > 0) {
-        matchedTerms += 1
-        termScoreTotal += termScore
-      }
-    }
-
-    if (matchedTerms > 0) {
-      const coverage = matchedTerms / terms.length
-      const averageScore = termScoreTotal / matchedTerms
-      const combinedScore = Math.round(averageScore * (0.6 + coverage * 0.4))
-      if (combinedScore > bestScore) bestScore = combinedScore
-    }
-  }
-
-  return bestScore
+function syncWorkerIndex() {
+  if (!mediaIndex.value) return
+  const worker = getSearchWorker()
+  worker.postMessage({
+    type: "index",
+    movies: JSON.parse(JSON.stringify(mediaIndex.value.movies)),
+    series: JSON.parse(JSON.stringify(mediaIndex.value.series)),
+  })
+  workerHasIndex = true
 }
 
-// Get best relevance score from multiple fields
-function getBestScore(query: string, ...fields: (string | null | undefined)[]): number {
-  let bestScore = 0
-  for (const field of fields) {
-    if (field) {
-      const score = getRelevanceScore(query, field)
-      if (score > bestScore) bestScore = score
-    }
+// Rehydrate a lightweight SearchResultItem back into a full MediaItem
+function rehydrateSearchResult(result: SearchResultItem): MediaItem {
+  const base: MediaItem = {
+    id: result.id,
+    title: result.title,
+    year: result.year,
+    cover_path: result.cover_path,
+    showreel_images: result.showreel_images,
+    showreel_source_sets: result.showreel_source_sets,
+    type: result.type,
+    resolution: result.resolution,
+    data: {} as Movie | Series, // placeholder; lookup on demand if needed
+    root_id: result.root_id,
+    searchMatchInfo: result.searchMatchInfo,
   }
-  return bestScore
+  return base
 }
-
-function getMoviePathScore(movie: Movie, query: string): number {
-  const torrentFields: (string | null | undefined)[] = []
-  for (const torrent of Object.values(movie.torrents || {})) {
-    torrentFields.push(torrent.title, torrent.playable_file)
-  }
-  let bestScore = 0
-  for (const field of torrentFields) {
-    if (!field) continue
-    const score = getPathRelevanceScore(query, field)
-    if (score > bestScore) bestScore = score
-  }
-  return bestScore
-}
-
-function getSeriesPathScore(series: Series, query: string): number {
-  const torrentFields: (string | null | undefined)[] = []
-
-  for (const season of series.seasons || []) {
-    for (const episode of season.episodes || []) {
-      for (const torrent of Object.values(episode.torrents || {})) {
-        torrentFields.push(torrent.title, torrent.playable_file)
-      }
-    }
-  }
-
-  let bestScore = 0
-  for (const field of torrentFields) {
-    if (!field) continue
-    const score = getPathRelevanceScore(query, field)
-    if (score > bestScore) bestScore = score
-  }
-  return bestScore
-}
-
-// Check if any person name matches the query - returns matched people with roles
-interface PersonMatch {
-  name: string
-  roles: string[]
-  highlightRoles: boolean // true if character name matched (vs actor name)
-}
-
-function matchesPeople(
-  query: string,
-  cast: { name: string; character?: string | null }[] | null | undefined,
-  director?: string | null,
-  creators?: string[] | null,
-): { matches: PersonMatch[]; score: number } {
-  const matchedPeople: PersonMatch[] = []
-  let bestScore = 0
-
-  // Check director
-  if (director) {
-    const score = getRelevanceScore(query, director)
-    if (score > 0) {
-      matchedPeople.push({ name: director, roles: ["Director"], highlightRoles: false })
-      if (score > bestScore) bestScore = score
-    }
-  }
-
-  // Check creators
-  if (creators) {
-    for (const creator of creators) {
-      const score = getRelevanceScore(query, creator)
-      if (score > 0) {
-        const existing = matchedPeople.find((p) => p.name.toLowerCase() === creator.toLowerCase())
-        if (existing) {
-          if (!existing.roles.includes("Creator")) existing.roles.push("Creator")
-        } else {
-          matchedPeople.push({ name: creator, roles: ["Creator"], highlightRoles: false })
-        }
-        if (score > bestScore) bestScore = score
-      }
-    }
-  }
-
-  // Check cast - match on actor name or character name
-  if (cast) {
-    for (const person of cast) {
-      const nameScore = getRelevanceScore(query, person.name)
-      const characterScore = person.character ? getRelevanceScore(query, person.character) : 0
-      const bestPersonScore = Math.max(nameScore, characterScore)
-
-      if (bestPersonScore > 0) {
-        const role = person.character || "Cast"
-        const highlightRoles = characterScore > nameScore // Highlight character if that's what matched
-        const existing = matchedPeople.find(
-          (p) => p.name.toLowerCase() === person.name.toLowerCase(),
-        )
-        if (existing) {
-          if (!existing.roles.includes(role)) existing.roles.push(role)
-          // Update highlight if character matched better
-          if (highlightRoles) existing.highlightRoles = true
-        } else {
-          matchedPeople.push({ name: person.name, roles: [role], highlightRoles })
-        }
-        if (bestPersonScore > bestScore) bestScore = bestPersonScore
-      }
-    }
-  }
-
-  return { matches: matchedPeople, score: bestScore }
-}
-
-// Format matched people - returns array of MatchedPerson for display
-function formatMatchedPeople(people: PersonMatch[]): MatchedPerson[] {
-  return people.map((p) => ({
-    name: p.name,
-    roles: p.roles.join(", "),
-    highlightRoles: p.highlightRoles,
-  }))
-}
-
-// Debounced search with limit
-let searchTimeout: ReturnType<typeof setTimeout> | null = null
-const MAX_RESULTS = 100
 
 // Watch for detail page entry/exit to manage focus
 watch(selectedItem, (item, oldItem) => {
@@ -1218,231 +987,40 @@ watch(
   { immediate: true },
 )
 
-watch(searchQuery, (query) => {
-  if (searchTimeout) {
-    clearTimeout(searchTimeout)
-  }
-
+function runSearch() {
+  const query = searchQuery.value
   if (!query || !mediaIndex.value) {
     searchResults.value = []
     searchCategories.value = []
     isSearching.value = false
+    pendingSearchId += 1
     return
   }
 
+  if (!workerHasIndex) {
+    syncWorkerIndex()
+  }
+
   isSearching.value = true
+  pendingSearchId += 1
+  const id = pendingSearchId
 
-  // Debounce search by 50ms
-  searchTimeout = setTimeout(() => {
-    performSearch(query.toLowerCase())
-  }, 50)
-})
-
-function performSearch(query: string) {
-  if (!mediaIndex.value) return
-
-  const allScored: ScoredMediaItem[] = []
-  const processedIds = new Set<string>()
-
-  // Treat a standalone 4-digit query as a year hint, not an exclusive filter.
-  const yearMatch = query.match(/^(\d{4})$/)
-  const searchYear = yearMatch ? parseInt(yearMatch[1], 10) : null
-  const isYearQuery = searchYear !== null && searchYear >= 1900 && searchYear <= 2100
-  const yearBonus = 25
-
-  // Search movies
-  for (const movie of mediaIndex.value.movies) {
-    // Direct title match -> Movies category
-    const titleScore = getBestScore(query, movie.title, movie.info?.original_title)
-    const yearScore = isYearQuery && movie.year === searchYear ? yearBonus : 0
-    if (titleScore > 0 || yearScore > 0) {
-      allScored.push({
-        item: movieToMediaItem(movie),
-        score: titleScore + yearScore + (movie.info?.rating ?? 0) / 10,
-        matchType: "movies",
-      })
-      processedIds.add(movie.id)
-      continue
-    }
-
-    // Cast/director match -> People category
-    const peopleMatch = matchesPeople(query, movie.info?.cast, movie.info?.director)
-    if (peopleMatch.matches.length > 0) {
-      const item = movieToMediaItem(movie)
-      item.searchMatchInfo = { matchedPeople: formatMatchedPeople(peopleMatch.matches) }
-      allScored.push({
-        item,
-        score: peopleMatch.score + (movie.info?.rating ?? 0) / 10,
-        matchType: "people",
-      })
-      processedIds.add(movie.id)
-      continue
-    }
-
-    // Other metadata matches -> Other category
-    const otherScore = Math.max(
-      getBestScore(
-        query,
-        movie.info?.genres?.join(" "),
-        movie.info?.keywords?.join(" "),
-        movie.info?.overview,
-        movie.info?.tagline,
-        movie.info?.similar?.map((s) => s.title).join(" "),
-      ),
-      getMoviePathScore(movie, query),
-    )
-    if (otherScore > 0) {
-      allScored.push({
-        item: movieToMediaItem(movie),
-        score: otherScore + (movie.info?.rating ?? 0) / 10,
-        matchType: "other",
-      })
-      processedIds.add(movie.id)
-    }
-  }
-
-  // Search series
-  for (const series of mediaIndex.value.series) {
-    // Direct title match -> Series category
-    const titleScore = getBestScore(query, series.title, series.info?.original_title)
-    // Extract year from release_date (format: "YYYY-MM-DD" or just "YYYY")
-    const seriesYear = series.info?.release_date
-      ? parseInt(series.info.release_date.substring(0, 4), 10)
-      : null
-    const yearScore = isYearQuery && seriesYear === searchYear ? yearBonus : 0
-    if (titleScore > 0 || yearScore > 0) {
-      allScored.push({
-        item: seriesToMediaItem(series),
-        score: titleScore + yearScore + (series.info?.rating ?? 0) / 10,
-        matchType: "series",
-      })
-      processedIds.add(series.id)
-      continue
-    }
-
-    // Check episode name matches -> Series category (show the series with matched episodes)
-    const matchedEpisodes: MatchedEpisode[] = []
-    let episodeScore = 0
-    // Check if series has only one season and has ended (hide "SN" in that case)
-    const isEndedSingleSeason =
-      (series.info?.number_of_seasons === 1 || series.seasons?.length === 1) &&
-      ["Ended", "Canceled", "Cancelled"].includes(series.info?.status || "")
-
-    for (const season of series.seasons || []) {
-      for (const episode of season.episodes || []) {
-        if (episode.name) {
-          const epScore = getRelevanceScore(query, episode.name)
-          if (epScore > 0) {
-            // Hide season for: single-season ended series OR Season 0 (specials)
-            const hideSeason = isEndedSingleSeason || season.season_number === 0
-            const location = hideSeason
-              ? `Episode ${episode.episode_number}`
-              : `S${season.season_number} Episode ${episode.episode_number}`
-            matchedEpisodes.push({
-              name: episode.name,
-              location,
-              seasonNumber: season.season_number,
-              episodeNumber: episode.episode_number,
-            })
-            if (epScore > episodeScore) episodeScore = epScore
-          }
-        }
-      }
-    }
-    if (matchedEpisodes.length > 0 && !processedIds.has(series.id)) {
-      const item = seriesToMediaItem(series)
-      item.searchMatchInfo = { matchedEpisodes }
-      allScored.push({
-        item,
-        score: episodeScore + (series.info?.rating ?? 0) / 10,
-        matchType: "series",
-      })
-      processedIds.add(series.id)
-      continue
-    }
-
-    // Cast/creators match -> People category
-    const peopleMatch = matchesPeople(query, series.info?.cast, null, series.info?.creators)
-    if (peopleMatch.matches.length > 0 && !processedIds.has(series.id)) {
-      const item = seriesToMediaItem(series)
-      item.searchMatchInfo = { matchedPeople: formatMatchedPeople(peopleMatch.matches) }
-      allScored.push({
-        item,
-        score: peopleMatch.score + (series.info?.rating ?? 0) / 10,
-        matchType: "people",
-      })
-      processedIds.add(series.id)
-      continue
-    }
-
-    // Other metadata matches -> Other category
-    if (!processedIds.has(series.id)) {
-      const otherScore = Math.max(
-        getBestScore(
-          query,
-          series.info?.genres?.join(" "),
-          series.info?.keywords?.join(" "),
-          series.info?.overview,
-          series.info?.tagline,
-          series.info?.similar?.map((s) => s.title).join(" "),
-          series.info?.networks?.join(" "),
-        ),
-        getSeriesPathScore(series, query),
-      )
-      if (otherScore > 0) {
-        allScored.push({
-          item: seriesToMediaItem(series),
-          score: otherScore + (series.info?.rating ?? 0) / 10,
-          matchType: "other",
-        })
-        processedIds.add(series.id)
-      }
-    }
-  }
-
-  // Sort all results by score (descending)
-  allScored.sort((a, b) => b.score - a.score)
-
-  // Take top results and deduplicate
-  const topResults = allScored.slice(0, MAX_RESULTS)
-
-  // Build categories from the scored results
-  const moviesCat: MediaItem[] = []
-  const seriesCat: MediaItem[] = []
-  const peopleCat: MediaItem[] = []
-  const otherCat: MediaItem[] = []
-
-  for (const scored of topResults) {
-    switch (scored.matchType) {
-      case "movies":
-        moviesCat.push(scored.item)
-        break
-      case "series":
-        seriesCat.push(scored.item)
-        break
-      case "people":
-        peopleCat.push(scored.item)
-        break
-      case "other":
-        otherCat.push(scored.item)
-        break
-    }
-  }
-
-  // Build categories array (only include non-empty)
-  const categories: SearchCategory[] = []
-  if (moviesCat.length > 0) categories.push({ name: "Movies", items: moviesCat })
-  if (seriesCat.length > 0) categories.push({ name: "Series", items: seriesCat })
-  if (peopleCat.length > 0) categories.push({ name: "People", items: peopleCat })
-  if (otherCat.length > 0) categories.push({ name: "Other", items: otherCat })
-
-  searchCategories.value = categories
-
-  // All results ranked by relevance for the hero
-  searchResults.value = topResults.map((s) => s.item)
-
-  isSearching.value = false
+  const worker = getSearchWorker()
+  worker.postMessage({
+    type: "query",
+    id,
+    query: query.toLowerCase(),
+  })
 }
+
+watch(searchQuery, runSearch)
+watch(mediaIndex, () => {
+  workerHasIndex = false
+  if (searchQuery.value) {
+    syncWorkerIndex()
+    runSearch()
+  }
+}, { deep: true })
 
 // Sort by newest timestamp (descending)
 function sortByNewest(items: MediaItem[]): MediaItem[] {

@@ -15,4 +15,8 @@ export default defineConfig(async () => ({
     port: 8420,
     strictPort: true,
   },
+
+  worker: {
+    format: "es",
+  },
 }));
