@@ -1,4 +1,4 @@
-import { createRouter, createWebHashHistory } from "vue-router"
+import { createRouter, createWebHistory } from "vue-router"
 import { defineComponent, h } from "vue"
 
 // Empty component - App.vue handles all rendering based on route meta
@@ -9,7 +9,7 @@ const EmptyRouteComponent = defineComponent({
 })
 
 const router = createRouter({
-  history: createWebHashHistory(),
+  history: createWebHistory(),
   scrollBehavior() {
     // Always scroll to top on navigation
     return { top: 0 }

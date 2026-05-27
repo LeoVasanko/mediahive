@@ -118,7 +118,7 @@
                 class="cast-card media-card"
                 data-nav-cast-item="true"
                 v-bind="navAttrs(2 + movieVersions.length, castIndex)"
-                :href="`#/?q=${encodeURIComponent(castMember.name)}`"
+                :href="`/search/${encodeURIComponent(castMember.name)}`"
                 :title="`Search for ${castMember.name}`"
                 @click.prevent="handleCastSelect(castMember.name)"
               >

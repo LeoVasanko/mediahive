@@ -33,8 +33,8 @@ defineEmits<{
 function getItemHref(item: MediaItem): string | undefined {
   if (item.type === "episode") {
     const epData = item.data as EpisodeWithSeries
-    return `#/series/${epData.series.id}`
+    return `/series/${epData.series.id}`
   }
-  return `#/${item.type}/${item.id}`
+  return `/${item.type}/${item.id}`
 }
 </script>

@@ -585,7 +585,7 @@ function getOverview(item: MediaItem): string | null {
 }
 
 function getItemHref(item: MediaItem): string {
-  return `#/${item.type}/${item.id}`
+  return `/${item.type}/${item.id}`
 }
 
 function activateItem(item: MediaItem) {
