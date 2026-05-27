@@ -59,108 +59,115 @@
       </div>
     </main>
 
-    <!-- Detail page (movie or series) -->
-    <MediaDetail
-      v-else-if="selectedItem"
-      :item="selectedItem"
-      :focus-episode="focusEpisode"
-      :has-resume-position="hasResumePosition"
-      :get-root-name="getRootName"
-      @close="closeDetail"
-      @play="handlePlay"
-      @open-folder="handleOpenFolder"
-      @search-actor="handleActorSearch"
-    />
-
-    <!-- Browse/Search pages -->
-    <main v-else class="main-content">
-      <!-- Movies and Series views - both always rendered for smooth transitions -->
-      <div v-if="!searchQuery" class="view-container">
-        <Transition name="view-zoom" mode="out-in">
-          <div v-if="currentView === 'movies'" key="movies" class="view-content">
-            <!-- Hero for movies -->
-            <CollageHero
-              v-if="movieCollageItems.length > 0"
-              :key="`movie-hero-${movieCollageItems.length}-${movieFeaturedItem?.id || 'none'}`"
-              :items="movieCollageItems"
-              :featured-item="movieFeaturedItem"
-              @select="showDetail"
-            />
-            <!-- Spacer for header overlay -->
-            <div class="header-spacer"></div>
-            <!-- Movie categories -->
-            <template v-for="(category, categoryIndex) in moviesByGenre" :key="category.name">
-              <section class="media-section" v-if="category.items.length > 0">
-                <h2 class="section-title">{{ category.name }} ({{ category.items.length }})</h2>
-                <MediaRow
-                  :items="category.items"
-                  :row-index="categoryIndex + 2"
+    <div v-else class="page-slider">
+      <div class="page-slider-track" :class="{ 'is-detail-open': isDetailOpen }">
+        <!-- Browse/Search page (left panel) -->
+        <main class="main-content page-slider-panel">
+          <!-- Movies and Series views - both always rendered for smooth transitions -->
+          <div v-if="!searchQuery" class="view-container">
+            <Transition name="view-zoom" mode="out-in">
+              <div v-if="currentView === 'movies'" key="movies" class="view-content">
+                <!-- Hero for movies -->
+                <CollageHero
+                  v-if="movieCollageItems.length > 0"
+                  :key="`movie-hero-${movieCollageItems.length}-${movieFeaturedItem?.id || 'none'}`"
+                  :items="movieCollageItems"
+                  :featured-item="movieFeaturedItem"
                   @select="showDetail"
                 />
-              </section>
-            </template>
-          </div>
-          <div v-else-if="currentView === 'series'" key="series" class="view-content">
-            <!-- Hero for series -->
-            <CollageHero
-              v-if="seriesCollageItems.length > 0"
-              :key="`series-hero-${seriesCollageItems.length}-${seriesFeaturedItem?.id || 'none'}`"
-              :items="seriesCollageItems"
-              :featured-item="seriesFeaturedItem"
-              @select="showDetail"
-            />
-            <!-- Spacer for header overlay -->
-            <div class="header-spacer"></div>
-            <!-- Series categories -->
-            <template v-for="(category, categoryIndex) in seriesByGenre" :key="category.name">
-              <section class="media-section" v-if="category.items.length > 0">
-                <h2 class="section-title">{{ category.name }} ({{ category.items.length }})</h2>
-                <MediaRow
-                  :items="category.items"
-                  :row-index="categoryIndex + 2"
+                <!-- Spacer for header overlay -->
+                <div class="header-spacer"></div>
+                <!-- Movie categories -->
+                <template v-for="(category, categoryIndex) in moviesByGenre" :key="category.name">
+                  <section class="media-section" v-if="category.items.length > 0">
+                    <h2 class="section-title">{{ category.name }} ({{ category.items.length }})</h2>
+                    <MediaRow
+                      :items="category.items"
+                      :row-index="categoryIndex + 2"
+                      @select="showDetail"
+                    />
+                  </section>
+                </template>
+              </div>
+              <div v-else-if="currentView === 'series'" key="series" class="view-content">
+                <!-- Hero for series -->
+                <CollageHero
+                  v-if="seriesCollageItems.length > 0"
+                  :key="`series-hero-${seriesCollageItems.length}-${seriesFeaturedItem?.id || 'none'}`"
+                  :items="seriesCollageItems"
+                  :featured-item="seriesFeaturedItem"
                   @select="showDetail"
                 />
-              </section>
-            </template>
+                <!-- Spacer for header overlay -->
+                <div class="header-spacer"></div>
+                <!-- Series categories -->
+                <template v-for="(category, categoryIndex) in seriesByGenre" :key="category.name">
+                  <section class="media-section" v-if="category.items.length > 0">
+                    <h2 class="section-title">{{ category.name }} ({{ category.items.length }})</h2>
+                    <MediaRow
+                      :items="category.items"
+                      :row-index="categoryIndex + 2"
+                      @select="showDetail"
+                    />
+                  </section>
+                </template>
+              </div>
+            </Transition>
           </div>
-        </Transition>
-      </div>
 
-      <!-- Search results -->
-      <template v-if="searchQuery">
-        <template v-if="searchResults.length > 0">
-          <!-- Hero with all results ranked by relevance -->
-          <CollageHero
-            :key="`search-hero-${searchCollageItems.length}-${searchFeaturedItem?.id || 'none'}`"
-            :items="searchCollageItems"
-            :featured-item="searchFeaturedItem"
-            @select="showDetail"
-          />
-          <!-- Spacer for header overlay -->
-          <div class="header-spacer"></div>
-          <!-- Category sections -->
-          <template v-for="(category, categoryIndex) in searchCategories" :key="category.name">
-            <section class="media-section">
-              <h2 class="section-title">{{ category.name }} ({{ category.items.length }})</h2>
-              <MediaRow
-                :items="category.items"
-                :row-index="categoryIndex + 2"
+          <!-- Search results -->
+          <template v-if="searchQuery">
+            <template v-if="searchResults.length > 0">
+              <!-- Hero with all results ranked by relevance -->
+              <CollageHero
+                :key="`search-hero-${searchCollageItems.length}-${searchFeaturedItem?.id || 'none'}`"
+                :items="searchCollageItems"
+                :featured-item="searchFeaturedItem"
                 @select="showDetail"
               />
-            </section>
+              <!-- Spacer for header overlay -->
+              <div class="header-spacer"></div>
+              <!-- Category sections -->
+              <template v-for="(category, categoryIndex) in searchCategories" :key="category.name">
+                <section class="media-section">
+                  <h2 class="section-title">{{ category.name }} ({{ category.items.length }})</h2>
+                  <MediaRow
+                    :items="category.items"
+                    :row-index="categoryIndex + 2"
+                    @select="showDetail"
+                  />
+                </section>
+              </template>
+            </template>
+            <template v-else-if="!isSearching">
+              <!-- Empty hero area to maintain layout -->
+              <div class="empty-hero"></div>
+              <!-- Spacer for header overlay -->
+              <div class="header-spacer"></div>
+              <div class="no-results">
+                <p>No results found for "{{ searchQuery }}"</p>
+              </div>
+            </template>
           </template>
-        </template>
-        <template v-else-if="!isSearching">
-          <!-- Empty hero area to maintain layout -->
-          <div class="empty-hero"></div>
-          <!-- Spacer for header overlay -->
-          <div class="header-spacer"></div>
-          <div class="no-results">
-            <p>No results found for "{{ searchQuery }}"</p>
-          </div>
-        </template>
-      </template>
-    </main>
+        </main>
+
+        <!-- Detail page (right panel) -->
+        <main class="main-content page-slider-panel page-slider-detail-panel">
+          <MediaDetail
+            v-if="detailItemForRender"
+            v-show="isDetailOpen"
+            :item="detailItemForRender"
+            :focus-episode="focusEpisode"
+            :has-resume-position="hasResumePosition"
+            :get-root-name="getRootName"
+            @close="closeDetail"
+            @play="handlePlay"
+            @open-folder="handleOpenFolder"
+            @search-actor="handleActorSearch"
+          />
+        </main>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -600,6 +607,16 @@ const selectedItem = computed(() => {
     return series ? seriesToMediaItem(series) : null
   }
   return null
+})
+
+const isDetailOpen = computed(() => selectedItem.value !== null)
+const lastDetailItem = ref<MediaItem | null>(null)
+const detailItemForRender = computed(() => selectedItem.value ?? lastDetailItem.value)
+
+watch(selectedItem, (item) => {
+  if (item) {
+    lastDetailItem.value = item
+  }
 })
 
 // Show detail by navigating to URL (clears search)
@@ -1236,5 +1253,37 @@ async function handleOpenFolder(folderPath: string, explicitRootId?: string | nu
   padding: 60px 20px;
   color: var(--text-secondary);
   font-size: 2rem;
+}
+
+.page-slider {
+  width: 100vw;
+  overflow-x: hidden;
+}
+
+.page-slider-track {
+  display: flex;
+  width: 200vw;
+  transition: transform 420ms cubic-bezier(0.22, 0.61, 0.36, 1);
+  will-change: transform;
+}
+
+.page-slider-track.is-detail-open {
+  transform: translate3d(-100vw, 0, 0);
+}
+
+.page-slider-panel {
+  flex: 0 0 100vw;
+  width: 100vw;
+  min-width: 100vw;
+}
+
+.page-slider-detail-panel {
+  background: var(--bg-primary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page-slider-track {
+    transition: none;
+  }
 }
 </style>
