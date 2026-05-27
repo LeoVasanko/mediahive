@@ -32,6 +32,11 @@ const router = createRouter({
       meta: { view: "movies" },
     },
     {
+      path: "/search/:term",
+      name: "search",
+      component: EmptyRouteComponent,
+    },
+    {
       path: "/series",
       name: "series",
       component: EmptyRouteComponent,

@@ -212,11 +212,20 @@ function normalizeSearchQuery(value: unknown): string {
 }
 
 function getRouteSearchQuery() {
-  return normalizeSearchQuery(route.query.q)
+  if (route.name !== "search") {
+    return ""
+  }
+  return normalizeSearchQuery(route.params.term)
+}
+
+function getSearchPath(term: string) {
+  return router.resolve({ name: "search", params: { term } }).path
 }
 
 function getBrowsePath() {
-  return route.meta.view === "series" ? "/series" : "/movies"
+  if (route.meta.view === "series") return "/series"
+  if (route.meta.view === "movies") return "/movies"
+  return searchReturnPath.value ?? "/movies"
 }
 
 function getBrowseViewFromPath(path: string): "movies" | "series" {
@@ -445,6 +454,28 @@ function getSearchExitTargetFromFocusedCard(): { path: "/movies" | "/series"; it
   return null
 }
 
+function getDetailSearchPath(): string | null {
+  if (!route.params.id) return null
+
+  const stateSearchPathRaw = window.history.state?.searchPath
+  if (typeof stateSearchPathRaw === "string") {
+    const stateSearchPath = normalizeHistoryPath(stateSearchPathRaw)
+    if (stateSearchPath.startsWith("/search/")) {
+      return stateSearchPath
+    }
+  }
+
+  const backPath =
+    typeof window.history.state?.back === "string"
+      ? normalizeHistoryPath(window.history.state.back)
+      : ""
+  if (backPath.startsWith("/search/")) {
+    return backPath
+  }
+
+  return null
+}
+
 function clearSearch(options: { preferBack?: boolean; targetPath?: string } = {}) {
   const currentQuery = getRouteSearchQuery()
   const targetPath = options.targetPath ?? getBrowsePath()
@@ -498,11 +529,11 @@ function updateSearchQuery(nextValue: string) {
       saveFocusForPage(currentView.value)
     }
     searchReturnPath.value = browsePath
-    void router.push({ path: browsePath, query: { q: nextQuery } })
+    void router.push(getSearchPath(nextQuery))
     return
   }
 
-  void router.replace({ path: browsePath, query: { q: nextQuery } })
+  void router.replace(getSearchPath(nextQuery))
 }
 
 // Handle Escape key for navigation hierarchy
@@ -516,13 +547,13 @@ function handleEscapeKey(event: KeyboardEvent) {
   }
 
   const path = route.path
-  const activeSearchQuery = getRouteSearchQuery()
+  const detailSearchPath = getDetailSearchPath()
 
-  if (route.params.id && activeSearchQuery) {
+  if (route.params.id && detailSearchPath) {
     event.preventDefault()
-    const targetPath = getBrowsePath()
-    router.push({ path: targetPath, query: { q: activeSearchQuery } })
-    restoreFocusForPage(getBrowseViewFromPath(targetPath))
+    void router.push(detailSearchPath).finally(() => {
+      restoreFocusForPage("movies")
+    })
     return
   }
 
@@ -582,12 +613,12 @@ onUnmounted(() => {
 // Handle back navigation (Escape key or Back button)
 function goBack() {
   const path = route.path
-  const activeSearchQuery = getRouteSearchQuery()
+  const detailSearchPath = getDetailSearchPath()
 
-  if (route.params.id && activeSearchQuery) {
-    const targetPath = getBrowsePath()
-    router.push({ path: targetPath, query: { q: activeSearchQuery } })
-    restoreFocusForPage(getBrowseViewFromPath(targetPath))
+  if (route.params.id && detailSearchPath) {
+    void router.push(detailSearchPath).finally(() => {
+      restoreFocusForPage("movies")
+    })
     return
   }
 
@@ -615,7 +646,7 @@ const currentView = computed(() => {
 })
 
 const headerCurrentView = computed<"movies" | "series" | "search">(() => {
-  return selectedItem.value && searchQuery.value ? "search" : currentView.value
+  return selectedItem.value && getDetailSearchPath() ? "search" : currentView.value
 })
 
 // Header position based on current page
@@ -688,21 +719,21 @@ function showDetail(item: MediaItem) {
     if (playableFile) {
       handlePlay(playableFile)
     } else {
-      const query = searchQuery.value ? { q: searchQuery.value } : undefined
-      router.push({ path: `/series/${epData.series.id}`, query })
+      const searchPath = searchQuery.value ? getSearchPath(searchQuery.value) : null
+      router.push({ path: `/series/${epData.series.id}`, state: searchPath ? { searchPath } : undefined })
     }
   } else {
-    const query = searchQuery.value ? { q: searchQuery.value } : undefined
-    router.push({ path: `/${item.type}/${item.id}`, query })
+    const searchPath = searchQuery.value ? getSearchPath(searchQuery.value) : null
+    router.push({ path: `/${item.type}/${item.id}`, state: searchPath ? { searchPath } : undefined })
   }
 }
 
 // Close detail by navigating back to list
 function closeDetail() {
-  const activeSearchQuery = getRouteSearchQuery()
+  const detailSearchPath = getDetailSearchPath()
   const targetPath = getBrowsePath()
-  if (activeSearchQuery) {
-    router.push({ path: targetPath, query: { q: activeSearchQuery } })
+  if (detailSearchPath) {
+    router.push(detailSearchPath)
   } else {
     router.push(targetPath)
   }
@@ -1046,7 +1077,7 @@ watch(
     if (nextQuery !== searchQuery.value) {
       searchQuery.value = nextQuery
     }
-    if (!nextQuery) {
+    if (!nextQuery && route.name !== "search") {
       searchReturnPath.value = null
     }
   },
