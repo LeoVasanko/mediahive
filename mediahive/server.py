@@ -53,6 +53,7 @@ frontend = Frontend(Path(__file__).with_name("frontend-build"), cached=["/assets
 
 # Supervisor manages all root contexts
 supervisor = Supervisor()
+_attach_scanners_lock = asyncio.Lock()
 
 _RANGE_RE = re.compile(r"bytes=(\d*)-(\d*)$")
 
@@ -279,14 +280,17 @@ def _validate_root_paths(roots: dict[str, str]) -> dict[str, str]:
 
 async def _attach_scanners() -> None:
     """Ensure every active root context has a running scanner."""
-    for ctx in supervisor.all_contexts().values():
-        if ctx.scanner is None and ctx.status in {"ready", "loading"}:
-            try:
-                scanner = RootScanner(ctx.root_id, ctx.root_path, ctx.send_event)
-                await scanner.start()
-                ctx.scanner = scanner
-            except Exception:
-                logger.exception("Failed to attach scanner for root %s", ctx.root_id)
+    async with _attach_scanners_lock:
+        for ctx in supervisor.all_contexts().values():
+            if ctx.scanner is None and ctx.status in {"ready", "loading"}:
+                try:
+                    scanner = RootScanner(ctx.root_id, ctx.root_path, ctx.send_event)
+                    await scanner.start()
+                    ctx.scanner = scanner
+                except Exception:
+                    logger.exception(
+                        "Failed to attach scanner for root %s", ctx.root_id
+                    )
 
 
 async def _activate_all_roots() -> None:
