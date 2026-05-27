@@ -1020,7 +1020,7 @@ watch(mediaIndex, () => {
     syncWorkerIndex()
     runSearch()
   }
-}, { deep: true })
+})
 
 // Sort by newest timestamp (descending)
 function sortByNewest(items: MediaItem[]): MediaItem[] {

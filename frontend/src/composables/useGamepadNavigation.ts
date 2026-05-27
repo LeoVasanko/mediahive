@@ -8,6 +8,7 @@ const DIGITAL_REPEAT_MIN_MS = 16
 const DIGITAL_ACCEL_RAMP_MS = 3500
 const ANALOG_REPEAT_MAX_MS = 180
 const ANALOG_REPEAT_MIN_MS = 16
+const IDLE_POLL_MS = 500
 
 const KEY_BY_ACTION: Partial<Record<GamepadAction, string>> = {
   up: "ArrowUp",
@@ -47,6 +48,7 @@ let digitalLastRepeatAt = 0
 let digitalRepeatCount = 0
 
 let gamepadFrameId: number | null = null
+let idleTimerId: number | null = null
 let gamepadInstalled = false
 
 function dispatchKey(key: string) {
@@ -150,6 +152,27 @@ function resetPressedState() {
   digitalHoldStartedAt = 0
   digitalLastRepeatAt = 0
   digitalRepeatCount = 0
+}
+
+function stopPolling() {
+  if (gamepadFrameId !== null) {
+    window.cancelAnimationFrame(gamepadFrameId)
+    gamepadFrameId = null
+  }
+  if (idleTimerId !== null) {
+    window.clearTimeout(idleTimerId)
+    idleTimerId = null
+  }
+}
+
+function scheduleIdlePoll() {
+  if (idleTimerId !== null) return
+  idleTimerId = window.setTimeout(() => {
+    idleTimerId = null
+    if (gamepadInstalled) {
+      pollGamepad()
+    }
+  }, IDLE_POLL_MS)
 }
 
 function pollGamepad() {
@@ -256,10 +279,20 @@ function pollGamepad() {
     applyAnalogDirection("down", digitalDown ? 0 : analogDownIntensity, now)
     applyAnalogDirection("left", digitalLeft ? 0 : analogLeftIntensity, now)
     applyAnalogDirection("right", digitalRight ? 0 : analogRightIntensity, now)
+
+    // Keep using rAF while gamepads are active for responsive input
+    gamepadFrameId = window.requestAnimationFrame(pollGamepad)
   } else {
     resetPressedState()
+    // No gamepads connected — drop to slow polling to save CPU
+    scheduleIdlePoll()
   }
+}
 
+function handleGamepadConnected() {
+  if (!gamepadInstalled) return
+  // A gamepad was plugged in; make sure we're polling
+  stopPolling()
   gamepadFrameId = window.requestAnimationFrame(pollGamepad)
 }
 
@@ -267,14 +300,13 @@ export function installGamepadNavigation() {
   if (gamepadInstalled) return
   gamepadInstalled = true
   gamepadFrameId = window.requestAnimationFrame(pollGamepad)
+  window.addEventListener("gamepadconnected", handleGamepadConnected)
 }
 
 export function uninstallGamepadNavigation() {
   if (!gamepadInstalled) return
   gamepadInstalled = false
-  if (gamepadFrameId !== null) {
-    window.cancelAnimationFrame(gamepadFrameId)
-    gamepadFrameId = null
-  }
+  stopPolling()
   resetPressedState()
+  window.removeEventListener("gamepadconnected", handleGamepadConnected)
 }

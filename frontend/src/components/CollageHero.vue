@@ -181,9 +181,20 @@ onMounted(() => {
   })
 })
 
+function cleanupHeroVideos() {
+  // Find all video elements inside the hero and explicitly release them
+  const videos = document.querySelectorAll<HTMLVideoElement>(".collage-hero video")
+  videos.forEach((video) => {
+    video.pause()
+    video.src = ""
+    video.load()
+  })
+}
+
 onUnmounted(() => {
   window.removeEventListener("resize", updateVisibility)
   document.removeEventListener("focusin", handleDocumentFocusIn)
+  cleanupHeroVideos()
 })
 
 function clearHeroFocus() {

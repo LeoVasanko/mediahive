@@ -177,9 +177,12 @@ function resetSyncedRows(immediate: boolean = false) {
     return
   }
 
-  if (syncedRowsFrame === null) {
-    syncedRowsFrame = window.requestAnimationFrame(animateSyncedRows)
-  }
+  startSyncedRowAnimation()
+}
+
+function startSyncedRowAnimation() {
+  if (syncedRowsFrame !== null) return
+  syncedRowsFrame = window.requestAnimationFrame(animateSyncedRows)
 }
 
 function stopSyncedRowAnimation() {
@@ -281,9 +284,7 @@ function updateSyncedRowTarget(anchorCol: number, anchorRow: HTMLElement | null 
     return
   }
 
-  if (syncedRowsFrame === null) {
-    syncedRowsFrame = window.requestAnimationFrame(animateSyncedRows)
-  }
+  startSyncedRowAnimation()
 }
 
 function getLocalSyncedRowCol(

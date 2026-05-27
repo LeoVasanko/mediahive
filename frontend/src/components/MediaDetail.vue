@@ -300,7 +300,18 @@ function registerMovieOutOfBoundsShortcut() {
   })
 }
 
+function cleanupVideo(video: HTMLVideoElement | null | undefined) {
+  if (!video) return
+  video.pause()
+  video.src = ""
+  video.load()
+}
+
 function setVideoRef(el: HTMLVideoElement | null, index: number) {
+  const old = videoRefs.value[index]
+  if (old && old !== el) {
+    cleanupVideo(old)
+  }
   videoRefs.value[index] = el
 }
 
@@ -450,7 +461,19 @@ const collageSlots = computed(() => {
 
 watch(
   collageSlots,
-  async (slots) => {
+  async (slots, oldSlots) => {
+    // Pause and unload videos that are no longer referenced before reassigning refs
+    if (oldSlots) {
+      for (let i = 0; i < oldSlots.length; i++) {
+        const oldPaths = oldSlots[i]?.sourcePaths ?? []
+        const newPaths = slots[i]?.sourcePaths ?? []
+        const changed =
+          oldPaths.length !== newPaths.length || oldPaths.some((p, idx) => p !== newPaths[idx])
+        if (changed) {
+          cleanupVideo(videoRefs.value[i])
+        }
+      }
+    }
     videoRefs.value = Array.from(
       { length: COLLAGE_SLOT_COUNT },
       (_, index) => videoRefs.value[index] ?? null,
@@ -722,6 +745,16 @@ onUnmounted(() => {
   disposeOutOfBoundsHandler?.()
   disposeOutOfBoundsHandler = null
   lastReleaseShortcutRow = null
+  // Clear all volume fade intervals
+  for (const interval of volumeFadeIntervals.values()) {
+    clearInterval(interval)
+  }
+  volumeFadeIntervals.clear()
+  // Pause and unload all video elements
+  for (const video of videoRefs.value) {
+    cleanupVideo(video)
+  }
+  videoRefs.value = []
 })
 </script>
 

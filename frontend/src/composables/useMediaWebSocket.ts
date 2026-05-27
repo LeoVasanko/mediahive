@@ -1,4 +1,4 @@
-import { ref, readonly, onUnmounted } from "vue"
+import { shallowRef, readonly, onUnmounted } from "vue"
 import type {
   Movie,
   Series,
@@ -30,14 +30,40 @@ interface RootState {
  *  - "task"   → background task progress
  */
 export function useMediaWebSocket() {
-  const mediaIndex = ref<MediaIndex | null>(null)
-  const loading = ref(true)
-  const error = ref<string | null>(null)
-  const connected = ref(false)
-  const tasks = ref<Map<string, TaskInfo>>(new Map())
+  const mediaIndex = shallowRef<MediaIndex | null>(null)
+  const loading = shallowRef(true)
+  const error = shallowRef<string | null>(null)
+  const connected = shallowRef(false)
+  const tasks = shallowRef<Map<string, TaskInfo>>(new Map())
 
-  const roots = ref<Map<string, RootState>>(new Map())
+  const roots = shallowRef<Map<string, RootState>>(new Map())
   let disposed = false
+
+  // Single periodic sweep for completed tasks instead of one timeout per task
+  const completedTaskIds = new Set<string>()
+  let taskSweepTimer: ReturnType<typeof setInterval> | null = null
+  function startTaskSweep() {
+    if (taskSweepTimer !== null) return
+    taskSweepTimer = setInterval(() => {
+      if (completedTaskIds.size === 0) return
+      const next = new Map(tasks.value)
+      let changed = false
+      for (const id of completedTaskIds) {
+        if (next.delete(id)) changed = true
+      }
+      completedTaskIds.clear()
+      if (changed) {
+        tasks.value = next
+      }
+    }, 3000)
+  }
+  function stopTaskSweep() {
+    if (taskSweepTimer !== null) {
+      clearInterval(taskSweepTimer)
+      taskSweepTimer = null
+    }
+  }
+  onUnmounted(stopTaskSweep)
 
   function getContentHash(itemId: string): string {
     return itemId.split(":").pop() || itemId
@@ -276,16 +302,12 @@ export function useMediaWebSocket() {
       }
       case "task": {
         const info = msg.data
-        if (info.status === "completed" || info.status === "cancelled" || info.status === "error") {
-          tasks.value.set(info.id, info)
-          setTimeout(() => {
-            tasks.value.delete(info.id)
-            tasks.value = new Map(tasks.value)
-          }, 3000)
-        } else {
-          tasks.value.set(info.id, info)
-        }
+        tasks.value.set(info.id, info)
         tasks.value = new Map(tasks.value)
+        if (info.status === "completed" || info.status === "cancelled" || info.status === "error") {
+          completedTaskIds.add(info.id)
+          startTaskSweep()
+        }
         break
       }
     }
@@ -410,6 +432,7 @@ export function useMediaWebSocket() {
 
   function disconnect() {
     disposed = true
+    stopTaskSweep()
     for (const state of roots.value.values()) {
       if (state.reconnectTimer) {
         clearTimeout(state.reconnectTimer)

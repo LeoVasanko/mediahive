@@ -468,6 +468,13 @@ const videoRefs = ref<Map<string, HTMLVideoElement>>(new Map())
 let videoIndex = 0
 const safariAutoplay = isSafariBrowser()
 
+function cleanupVideo(video: HTMLVideoElement | null | undefined) {
+  if (!video) return
+  video.pause()
+  video.src = ""
+  video.load()
+}
+
 // Set video ref with staggered playback
 function setVideoRef(el: HTMLVideoElement | null, key: string) {
   if (el) {
@@ -484,6 +491,10 @@ function setVideoRef(el: HTMLVideoElement | null, key: string) {
       safariAutoplay ? 0 : index * 200,
     )
   } else {
+    const old = videoRefs.value.get(key)
+    if (old) {
+      cleanupVideo(old)
+    }
     videoRefs.value.delete(key)
   }
 }
@@ -649,6 +660,16 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.removeEventListener("mediahive:gamepad-action", handleGamepadAction as EventListener)
+  // Clear all volume fade intervals
+  for (const interval of volumeFadeIntervals.values()) {
+    clearInterval(interval)
+  }
+  volumeFadeIntervals.clear()
+  // Pause and unload all video elements
+  for (const video of videoRefs.value.values()) {
+    cleanupVideo(video)
+  }
+  videoRefs.value.clear()
 })
 </script>
 
