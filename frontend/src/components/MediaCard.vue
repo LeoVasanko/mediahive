@@ -4,6 +4,7 @@
     class="media-card"
     v-bind="navAttributes"
     :data-item-id="item.id"
+    :data-item-type="item.type"
     :href="href || undefined"
     @click="handleClick"
     @keydown.enter.prevent="$emit('click')"

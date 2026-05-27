@@ -30,7 +30,7 @@
 
     <!-- Persistent Header overlay - single instance -->
     <Header
-      :current-view="currentView"
+      :current-view="headerCurrentView"
       :search-query="searchQuery"
       :mpc-be-connected="mpcBeConnected"
       :nav-row="1"
@@ -426,6 +426,25 @@ function restoreBrowseFocus(path: string) {
   }, 100)
 }
 
+function getSearchExitTargetFromFocusedCard(): { path: "/movies" | "/series"; itemId: string } | null {
+  const active = document.activeElement as HTMLElement | null
+  const focusedCard = active?.closest("[data-item-id]") as HTMLElement | null
+  if (!focusedCard) return null
+
+  const itemId = focusedCard.getAttribute("data-item-id")
+  const itemType = focusedCard.getAttribute("data-item-type")
+  if (!itemId || !itemType) return null
+
+  if (itemType === "movies") {
+    return { path: "/movies", itemId }
+  }
+  if (itemType === "series") {
+    return { path: "/series", itemId }
+  }
+
+  return null
+}
+
 function clearSearch(options: { preferBack?: boolean; targetPath?: string } = {}) {
   const currentQuery = getRouteSearchQuery()
   const targetPath = options.targetPath ?? getBrowsePath()
@@ -437,11 +456,6 @@ function clearSearch(options: { preferBack?: boolean; targetPath?: string } = {}
   // route changes to a detail page, which triggers the route watcher to clear
   // searchQuery, which flows through Header and back to updateSearchQuery).
   if (!currentQuery) {
-    searchReturnPath.value = null
-    return
-  }
-
-  if (route.path === targetPath) {
     searchReturnPath.value = null
     return
   }
@@ -459,11 +473,12 @@ function clearSearch(options: { preferBack?: boolean; targetPath?: string } = {}
 
   if (canRestoreWithBack) {
     router.back()
+    restoreBrowseFocus(targetPath)
   } else {
-    void router.replace({ path: targetPath })
+    void router.replace({ path: targetPath }).finally(() => {
+      restoreBrowseFocus(targetPath)
+    })
   }
-
-  restoreBrowseFocus(targetPath)
 }
 
 function updateSearchQuery(nextValue: string) {
@@ -501,6 +516,15 @@ function handleEscapeKey(event: KeyboardEvent) {
   }
 
   const path = route.path
+  const activeSearchQuery = getRouteSearchQuery()
+
+  if (route.params.id && activeSearchQuery) {
+    event.preventDefault()
+    const targetPath = getBrowsePath()
+    router.push({ path: targetPath, query: { q: activeSearchQuery } })
+    restoreFocusForPage(getBrowseViewFromPath(targetPath))
+    return
+  }
 
   // From movie detail -> movies list
   if (path.startsWith("/movies/") && route.params.id) {
@@ -520,6 +544,12 @@ function handleEscapeKey(event: KeyboardEvent) {
 
   if (getRouteSearchQuery()) {
     event.preventDefault()
+    const target = getSearchExitTargetFromFocusedCard()
+    if (target) {
+      lastViewedItemId.value = target.itemId
+      clearSearch({ preferBack: false, targetPath: target.path })
+      return
+    }
     clearSearch({ preferBack: true })
     return
   }
@@ -552,6 +582,14 @@ onUnmounted(() => {
 // Handle back navigation (Escape key or Back button)
 function goBack() {
   const path = route.path
+  const activeSearchQuery = getRouteSearchQuery()
+
+  if (route.params.id && activeSearchQuery) {
+    const targetPath = getBrowsePath()
+    router.push({ path: targetPath, query: { q: activeSearchQuery } })
+    restoreFocusForPage(getBrowseViewFromPath(targetPath))
+    return
+  }
 
   // From movie detail -> movies list with focus restoration
   if (path.startsWith("/movies/") && route.params.id) {
@@ -574,6 +612,10 @@ function goBack() {
 // Derive currentView from route
 const currentView = computed(() => {
   return (route.meta.view as "movies" | "series") || "movies"
+})
+
+const headerCurrentView = computed<"movies" | "series" | "search">(() => {
+  return selectedItem.value && searchQuery.value ? "search" : currentView.value
 })
 
 // Header position based on current page
@@ -619,7 +661,7 @@ watch(selectedItem, (item) => {
   }
 })
 
-// Show detail by navigating to URL (clears search)
+// Show detail by navigating to URL
 function showDetail(item: MediaItem) {
   // Save the item ID to restore focus when returning
   lastViewedItemId.value = item.id
@@ -646,17 +688,24 @@ function showDetail(item: MediaItem) {
     if (playableFile) {
       handlePlay(playableFile)
     } else {
-      router.push(`/series/${epData.series.id}`)
+      const query = searchQuery.value ? { q: searchQuery.value } : undefined
+      router.push({ path: `/series/${epData.series.id}`, query })
     }
   } else {
-    // Push without query to clear search and add to history
-    router.push({ path: `/${item.type}/${item.id}` })
+    const query = searchQuery.value ? { q: searchQuery.value } : undefined
+    router.push({ path: `/${item.type}/${item.id}`, query })
   }
 }
 
 // Close detail by navigating back to list
 function closeDetail() {
-  router.push(`/${currentView.value}`)
+  const activeSearchQuery = getRouteSearchQuery()
+  const targetPath = getBrowsePath()
+  if (activeSearchQuery) {
+    router.push({ path: targetPath, query: { q: activeSearchQuery } })
+  } else {
+    router.push(targetPath)
+  }
 }
 
 function handleActorSearch(actorName: string) {

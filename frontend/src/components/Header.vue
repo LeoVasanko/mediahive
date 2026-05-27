@@ -29,7 +29,7 @@
         <!-- Detail mode: show current category + Details -->
         <template v-else>
           <button class="header-nav-item" v-bind="navAttrs(navRow, 0)" @focus="goToCategory">
-            {{ currentView === "movies" ? "Movies" : "Series" }}
+            {{ currentView === "search" ? "Search" : currentView === "movies" ? "Movies" : "Series" }}
           </button>
           <button class="header-nav-item active" v-bind="navAttrs(navRow, 1, 1)">Details</button>
         </template>
@@ -163,7 +163,7 @@ interface RootEntry {
 }
 
 const props = defineProps<{
-  currentView: "movies" | "series"
+  currentView: "movies" | "series" | "search"
   searchQuery: string
   mpcBeConnected: boolean
   navRow: number
