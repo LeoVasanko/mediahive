@@ -236,6 +236,13 @@ function handleKeyClick(key: KeyDef) {
   }
 }
 
+function activateKeyById(keyId: string): boolean {
+  const key = layoutKeys.find((candidate) => candidate.id === keyId)
+  if (!key) return false
+  handleKeyClick(key)
+  return true
+}
+
 function close() {
   emit("close")
 }
@@ -436,18 +443,14 @@ function onRawGamepad(event: Event) {
   // X button = backspace (button 2)
   if (button === 2) {
     event.preventDefault()
-    const bsIndex = layoutKeys.findIndex((k) => k.id === "bs")
-    if (bsIndex !== -1) triggerPress(bsIndex)
-    emit("update:modelValue", props.modelValue.slice(0, -1))
+    activateKeyById("bs")
     return
   }
 
   // Y button = space (button 3)
   if (button === 3) {
     event.preventDefault()
-    const spIndex = layoutKeys.findIndex((k) => k.id === "sp")
-    if (spIndex !== -1) triggerPress(spIndex)
-    emit("update:modelValue", props.modelValue + " ")
+    activateKeyById("sp")
     return
   }
 
