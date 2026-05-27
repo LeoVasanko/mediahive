@@ -150,7 +150,7 @@
         </div>
         <div v-if="Object.values(contextMenu.episode.torrents || {}).length > 0">
           <ReleaseVersionCard
-            v-for="(torrent, index) in Object.values(contextMenu.episode.torrents || {})"
+            v-for="(torrent, index) in sortTorrentsByPreference(Object.values(contextMenu.episode.torrents || {}))"
             :key="index"
             class="context-menu-version"
             :torrent="torrent"
@@ -189,6 +189,7 @@ import { getCoverUrl, getVideoPreviewUrl, getVideoSourceAttributes, isSafariBrow
 import { navAttrs } from "../composables/useKeyboardNavigation"
 import ReleaseVersionCard from "./ReleaseVersionCard.vue"
 import ReleaseActionMenu from "./ReleaseActionMenu.vue"
+import { sortTorrentsByPreference } from "../composables/useSettings"
 
 const props = defineProps<{
   series: Series

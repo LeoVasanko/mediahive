@@ -213,6 +213,7 @@ import {
 import castPlaceholderFemaleUrl from "../assets/cast-placeholder-female.svg"
 import castPlaceholderMaleUrl from "../assets/cast-placeholder-male.svg"
 import SeriesFullView from "./SeriesFullView.vue"
+import { sortTorrentsByPreference } from "../composables/useSettings"
 import ReleaseVersionCard from "./ReleaseVersionCard.vue"
 import ReleaseActionMenu from "./ReleaseActionMenu.vue"
 import {
@@ -498,7 +499,7 @@ function getShowreelSourceAttributes(path: string): VideoSourceAttributes {
 const movieVersions = computed((): Torrent[] => {
   if (props.item.type !== "movies") return []
   const movie = props.item.data as Movie
-  return Object.values(movie.torrents || {})
+  return sortTorrentsByPreference(Object.values(movie.torrents || {}))
 })
 
 // Page backdrop background

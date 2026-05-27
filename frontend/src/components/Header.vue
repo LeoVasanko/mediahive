@@ -141,6 +141,96 @@
               </button>
             </div>
           </section>
+
+          <section class="settings-section">
+            <h2 class="settings-section-title">Preferred Format</h2>
+            <p class="settings-section-desc">Preferred format when multiple versions are available.</p>
+
+            <div class="format-grid">
+              <div class="format-row format-row-stack">
+                <label class="format-radio-label" for="resolution-hd">
+                  <input
+                    id="resolution-hd"
+                    class="format-radio"
+                    type="radio"
+                    name="resolution-preference"
+                    :checked="settings.preferredResolution === 'r2'"
+                    @change="setPreferredResolution('r2')"
+                  />
+                  HD or lower
+                </label>
+                <label class="format-radio-label" for="resolution-fhd">
+                  <input
+                    id="resolution-fhd"
+                    class="format-radio"
+                    type="radio"
+                    name="resolution-preference"
+                    :checked="settings.preferredResolution === 'r3'"
+                    @change="setPreferredResolution('r3')"
+                  />
+                  Full HD
+                </label>
+                <label class="format-radio-label" for="resolution-4k">
+                  <input
+                    id="resolution-4k"
+                    class="format-radio"
+                    type="radio"
+                    name="resolution-preference"
+                    :checked="settings.preferredResolution === 'r4'"
+                    @change="setPreferredResolution('r4')"
+                  />
+                  4K
+                </label>
+                <label class="format-radio-label" for="resolution-highest">
+                  <input
+                    id="resolution-highest"
+                    class="format-radio"
+                    type="radio"
+                    name="resolution-preference"
+                    :checked="settings.preferredResolution === 'rmax'"
+                    @change="setPreferredResolution('rmax')"
+                  />
+                  Highest
+                </label>
+              </div>
+
+              <div class="format-row format-row-stack">
+                <label class="format-radio-label" for="hdr-none">
+                  <input
+                    id="hdr-none"
+                    class="format-radio"
+                    type="radio"
+                    name="hdr-preference"
+                    :checked="settings.preferredHdr === 'none'"
+                    @change="setPreferredHdr('none')"
+                  />
+                  No HDR
+                </label>
+                <label class="format-radio-label" for="hdr-hdr10plus">
+                  <input
+                    id="hdr-hdr10plus"
+                    class="format-radio"
+                    type="radio"
+                    name="hdr-preference"
+                    :checked="settings.preferredHdr === 'hdr10plus'"
+                    @change="setPreferredHdr('hdr10plus')"
+                  />
+                  HDR10+
+                </label>
+                <label class="format-radio-label" for="hdr-dovi">
+                  <input
+                    id="hdr-dovi"
+                    class="format-radio"
+                    type="radio"
+                    name="hdr-preference"
+                    :checked="settings.preferredHdr === 'dovi'"
+                    @change="setPreferredHdr('dovi')"
+                  />
+                  Dolby Vision
+                </label>
+              </div>
+            </div>
+          </section>
         </div>
       </div>
     </div>
@@ -154,6 +244,13 @@ import { navAttrs } from "../composables/useKeyboardNavigation"
 import logoUrl from "../assets/mediahive.webp"
 import { fetchRoots, replaceRoots, pickFolderAndAddRoot } from "../api"
 import HexKeyboard from "./HexKeyboard.vue"
+import {
+  useSettings,
+  type ResolutionPreference,
+  type HdrPreference,
+} from "../composables/useSettings"
+
+const settings = useSettings()
 
 interface RootEntry {
   root_id: string
@@ -188,6 +285,14 @@ onUnmounted(() => window.removeEventListener("pywebviewready", _onPywebviewReady
 
 const showSettings = ref(false)
 const roots = ref<RootEntry[]>([])
+
+function setPreferredResolution(value: ResolutionPreference) {
+  settings.preferredResolution = value
+}
+
+function setPreferredHdr(value: HdrPreference) {
+  settings.preferredHdr = value
+}
 
 async function refreshRoots() {
   try {
@@ -554,5 +659,40 @@ onUnmounted(() => {
 
 .roots-add-btn:hover {
   background: rgba(255, 255, 255, 0.15);
+}
+
+.format-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 0;
+}
+
+.format-grid {
+  display: grid;
+  grid-template-columns: 9.5em 9.5em;
+  gap: 0.75em 1.25em;
+  justify-content: start;
+}
+
+.format-row-stack {
+  flex-direction: column;
+  gap: 8px;
+}
+
+.format-radio-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  color: var(--text-primary);
+  font-size: 0.85rem;
+}
+
+.format-radio {
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+  accent-color: var(--accent, #3b82f6);
 }
 </style>
