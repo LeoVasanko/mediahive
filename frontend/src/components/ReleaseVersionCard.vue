@@ -430,9 +430,10 @@ html.mouse-active .version-row.version-best:hover {
 }
 
 .version-badges {
-  --badge-row-height: 27px;
+  --badge-row-height: 1.2rem;
   /* Regular hex geometry: horizontal inset = h / (2 * sqrt(3)) ~= 0.288675 * h */
   --badge-hex-inset: calc(var(--badge-row-height) * 0.288675);
+  --badge-slant: 0.25em;
   display: flex;
   flex-wrap: nowrap;
   align-items: stretch;
@@ -446,16 +447,16 @@ html.mouse-active .version-row.version-best:hover {
   height: 100%;
   font-size: 0.78rem;
   line-height: 1;
-  padding: 0 8px 0 calc(4px + var(--badge-hex-inset));
+  padding: 0 0.5em 0 0.3em;
   font-weight: 600;
   text-transform: uppercase;
-  margin-left: calc(-1 * var(--badge-hex-inset));
-  clip-path: polygon(var(--badge-hex-inset) 0, 100% 0, 100% 100%, 0 100%);
+  margin-left: calc(-1 * var(--badge-slant));
+  clip-path: polygon(var(--badge-slant) 0, 100% 0, 100% 100%, 0 100%);
 }
 
 .v-badge:first-child {
   margin-left: 0;
-  padding-left: 9px;
+  padding-left: 0.5em;
   clip-path: polygon(
     var(--badge-hex-inset) 0,
     100% 0,
@@ -466,9 +467,9 @@ html.mouse-active .version-row.version-best:hover {
 }
 
 .v-badge:last-child {
-  padding-right: calc(6px + var(--badge-hex-inset));
+  padding-right: 0.5em;
   clip-path: polygon(
-    var(--badge-hex-inset) 0,
+    var(--badge-slant) 0,
     calc(100% - var(--badge-hex-inset)) 0,
     100% 50%,
     calc(100% - var(--badge-hex-inset)) 100%,
@@ -525,7 +526,7 @@ html.mouse-active .version-row.version-best:hover {
 }
 
 .v-badge.group {
-  background: #64748b;
+  background: #1c54a1;
   color: #f8fafc;
 }
 
