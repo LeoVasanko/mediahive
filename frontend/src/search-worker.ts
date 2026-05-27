@@ -785,22 +785,18 @@ self.onmessage = (event: MessageEvent<SearchWorkerMessage>) => {
   if (msg.type === "index") {
     movies = msg.movies
     series = msg.series
-    console.log("[worker] index updated movies=%d series=%d", movies.length, series.length)
     return
   }
 
   if (msg.type === "query") {
     const { id, query } = msg
-    console.log("[worker] received query id=%d query=%q", id, query)
     currentSearchId = id
     const token: CancelToken = { id }
 
     void (async () => {
       const response = await performSearch(query, token)
-      if (response === null) {
         console.log("[worker] search id=%d query=%q CANCELLED", id, query)
         return
-      }
       console.log("[worker] posting result id=%d query=%q results=%d categories=%d", id, query, response.results.length, response.categories.length)
       self.postMessage(response)
     })()
