@@ -37,6 +37,11 @@ const router = createRouter({
       component: EmptyRouteComponent,
     },
     {
+      path: "/settings",
+      name: "settings",
+      component: EmptyRouteComponent,
+    },
+    {
       path: "/series",
       name: "series",
       component: EmptyRouteComponent,

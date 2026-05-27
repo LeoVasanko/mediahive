@@ -63,7 +63,7 @@
     </div>
 
     <div class="header-settings">
-      <button class="header-settings-btn" title="Settings" @click="showSettings = !showSettings">
+      <button class="header-settings-btn" title="Settings" @click="openSettings">
         <svg
           xmlns="http://www.w3.org/2000/svg"
           width="20"
@@ -85,7 +85,7 @@
       <!-- Full-screen settings view -->
       <div v-if="showSettings" class="settings-view">
         <div class="settings-header">
-          <button class="settings-back" @click="showSettings = false">
+          <button class="settings-back" @click="closeSettings">
             <svg
               xmlns="http://www.w3.org/2000/svg"
               width="24"
@@ -239,7 +239,7 @@
 
 <script setup lang="ts">
 import { ref, watch, computed, onMounted, onUnmounted } from "vue"
-import { useRouter } from "vue-router"
+import { useRouter, useRoute } from "vue-router"
 import { navAttrs } from "../composables/useKeyboardNavigation"
 import logoUrl from "../assets/mediahive.webp"
 import { fetchRoots, replaceRoots, pickFolderAndAddRoot } from "../api"
@@ -273,6 +273,7 @@ const emit = defineEmits<{
 }>()
 
 const router = useRouter()
+const route = useRoute()
 const searchInputRef = ref<HTMLInputElement | null>(null)
 const localSearch = ref(props.searchQuery)
 
@@ -283,8 +284,22 @@ function _onPywebviewReady() {
 window.addEventListener("pywebviewready", _onPywebviewReady, { once: true })
 onUnmounted(() => window.removeEventListener("pywebviewready", _onPywebviewReady))
 
-const showSettings = ref(false)
+const showSettings = computed(() => route.path === "/settings")
 const roots = ref<RootEntry[]>([])
+
+function openSettings() {
+  if (showSettings.value) return
+  void router.push("/settings")
+}
+
+function closeSettings() {
+  if (!showSettings.value) return
+  if (window.history.length > 1) {
+    router.back()
+    return
+  }
+  void router.replace("/movies")
+}
 
 function setPreferredResolution(value: ResolutionPreference) {
   settings.preferredResolution = value
@@ -337,7 +352,7 @@ async function addRoot() {
   try {
     await replaceRoots(newRoots)
     await refreshRoots()
-    showSettings.value = false
+    closeSettings()
   } catch (e) {
     console.error("Failed to add root:", e)
     alert("Failed to add root")

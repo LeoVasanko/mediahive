@@ -795,9 +795,9 @@ self.onmessage = (event: MessageEvent<SearchWorkerMessage>) => {
 
     void (async () => {
       const response = await performSearch(query, token)
-        console.log("[worker] search id=%d query=%q CANCELLED", id, query)
+      if (!response) {
         return
-      console.log("[worker] posting result id=%d query=%q results=%d categories=%d", id, query, response.results.length, response.categories.length)
+      }
       self.postMessage(response)
     })()
   }
