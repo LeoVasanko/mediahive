@@ -62,7 +62,7 @@
     <div v-else class="page-slider">
       <div class="page-slider-track" :class="{ 'is-detail-open': isDetailOpen }">
         <!-- Browse/Search page (left panel) -->
-        <main class="main-content page-slider-panel">
+        <main class="main-content page-slider-panel" data-nav-scope="browse">
           <!-- Movies and Series views - both always rendered for smooth transitions -->
           <div v-if="!searchQuery" class="view-container">
             <Transition name="view-zoom" mode="out-in">
@@ -152,7 +152,7 @@
         </main>
 
         <!-- Detail page (right panel) -->
-        <main class="main-content page-slider-panel page-slider-detail-panel">
+        <main class="main-content page-slider-panel page-slider-detail-panel" data-nav-scope="detail">
           <MediaDetail
             v-if="detailItemForRender"
             v-show="isDetailOpen"
@@ -191,7 +191,7 @@ import {
   fetchRoots,
 } from "./api"
 import { useSettings } from "./composables/useSettings"
-import { useKeyboardNavigation } from "./composables/useKeyboardNavigation"
+import { useKeyboardNavigation, setActiveNavigationScope } from "./composables/useKeyboardNavigation"
 import { useMediaWebSocket } from "./composables/useMediaWebSocket"
 import Header from "./components/Header.vue"
 import CollageHero from "./components/CollageHero.vue"
@@ -200,7 +200,7 @@ import MediaDetail from "./components/MediaDetail.vue"
 import type { SearchResultItem, SearchResponseMessage } from "./search-worker"
 
 // Initialize keyboard navigation
-const { getFocusState, restoreFocusState, focusAt, focusElement } = useKeyboardNavigation()
+const { getFocusState, restoreFocusState, focusElement } = useKeyboardNavigation()
 
 const router = useRouter()
 const route = useRoute()
@@ -616,6 +616,7 @@ function handleEscapeKey(event: KeyboardEvent) {
 onMounted(() => {
   void refreshPlayerStatus()
   void refreshResumePositions()
+  setActiveNavigationScope(isDetailOpen.value ? "detail" : "browse")
   document.addEventListener("keydown", handleEscapeKey)
   window.addEventListener("mediahive:gamepad-action", onGamepadAction as EventListener)
 })
@@ -757,6 +758,45 @@ function closeDetail() {
 
 function handleActorSearch(actorName: string) {
   updateSearchQuery(actorName)
+}
+
+function focusDetailEntryTarget(item: MediaItem): boolean {
+  const detailPanel = document.querySelector('[data-nav-scope="detail"]') as HTMLElement | null
+  if (!detailPanel) return false
+
+  let target: HTMLElement | null = null
+
+  if (item.type === "movies") {
+    // Best release is rendered first and mapped to row 2 / col 0.
+    target = detailPanel.querySelector(
+      '[data-nav-release-item="true"][data-nav-row="2"][data-nav-col="0"][data-nav-focusable="true"]',
+    ) as HTMLElement | null
+  } else if (item.type === "series") {
+    // Initial episode tile (first season, first episode) maps to row 2 / col 0.
+    target = detailPanel.querySelector(
+      '.episode-tile[data-nav-row="2"][data-nav-col="0"][data-nav-focusable="true"]',
+    ) as HTMLElement | null
+  }
+
+  if (target) {
+    focusElement(target)
+    return true
+  }
+
+  const navButtons = Array.from(document.querySelectorAll<HTMLElement>(".header-nav-item.active"))
+  const detailsNav = navButtons.find((button) => button.textContent?.trim() === "Details")
+  if (detailsNav?.hasAttribute("data-nav-focusable")) {
+    focusElement(detailsNav)
+    return true
+  }
+
+  const firstFocusable = detailPanel.querySelector('[data-nav-focusable="true"]') as HTMLElement | null
+  if (firstFocusable) {
+    focusElement(firstFocusable)
+    return true
+  }
+
+  return false
 }
 
 // Convert raw data to MediaItem format
@@ -1058,13 +1098,14 @@ function rehydrateSearchResult(result: SearchResultItem): MediaItem {
 // Watch for detail page entry/exit to manage focus
 watch(selectedItem, (item, oldItem) => {
   if (item && !oldItem) {
-    // Skip auto-focus if we have a specific episode to focus on (from search)
-    if (item.type === "series" && focusEpisode.value) {
-      return
-    }
-    // Entering detail page - focus Play button (row 2, col 0) after transition
-    focusAt(2, 0, 150)
+    // Entering detail page - constrain navigation to detail panel immediately,
+    // then shift focus into it while the slide transition runs.
+    setActiveNavigationScope("detail")
+    setTimeout(() => {
+      focusDetailEntryTarget(item)
+    }, 20)
   } else if (!item && oldItem) {
+    setActiveNavigationScope("browse")
     // Leaving detail page (browser back, Escape, etc.) - restore focus to the item card
     const page = currentView.value === "series" ? "series" : "movies"
     restoreFocusForPage(page)

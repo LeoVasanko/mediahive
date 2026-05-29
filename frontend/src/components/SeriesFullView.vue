@@ -1,5 +1,5 @@
 <template>
-  <div class="series-fullscreen">
+  <div ref="seriesRootRef" class="series-fullscreen">
     <!-- Hero section with backdrop or season collage -->
     <section class="series-hero">
       <div class="hero-bg">
@@ -204,6 +204,8 @@ const emit = defineEmits<{
   openFolder: [string, string | null | undefined]
 }>()
 
+const seriesRootRef = ref<HTMLElement | null>(null)
+
 // Focus on matched episode when provided
 watch(
   () => props.focusEpisode,
@@ -222,9 +224,9 @@ watch(
           if (episodeIndex >= 0) {
             // Find the episode tile element using nav attributes
             const selector = `[data-nav-row="${seasonIndex + 2}"][data-nav-col="${episodeIndex}"]`
-            const element = document.querySelector(selector) as HTMLElement | null
+            const element = seriesRootRef.value?.querySelector(selector) as HTMLElement | null
             if (element) {
-              element.scrollIntoView({ behavior: "smooth", block: "center" })
+              element.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" })
               element.focus()
             }
           }

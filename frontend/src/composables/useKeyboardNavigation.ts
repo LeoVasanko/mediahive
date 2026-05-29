@@ -23,6 +23,7 @@ export type OutOfBoundsNavigationHandler = (
 // Global focus state
 const focusedElement = ref<HTMLElement | null>(null)
 const isNavigating = ref(false)
+const activeNavigationScope = ref<string | null>(null)
 // Track the "desired" column when moving vertically (to maintain column position across rows of different lengths)
 const desiredCol = ref<number | null>(null)
 // Track if global handlers are installed
@@ -341,11 +342,26 @@ function handleSyncedRowResize() {
 
 function ensureElementVisibleVertically(element: HTMLElement) {
   if (element.hasAttribute("data-nav-release-item")) {
-    element.scrollIntoView({
-      behavior: "smooth",
-      block: "nearest",
-      inline: "nearest",
-    })
+    const rootStyle = window.getComputedStyle(document.documentElement)
+    const headerHeight = parseFloat(rootStyle.getPropertyValue("--header-height") || "0")
+    const topMargin = headerHeight + 24
+    const bottomMargin = 24
+    const rect = element.getBoundingClientRect()
+
+    if (rect.top < topMargin) {
+      window.scrollBy({
+        top: rect.top - topMargin,
+        behavior: "smooth",
+      })
+      return
+    }
+
+    if (rect.bottom > window.innerHeight - bottomMargin) {
+      window.scrollBy({
+        top: rect.bottom - (window.innerHeight - bottomMargin),
+        behavior: "smooth",
+      })
+    }
     return
   }
 
@@ -388,12 +404,34 @@ function resolveOutOfBoundsNavigation(
 
 const outOfBoundsHandlers = new Set<OutOfBoundsNavigationHandler>()
 
+function getElementNavigationScope(element: HTMLElement): string | null {
+  const owner = element.closest<HTMLElement>("[data-nav-scope]")
+  return owner?.getAttribute("data-nav-scope") || null
+}
+
+function isElementInActiveScope(element: HTMLElement): boolean {
+  const scope = activeNavigationScope.value
+  if (!scope) return true
+  const elementScope = getElementNavigationScope(element)
+  // Elements without a scope (for example global header controls) stay reachable.
+  if (!elementScope) return true
+  return elementScope === scope
+}
+
+function clearFocusedElement() {
+  if (!focusedElement.value) return
+  focusedElement.value.classList.remove("nav-focused")
+  focusedElement.value.blur()
+  focusedElement.value = null
+}
+
 function getFocusableElements(): FocusableElement[] {
   const elements = document.querySelectorAll(`[${FOCUSABLE_ATTR}]`)
   const result: FocusableElement[] = []
 
   elements.forEach((el) => {
     const htmlEl = el as HTMLElement
+    if (!isElementInActiveScope(htmlEl)) return
     if (htmlEl.offsetParent === null) return
 
     const rect = htmlEl.getBoundingClientRect()
@@ -594,6 +632,7 @@ function findNextElement(
 
 function focusElement(element: HTMLElement | null) {
   if (!element) return
+  if (!isElementInActiveScope(element)) return
 
   if (focusedElement.value && focusedElement.value !== element) {
     focusedElement.value.classList.remove("nav-focused")
@@ -670,10 +709,17 @@ function handleKeyDown(event: KeyboardEvent) {
   isNavigating.value = true
 
   let current = focusedElement.value
+  if (current && !isElementInActiveScope(current)) {
+    current = null
+  }
 
   if (!current) {
     const activeElement = document.activeElement as HTMLElement
-    if (activeElement && activeElement.hasAttribute(FOCUSABLE_ATTR)) {
+    if (
+      activeElement &&
+      activeElement.hasAttribute(FOCUSABLE_ATTR) &&
+      isElementInActiveScope(activeElement)
+    ) {
       current = activeElement
     }
   }
@@ -702,9 +748,20 @@ function handleEnterKey(event: KeyboardEvent) {
     return
   }
 
-  if (focusedElement.value) {
+  if (focusedElement.value && isElementInActiveScope(focusedElement.value)) {
     event.preventDefault()
     focusedElement.value.click()
+  }
+}
+
+export function setActiveNavigationScope(scope: string | null) {
+  if (activeNavigationScope.value === scope) return
+  activeNavigationScope.value = scope
+  desiredCol.value = null
+  resetSyncedRows(true)
+
+  if (focusedElement.value && !isElementInActiveScope(focusedElement.value)) {
+    clearFocusedElement()
   }
 }
 
@@ -721,7 +778,7 @@ export function installKeyboardNavigation() {
   document.addEventListener("click", (event) => {
     const target = event.target as HTMLElement
     const focusable = target.closest(`[${FOCUSABLE_ATTR}]`) as HTMLElement | null
-    if (focusable) {
+    if (focusable && isElementInActiveScope(focusable)) {
       desiredCol.value = null
       focusElement(focusable)
     }
@@ -731,7 +788,7 @@ export function installKeyboardNavigation() {
     if (event.button !== 1) return
     const target = event.target as HTMLElement
     const focusable = target.closest(`[${FOCUSABLE_ATTR}]`) as HTMLElement | null
-    if (focusable) {
+    if (focusable && isElementInActiveScope(focusable)) {
       desiredCol.value = null
       focusElement(focusable)
     }
@@ -739,7 +796,7 @@ export function installKeyboardNavigation() {
 
   document.addEventListener("focusin", (event) => {
     const target = event.target as HTMLElement
-    if (target.hasAttribute(FOCUSABLE_ATTR)) {
+    if (target.hasAttribute(FOCUSABLE_ATTR) && isElementInActiveScope(target)) {
       if (focusedElement.value && focusedElement.value !== target) {
         focusedElement.value.classList.remove("nav-focused")
       }
