@@ -27,6 +27,7 @@ import uvicorn
 import webview
 
 from mediahive.config import load_config, save_config
+from mediahive.volume_control import get_volume, set_volume, volume_max
 
 logger = logging.getLogger("mediahive.winmain")
 
@@ -52,6 +53,9 @@ MPC_BE_SEEK_BEGIN_COMMAND = 1085
 MPC_BE_RESUME_APPLY_THRESHOLD_MS = 15000
 MPC_BE_RESUME_CLEAR_MARGIN_MS = 15000
 MPC_BE_PLAYBACK_STATE_FLUSH_SECONDS = 1.0
+VOLUME_MIN = 0.0
+VOLUME_MAX = 1.5
+VOLUME_STEP = 0.01
 
 
 class _XINPUT_GAMEPAD(ctypes.Structure):
@@ -91,8 +95,6 @@ _XINPUT_BUTTONS = {
 }
 
 _MPC_BE_COMMANDS = {
-    0x0001: 907,
-    0x0002: 908,
     0x1000: 889,
     0x2000: 816,
     0x8000: 909,
@@ -104,8 +106,6 @@ _MPC_BE_SEEK_MASK_TO_COMMANDS = {
 }
 
 _MPC_BE_REPEATABLE_MASKS = {
-    0x0001,
-    0x0002,
     *_MPC_BE_SEEK_MASK_TO_COMMANDS,
 }
 
@@ -520,6 +520,12 @@ def _start_gamepad_remote(
                     if is_connected != last_connected[slot]:
                         last_connected[slot] = is_connected
 
+                    # Volume control via D-pad up / down (system master volume)
+                    if current_mask & 0x0001 and not last_pressed_masks[slot] & 0x0001:
+                        set_volume(min(volume_max(), get_volume() + VOLUME_STEP))
+                    if current_mask & 0x0002 and not last_pressed_masks[slot] & 0x0002:
+                        set_volume(max(VOLUME_MIN, get_volume() - VOLUME_STEP))
+
                     for mask, command_id in _MPC_BE_COMMANDS.items():
                         is_pressed = bool(current_mask & mask)
                         was_pressed = bool(last_pressed_masks[slot] & mask)
@@ -645,6 +651,21 @@ class JsApi:
             return None
         result = self._window.create_file_dialog(webview.FOLDER_DIALOG)
         return result[0] if result else None
+
+    def set_volume(self, x: float) -> None:
+        """Set system master volume from slider position ``x`` (0.0 .. 1.5)."""
+        # Clamp to the platform's maximum so the slider never exceeds what
+        # the OS can actually apply (1.0 on Windows/macOS, 1.5 on Linux).
+        clamped = max(VOLUME_MIN, min(volume_max(), float(x)))
+        set_volume(clamped)
+
+    def get_volume(self) -> float:
+        """Return current volume slider position (0.0 .. 1.5)."""
+        return get_volume()
+
+    def volume_max(self) -> float:
+        """Return the maximum volume slider position for this platform."""
+        return volume_max()
 
 
 def _prepend_meipass_to_path() -> None:

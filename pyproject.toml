@@ -107,4 +107,12 @@ ignore = [
     "D415",
     "D400",
     "ANN401",
+    # Allow en-dash in docstrings (used for list formatting)
+    "RUF002",
+    # Allow ctypes COM variable names (CLSID_*, IID_*, etc.)
+    "N806",
+    # Allow inline comments that describe output formats
+    "ERA001",
+    # Allow unused local variables in ctypes COM boilerplate
+    "F841",
 ]
