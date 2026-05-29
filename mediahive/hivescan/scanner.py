@@ -14,6 +14,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
+import threading
 import uuid
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -95,19 +97,16 @@ class RootScanner:
 
     async def stop(self) -> None:
         """Cancel all background tasks."""
-        for task in (
+        tasks = [
             self._scan_task,
             self._showreel_worker_task,
             self._rescan_worker_task,
-        ):
+        ]
+        for task in tasks:
             if task and not task.done():
                 task.cancel()
-        # Wait briefly for graceful shutdown
-        for task in (
-            self._scan_task,
-            self._showreel_worker_task,
-            self._rescan_worker_task,
-        ):
+        # Wait briefly for graceful shutdown to avoid lingering scanner tasks.
+        for task in tasks:
             if task and not task.done():
                 with contextlib.suppress(TimeoutError, asyncio.CancelledError):
                     await asyncio.wait_for(task, timeout=2.0)
@@ -150,6 +149,47 @@ class RootScanner:
         media_root_str = self.media_root.as_posix()
         dirs_visited = 0
 
+        def _collect_children(
+            directory: Path,
+            stop_event: threading.Event,
+        ) -> tuple[list[Path], list[Path], bool]:
+            child_dirs: list[Path] = []
+            child_files: list[Path] = []
+            is_media_container = False
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    if stop_event.is_set():
+                        return child_dirs, child_files, is_media_container
+                    name = entry.name
+                    if name.startswith("."):
+                        continue
+                    item = Path(entry.path)
+                    try:
+                        is_dir = entry.is_dir(follow_symlinks=False)
+                    except OSError:
+                        continue
+                    if is_dir:
+                        if name.upper() in media_container_dirs:
+                            is_media_container = True
+                        child_dirs.append(item)
+                    else:
+                        child_files.append(item)
+            return child_dirs, child_files, is_media_container
+
+        def _collect_root_children(
+            directory: Path,
+            stop_event: threading.Event,
+        ) -> list[Path]:
+            items: list[Path] = []
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    if stop_event.is_set():
+                        return items
+                    if entry.name.startswith("."):
+                        continue
+                    items.append(Path(entry.path))
+            return items
+
         async def _report(detail: str) -> None:
             await self._send(
                 Task(
@@ -182,28 +222,32 @@ class RootScanner:
             if not await ap.is_dir():
                 return
 
-            child_dirs: list[Path] = []
-            child_files: list[Path] = []
-            is_media_container = False
-
             try:
-                entries = await asyncio.to_thread(lambda: list(ap.iterdir()))
-                for item_async in entries:
-                    item = Path(item_async)
-                    if item.name.startswith("."):
-                        continue
-                    if self._scanignore and self._scanignore.is_excluded(item):
-                        continue
-
-                    if await AsyncPath(item).is_dir():
-                        if item.name.upper() in media_container_dirs:
-                            is_media_container = True
-                        child_dirs.append(item)
-                    else:
-                        child_files.append(item)
+                stop_event = threading.Event()
+                child_dirs, child_files, is_media_container = await asyncio.to_thread(
+                    _collect_children,
+                    directory,
+                    stop_event,
+                )
+            except asyncio.CancelledError:
+                stop_event.set()
+                raise
             except OSError, PermissionError:
                 logger.debug("Cannot list directory: %s", directory)
                 return
+
+            # Apply ignore rules after fast scandir classification.
+            if self._scanignore:
+                child_dirs = [
+                    item
+                    for item in child_dirs
+                    if not self._scanignore.is_excluded(item)
+                ]
+                child_files = [
+                    item
+                    for item in child_files
+                    if not self._scanignore.is_excluded(item)
+                ]
 
             if is_media_container:
                 relpath = make_relative_path(str(directory), media_root_str)
@@ -230,7 +274,6 @@ class RootScanner:
                     logger.info("Scanning: %s (%d found so far)", rel, len(downloads))
                 for child in child_dirs:
                     await _walk(child)
-                    await asyncio.sleep(0)
                 for child_file in child_files:
                     if child_file.suffix.lower() in video_extensions:
                         relpath = make_relative_path(str(child_file), media_root_str)
@@ -261,9 +304,16 @@ class RootScanner:
         logger.info("Starting filesystem discovery at %s", self.media_root)
         await _report(f"Scanning: {self.media_root}")
 
-        root_ap = AsyncPath(self.media_root)
         try:
-            root_children = await asyncio.to_thread(lambda: list(root_ap.iterdir()))
+            stop_event = threading.Event()
+            root_children = await asyncio.to_thread(
+                _collect_root_children,
+                self.media_root,
+                stop_event,
+            )
+        except asyncio.CancelledError:
+            stop_event.set()
+            raise
         except OSError, PermissionError:
             logger.exception("Cannot list media root: %s", self.media_root)
             return downloads

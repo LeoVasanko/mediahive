@@ -1,5 +1,6 @@
 """Utility functions for paths, sizes, and timestamps."""
 
+import os
 import time
 from pathlib import Path
 
@@ -113,28 +114,45 @@ async def get_added_timestamp(path: Path) -> int | None:
     return int(atime)
 
 
-async def get_directory_size(path: Path) -> int:
-    """Calculate total size of a directory recursively."""
-    ap = AsyncPath(path)
-    total = 0
+def get_directory_size(path: Path) -> int:
+    """Calculate total size using scandir recursion in a sync worker."""
     try:
-        if await ap.is_file():
-            return (await ap.stat()).st_size
-        for item in ap.rglob("*"):
-            if await AsyncPath(item).is_file():
-                total += (await AsyncPath(item).stat()).st_size
+        if path.is_file():
+            return path.stat().st_size
     except OSError, PermissionError:
-        pass
+        return 0
+
+    total = 0
+    stack = [path]
+    while stack:
+        current = stack.pop()
+        try:
+            with os.scandir(current) as entries:
+                for entry in entries:
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            stack.append(Path(entry.path))
+                            continue
+                    except OSError:
+                        continue
+                    try:
+                        total += entry.stat(follow_symlinks=False).st_size
+                    except OSError:
+                        continue
+        except OSError, PermissionError:
+            continue
+
     return total
 
 
 def format_size(size_bytes: int) -> str:
     """Format size in human-readable format."""
+    size = float(size_bytes)
     for unit in ["B", "KB", "MB", "GB", "TB"]:
-        if size_bytes < 1024:
-            return f"{size_bytes:.2f} {unit}"
-        size_bytes /= 1024
-    return f"{size_bytes:.2f} PB"
+        if size < 1024:
+            return f"{size:.2f} {unit}"
+        size /= 1024
+    return f"{size:.2f} PB"
 
 
 async def find_common_root(paths: list[Path]) -> Path | None:

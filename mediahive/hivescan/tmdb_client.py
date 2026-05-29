@@ -58,6 +58,14 @@ def _get_http_client() -> httpx.AsyncClient:
     return _http_client
 
 
+async def close_http_client() -> None:
+    """Close the persistent TMDb HTTP client if it was created."""
+    global _http_client
+    if _http_client is not None:
+        await _http_client.aclose()
+        _http_client = None
+
+
 # Sentinel value to distinguish "cached None" from "not in cache"
 _NOT_FOUND = object()
 

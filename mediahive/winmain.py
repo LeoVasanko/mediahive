@@ -6,6 +6,7 @@ Or from PyInstaller: MediaHive.exe [media_folder]
 
 import argparse
 import asyncio
+import contextlib
 import ctypes
 import html
 import json
@@ -839,6 +840,7 @@ def winmain() -> None:
         port=backend_port,
         loop="asyncio",
         log_level="warning",
+        timeout_graceful_shutdown=0,
     )
     server = uvicorn.Server(config)
     backend_thread = threading.Thread(
@@ -898,14 +900,38 @@ def winmain() -> None:
             name="mediahive-initial-roots-activation",
         ).start()
 
+    def on_closing() -> None:
+        # Begin backend shutdown as soon as the window starts closing so that
+        # by the time webview.start() returns the backend is already done.
+        server.should_exit = True
+
+    window.events.closing += on_closing
+
     webview.start(func=on_shown, icon=_icon_path(), **_webview_start_kwargs())
+
+    # Ensure backend shutdown has been requested (in case closing event
+    # was not fired or we are on a platform that does not support it).
+    server.should_exit = True
+    backend_thread.join(timeout=2)
 
     poll_stop.set()
     if poll_thread is not None:
         poll_thread.join(timeout=1)
 
-    server.should_exit = True
-    backend_thread.join(timeout=10)
+    # Close log file handles so mediahive.log is not left locked.
+    if getattr(sys, "frozen", False):
+        logging.shutdown()
+        for handler in logging.root.handlers[:]:
+            handler.close()
+            logging.root.removeHandler(handler)
+        if sys.stdout is not sys.__stdout__:
+            with contextlib.suppress(Exception):
+                sys.stdout.close()
+        if sys.stderr is not sys.__stderr__:
+            with contextlib.suppress(Exception):
+                sys.stderr.close()
+        sys.stdout = sys.__stdout__
+        sys.stderr = sys.__stderr__
 
 
 if __name__ == "__main__":

@@ -30,7 +30,9 @@ from fastapi_vue import Frontend
 
 from mediahive.__main__ import DEVMODE
 from mediahive.config import load_config
+from mediahive.hivescan.images import close_image_client
 from mediahive.hivescan.scanner import RootScanner
+from mediahive.hivescan.tmdb_client import close_http_client
 from mediahive.models.protocol import (
     MsgspecResponse,
     OpenFolderRequest,
@@ -368,6 +370,11 @@ async def lifespan(_app: FastAPI):
             await activation_task
 
         await supervisor.shutdown()
+
+        with suppress(Exception):
+            await close_http_client()
+        with suppress(Exception):
+            await close_image_client()
 
 
 app = FastAPI(title="MediaHive Server", lifespan=lifespan, debug=DEVMODE)

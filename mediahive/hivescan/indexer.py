@@ -62,7 +62,10 @@ async def _build_torrent_info(
         probe_info = await probe_media_info(str(probe_target))
 
     if item.content_hash and item.content_hash.size == 0:
-        item.content_hash.size = await get_directory_size(item.content_hash.path)
+        item.content_hash.size = await asyncio.to_thread(
+            get_directory_size,
+            item.content_hash.path,
+        )
     size = item.content_hash.size if item.content_hash else None
     added_at = await get_added_timestamp(item.path)
 
@@ -189,8 +192,9 @@ async def _collect_episode_files(
                         )
                         if not already_added:
                             if item.content_hash and item.content_hash.size == 0:
-                                item.content_hash.size = await get_directory_size(
-                                    item.content_hash.path
+                                item.content_hash.size = await asyncio.to_thread(
+                                    get_directory_size,
+                                    item.content_hash.path,
                                 )
                             size = item.content_hash.size if item.content_hash else 0
                             all_episode_files[key].append({
@@ -441,9 +445,6 @@ async def _process_movies(
         )
 
         tmdb_info = await get_movie_tmdb(first_item.title, first_item.year)
-        # Yield to event loop so HTTP requests stay responsive
-        if idx % 20 == 0:
-            await asyncio.sleep(0)
 
         if tmdb_info and tmdb_info.tmdb_id:
             if tmdb_info.tmdb_id not in tmdb_movie_groups:
@@ -694,9 +695,6 @@ async def _process_series(
         logger.debug("    [%d/%d] %s", idx, len(series_groups), first_item.title)
 
         tmdb_info = await get_series_tmdb(first_item.title)
-        # Yield to event loop so HTTP requests stay responsive
-        if idx % 20 == 0:
-            await asyncio.sleep(0)
 
         if tmdb_info and tmdb_info.tmdb_id:
             if tmdb_info.tmdb_id not in tmdb_groups:

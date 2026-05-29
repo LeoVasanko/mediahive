@@ -29,6 +29,14 @@ def _get_image_client() -> httpx.AsyncClient:
     return _image_client
 
 
+async def close_image_client() -> None:
+    """Close the persistent image HTTP client if it was created."""
+    global _image_client
+    if _image_client is not None:
+        await _image_client.aclose()
+        _image_client = None
+
+
 async def _download_image(url: str, output_path: Path, description: str) -> str | None:
     """Download an image from URL to output path."""
     ap = AsyncPath(output_path)

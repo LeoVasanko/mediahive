@@ -78,7 +78,7 @@ async def _run_ffmpeg(
             await _kill_proc(proc)
             try:
                 stdout, stderr = await proc.communicate()
-            except OSError, asyncio.SubprocessError:
+            except OSError, subprocess.SubprocessError:
                 stdout, stderr = b"", b""
             logger.exception(
                 "ffmpeg command timed out. cmd=%s stderr=%s",
@@ -110,7 +110,7 @@ async def _run_ffmpeg(
     except asyncio.CancelledError:
         await _kill_proc(proc)
         raise
-    except OSError, asyncio.SubprocessError:
+    except OSError, subprocess.SubprocessError:
         logger.exception("Unexpected error running ffmpeg command: %s", shlex.join(cmd))
         return None
 
@@ -120,7 +120,7 @@ async def _kill_proc(proc: asyncio.subprocess.Process | None) -> None:
     if proc is not None and proc.returncode is None:
         proc.kill()
         with contextlib.suppress(Exception):
-            await asyncio.wait_for(proc.wait(), timeout=2)
+            await asyncio.wait_for(proc.wait(), timeout=0.5)
 
 
 # Showreel timestamp positions in seconds (5, 10, 15, 20, 25 minutes)

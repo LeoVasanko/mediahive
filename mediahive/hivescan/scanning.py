@@ -3,6 +3,8 @@
 import asyncio
 import glob
 import operator
+import os
+import threading
 from collections import defaultdict
 from pathlib import Path
 
@@ -30,6 +32,51 @@ VIDEO_EXTENSIONS = {
 _episode_files_cache: dict[str, dict[tuple[int, int], list[tuple[str, int]]]] = {}
 _playable_file_cache: dict[str, str | None] = {}
 _bluray_probe_file_cache: dict[str, str | None] = {}
+
+
+def _scandir_split(
+    directory: Path,
+    stop_event: threading.Event,
+) -> tuple[list[Path], list[Path]]:
+    """Return child directories and files, checking stop_event each iteration."""
+    child_dirs: list[Path] = []
+    child_files: list[Path] = []
+    with os.scandir(directory) as entries:
+        for entry in entries:
+            if stop_event.is_set():
+                return child_dirs, child_files
+            try:
+                is_dir = entry.is_dir(follow_symlinks=False)
+            except OSError:
+                continue
+            p = Path(entry.path)
+            if is_dir:
+                child_dirs.append(p)
+            else:
+                child_files.append(p)
+    return child_dirs, child_files
+
+
+def _scandir_files_with_suffix(
+    directory: Path,
+    suffixes: set[str],
+    stop_event: threading.Event,
+) -> list[Path]:
+    """Return files in directory with a matching suffix, cancellable via stop_event."""
+    files: list[Path] = []
+    with os.scandir(directory) as entries:
+        for entry in entries:
+            if stop_event.is_set():
+                return files
+            try:
+                if entry.is_dir(follow_symlinks=False):
+                    continue
+            except OSError:
+                continue
+            p = Path(entry.path)
+            if p.suffix.lower() in suffixes:
+                files.append(p)
+    return files
 
 
 async def scan_downloads(base_pattern: str) -> list[ParsedContent]:
@@ -107,22 +154,37 @@ async def find_episode_files(
         _episode_files_cache[cache_key] = episodes
         return episodes
 
-    try:
-        for f in ap.rglob("*"):
+    stack = [path]
+    while stack:
+        current = stack.pop()
+        stop_event = threading.Event()
+        try:
+            child_dirs, child_files = await asyncio.to_thread(
+                _scandir_split,
+                current,
+                stop_event,
+            )
+        except asyncio.CancelledError:
+            stop_event.set()
+            raise
+        except OSError, PermissionError:
+            continue
+
+        stack.extend(child_dirs)
+        for f in child_files:
+            if f.suffix.lower() not in VIDEO_EXTENSIONS:
+                continue
+            if "sample" in f.name.lower():
+                continue
             af = AsyncPath(f)
-            if await af.is_file() and Path(f).suffix.lower() in VIDEO_EXTENSIONS:
-                if "sample" in Path(f).name.lower():
-                    continue
-                ep_info = parse_episode_from_filename(Path(f).name)
+            try:
+                ep_info = parse_episode_from_filename(f.name)
                 if ep_info:
                     if ep_info not in episodes:
                         episodes[ep_info] = []
-                    episodes[ep_info].append((
-                        Path(f).as_posix(),
-                        (await af.stat()).st_size,
-                    ))
-    except OSError, PermissionError:
-        pass
+                    episodes[ep_info].append((f.as_posix(), (await af.stat()).st_size))
+            except OSError, PermissionError:
+                continue
 
     _episode_files_cache[cache_key] = episodes
     return episodes
@@ -174,44 +236,70 @@ async def find_playable_file(path: Path) -> str | None:
 
     # Check nested Blu-ray structure (e.g., MovieName/DISC1/BDMV/)
     try:
-        entries = await asyncio.to_thread(lambda: list(ap.iterdir()))
-        for subdir in entries:
-            if await AsyncPath(subdir).is_dir():
-                nested_bdmv_dir = Path(subdir) / "BDMV"
-                nested_movieobject = nested_bdmv_dir / "MovieObject.bdmv"
-                nested_index = nested_bdmv_dir / "index.bdmv"
-
-                if await AsyncPath(nested_movieobject).exists():
-                    result = nested_movieobject.as_posix()
-                    _playable_file_cache[cache_key] = result
-                    return result
-
-                if await AsyncPath(nested_index).exists():
-                    result = nested_index.as_posix()
-                    _playable_file_cache[cache_key] = result
-                    return result
-
-                nested_video_ts_dir = Path(subdir) / "VIDEO_TS"
-                nested_video_ts_ifo = nested_video_ts_dir / "VIDEO_TS.IFO"
-
-                if await AsyncPath(nested_video_ts_ifo).exists():
-                    result = nested_video_ts_ifo.as_posix()
-                    _playable_file_cache[cache_key] = result
-                    return result
+        stop_event = threading.Event()
+        child_dirs, _ = await asyncio.to_thread(
+            _scandir_split,
+            path,
+            stop_event,
+        )
+    except asyncio.CancelledError:
+        stop_event.set()
+        raise
     except OSError, PermissionError:
-        pass
+        child_dirs = []
+
+    for subdir in child_dirs:
+        nested_bdmv_dir = subdir / "BDMV"
+        nested_movieobject = nested_bdmv_dir / "MovieObject.bdmv"
+        nested_index = nested_bdmv_dir / "index.bdmv"
+
+        if await AsyncPath(nested_movieobject).exists():
+            result = nested_movieobject.as_posix()
+            _playable_file_cache[cache_key] = result
+            return result
+
+        if await AsyncPath(nested_index).exists():
+            result = nested_index.as_posix()
+            _playable_file_cache[cache_key] = result
+            return result
+
+        nested_video_ts_dir = subdir / "VIDEO_TS"
+        nested_video_ts_ifo = nested_video_ts_dir / "VIDEO_TS.IFO"
+
+        if await AsyncPath(nested_video_ts_ifo).exists():
+            result = nested_video_ts_ifo.as_posix()
+            _playable_file_cache[cache_key] = result
+            return result
 
     # Find largest video file
     video_files = []
-    try:
-        for f in ap.rglob("*"):
+    stack = [path]
+    while stack:
+        current = stack.pop()
+        stop_event = threading.Event()
+        try:
+            child_dirs, child_files = await asyncio.to_thread(
+                _scandir_split,
+                current,
+                stop_event,
+            )
+        except asyncio.CancelledError:
+            stop_event.set()
+            raise
+        except OSError, PermissionError:
+            continue
+
+        stack.extend(child_dirs)
+        for f in child_files:
+            if f.suffix.lower() not in VIDEO_EXTENSIONS:
+                continue
+            if "sample" in f.name.lower():
+                continue
             af = AsyncPath(f)
-            if await af.is_file() and Path(f).suffix.lower() in VIDEO_EXTENSIONS:
-                if "sample" in Path(f).name.lower():
-                    continue
-                video_files.append((Path(f).as_posix(), (await af.stat()).st_size))
-    except OSError, PermissionError:
-        pass
+            try:
+                video_files.append((f.as_posix(), (await af.stat()).st_size))
+            except OSError, PermissionError:
+                continue
 
     if not video_files:
         _playable_file_cache[cache_key] = None
@@ -254,18 +342,31 @@ async def find_metadata_probe_file(playable_path: str | None) -> str | None:
             # Group VOBs by title set (VTS_XX_Y.VOB)
             title_sets: dict[str, list[tuple[str, int]]] = defaultdict(list)
             try:
-                for f in AsyncPath(video_ts_dir).glob("*.vob"):
-                    af = AsyncPath(f)
-                    if not await af.is_file():
-                        continue
-                    name = Path(f).name.upper()
-                    if name.startswith("VTS_") and len(name) >= 10:
-                        ts_num = name[4:6]
-                        size = (await af.stat()).st_size
-                        title_sets[ts_num].append((Path(f).as_posix(), size))
+                stop_event = threading.Event()
+                vob_files = await asyncio.to_thread(
+                    _scandir_files_with_suffix,
+                    video_ts_dir,
+                    {".vob"},
+                    stop_event,
+                )
+            except asyncio.CancelledError:
+                stop_event.set()
+                raise
             except OSError, PermissionError:
                 _bluray_probe_file_cache[cache_key] = None
                 return None
+
+            for f in vob_files:
+                af = AsyncPath(f)
+                name = f.name.upper()
+                if not name.startswith("VTS_") or len(name) < 10:
+                    continue
+                try:
+                    size = (await af.stat()).st_size
+                except OSError, PermissionError:
+                    continue
+                ts_num = name[4:6]
+                title_sets[ts_num].append((f.as_posix(), size))
 
             if not title_sets:
                 _bluray_probe_file_cache[cache_key] = None
@@ -299,15 +400,31 @@ async def find_metadata_probe_file(playable_path: str | None) -> str | None:
         return None
 
     candidates: list[tuple[str, int]] = []
-    try:
-        for f in ap_stream.rglob("*.m2ts"):
-            af = AsyncPath(f)
-            if not await af.is_file():
+    stack = [stream_dir]
+    while stack:
+        current = stack.pop()
+        stop_event = threading.Event()
+        try:
+            child_dirs, child_files = await asyncio.to_thread(
+                _scandir_split,
+                current,
+                stop_event,
+            )
+        except asyncio.CancelledError:
+            stop_event.set()
+            raise
+        except OSError, PermissionError:
+            continue
+
+        stack.extend(child_dirs)
+        for f in child_files:
+            if f.suffix.lower() != ".m2ts":
                 continue
-            candidates.append((Path(f).as_posix(), (await af.stat()).st_size))
-    except OSError, PermissionError:
-        _bluray_probe_file_cache[cache_key] = None
-        return None
+            af = AsyncPath(f)
+            try:
+                candidates.append((f.as_posix(), (await af.stat()).st_size))
+            except OSError, PermissionError:
+                continue
 
     if not candidates:
         _bluray_probe_file_cache[cache_key] = None

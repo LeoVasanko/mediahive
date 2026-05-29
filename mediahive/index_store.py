@@ -9,7 +9,6 @@ debounced background task.
 import asyncio
 import contextlib
 import logging
-import os
 from datetime import datetime
 from pathlib import Path
 
@@ -170,16 +169,21 @@ class IndexStore:
 
     async def _write_snapshot(self) -> None:
         """Write current index to disk (called from debounce task)."""
-        snapshot = self._build_snapshot()
-
-        await AsyncPath(self.snapshot_path.parent).mkdir(parents=True, exist_ok=True)
-        tmp = self.snapshot_path.with_suffix(".tmp")
-        await AsyncPath(tmp).write_bytes(
-            msgspec.json.format(msgspec.json.encode(snapshot), indent=2)
-        )
-        # os.replace is atomic and overwrites on all platforms (unlike rename on Windows)
-        await asyncio.to_thread(os.replace, tmp, self.snapshot_path)
+        # Copy values on the event loop thread, then do full snapshot build + disk I/O
+        # in a worker thread to keep the loop responsive.
+        movies = list(self.movies.values())
+        series = list(self.series.values())
+        await asyncio.to_thread(self._write_snapshot_sync, movies, series)
         logger.debug("Snapshot written to %s", self.snapshot_path)
+
+    def _write_snapshot_sync(self, movies: list[Movie], series: list[Series]) -> None:
+        """Build and write snapshot synchronously in a worker thread."""
+        snapshot = self._build_snapshot_from_lists(movies, series)
+        self.snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.snapshot_path.with_suffix(".tmp")
+        tmp.write_bytes(msgspec.json.format(msgspec.json.encode(snapshot), indent=2))
+        # Path.replace is atomic and overwrites on all platforms.
+        tmp.replace(self.snapshot_path)
 
     def _schedule_snapshot(self) -> None:
         """Schedule a debounced snapshot write."""
@@ -300,12 +304,14 @@ class IndexStore:
     # Read helpers
     # ------------------------------------------------------------------
 
-    def _build_snapshot(self) -> IndexSnapshot:
-        """Build a sorted IndexSnapshot with computed stats."""
-        movies_list = sorted(
-            self.movies.values(), key=lambda x: (x.title.lower(), x.year or 0)
-        )
-        series_list = sorted(self.series.values(), key=lambda x: x.title.lower())
+    def _build_snapshot_from_lists(
+        self,
+        movies: list[Movie],
+        series: list[Series],
+    ) -> IndexSnapshot:
+        """Build a sorted IndexSnapshot with computed stats from list copies."""
+        movies_list = sorted(movies, key=lambda x: (x.title.lower(), x.year or 0))
+        series_list = sorted(series, key=lambda x: x.title.lower())
 
         total_movie_versions = sum(len(m.torrents) for m in movies_list)
         total_series_episodes = sum(
@@ -323,6 +329,13 @@ class IndexStore:
             ),
             movies=movies_list,
             series=series_list,
+        )
+
+    def _build_snapshot(self) -> IndexSnapshot:
+        """Build a sorted IndexSnapshot with computed stats."""
+        return self._build_snapshot_from_lists(
+            list(self.movies.values()),
+            list(self.series.values()),
         )
 
     def get_full_index(self) -> IndexSnapshot:
