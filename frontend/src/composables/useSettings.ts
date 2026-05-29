@@ -7,6 +7,9 @@ export type HdrPreference = "none" | "hdr10plus" | "dovi"
 export interface MediaHiveSettings {
   preferredResolution: ResolutionPreference
   preferredHdr: HdrPreference
+  playerId: string | null
+  playerCustomCmd: string | null
+  playerMpcPort: number | null
 }
 
 const STORAGE_KEY = "MediaHive"
@@ -48,12 +51,15 @@ function loadSettings(): MediaHiveSettings {
           ? parsed.preferredResolution
           : "rmax",
         preferredHdr: isHdrPreference(parsed.preferredHdr) ? parsed.preferredHdr : "none",
+        playerId: typeof parsed.playerId === "string" ? parsed.playerId : "default",
+        playerCustomCmd: typeof parsed.playerCustomCmd === "string" ? parsed.playerCustomCmd : null,
+        playerMpcPort: typeof parsed.playerMpcPort === "number" ? parsed.playerMpcPort : null,
       }
     }
   } catch {
     // ignore parse errors
   }
-  return { preferredResolution: "rmax", preferredHdr: "none" }
+  return { preferredResolution: "rmax", preferredHdr: "none", playerId: "default", playerCustomCmd: null, playerMpcPort: null }
 }
 
 const settings = reactive<MediaHiveSettings>(loadSettings())

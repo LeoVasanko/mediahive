@@ -190,6 +190,7 @@ import {
   getPlayerStatus,
   fetchRoots,
 } from "./api"
+import { useSettings } from "./composables/useSettings"
 import { useKeyboardNavigation } from "./composables/useKeyboardNavigation"
 import { useMediaWebSocket } from "./composables/useMediaWebSocket"
 import Header from "./components/Header.vue"
@@ -304,6 +305,8 @@ onUnmounted(() => {
   stopRootsPolling()
 })
 
+const settings = useSettings()
+
 const searchResults = ref<MediaItem[]>([])
 const isSearching = ref(false)
 const mpcBeConnected = ref(false)
@@ -313,6 +316,15 @@ const searchReturnPath = ref<string | null>(null)
 const MPC_BE_OPENING_GRACE_MS = 4000
 const mpcBeOpeningUntil = ref(0)
 let mpcBePollTimer: number | null = null
+
+function isMpcFamilySelected(): boolean {
+  // Empty port means Web UI is disabled
+  if (settings.playerMpcPort === null) return false
+  // If default is selected, we opportunistically try MPC-BE (backward compat)
+  // If a specific player is selected, only poll for MPC family
+  if (!settings.playerId || settings.playerId === "default") return true
+  return settings.playerId === "mpc-be" || settings.playerId === "mpc-hc"
+}
 
 function isMpcBeGamepadCaptured() {
   return mpcBeConnected.value || Date.now() < mpcBeOpeningUntil.value
@@ -330,8 +342,12 @@ async function refreshResumePositions() {
 }
 
 async function refreshPlayerStatus() {
+  if (!isMpcFamilySelected()) {
+    mpcBeConnected.value = false
+    return
+  }
   try {
-    const status = await getPlayerStatus()
+    const status = await getPlayerStatus(settings.playerMpcPort)
     mpcBeConnected.value = status.remote
   } catch {
     mpcBeConnected.value = false
@@ -347,7 +363,7 @@ function hasResumePosition(filePath: string | null) {
 function startMpcBePolling() {
   if (mpcBePollTimer !== null) return
   mpcBePollTimer = window.setInterval(async () => {
-    const reachable = await isMpcBeReachable()
+    const reachable = await isMpcBeReachable(settings.playerMpcPort)
     const wasConnected = mpcBeConnected.value
     mpcBeConnected.value = reachable
     if (!reachable) {
@@ -361,7 +377,7 @@ function startMpcBePolling() {
 
 async function tryConnectMpcBe(attempts = 8, delayMs = 400): Promise<boolean> {
   for (let i = 0; i < attempts; i++) {
-    const reachable = await isMpcBeReachable()
+    const reachable = await isMpcBeReachable(settings.playerMpcPort)
     if (reachable) return true
     if (i < attempts - 1) {
       await new Promise((resolve) => window.setTimeout(resolve, delayMs))
@@ -1218,13 +1234,17 @@ async function handlePlay(filePath: string) {
     console.error("Cannot play: unknown root for path", filePath)
     return
   }
-  mpcBeOpeningUntil.value = Date.now() + MPC_BE_OPENING_GRACE_MS
+  if (isMpcFamilySelected()) {
+    mpcBeOpeningUntil.value = Date.now() + MPC_BE_OPENING_GRACE_MS
+  }
   try {
-    await playMedia(rootId, filePath)
-    const connected = await tryConnectMpcBe()
-    if (connected) {
-      mpcBeConnected.value = true
-      startMpcBePolling()
+    await playMedia(rootId, filePath, settings.playerId, settings.playerCustomCmd)
+    if (isMpcFamilySelected()) {
+      const connected = await tryConnectMpcBe()
+      if (connected) {
+        mpcBeConnected.value = true
+        startMpcBePolling()
+      }
     }
   } catch (e) {
     console.error("Failed to play media:", e)

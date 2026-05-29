@@ -2,6 +2,13 @@ export interface PlayerStatus {
   remote: boolean
 }
 
+export interface PlayerInfo {
+  id: string
+  name: string
+  family: string
+  path: string | null
+}
+
 export interface RootStatus {
   root_id: string
   name: string
@@ -139,15 +146,35 @@ export async function replaceRoots(
 }
 
 /**
- * Play a media file with the system's default player
+ * Fetch detected media players from the backend.
  */
-export async function playMedia(rootId: string, filePath: string): Promise<void> {
+export async function fetchPlayers(): Promise<PlayerInfo[]> {
+  const response = await fetch("/api/players")
+  if (!response.ok) {
+    throw new Error(`Failed to load players: ${response.statusText}`)
+  }
+  const data = await response.json()
+  return data.players || []
+}
+
+/**
+ * Play a media file with the selected player.
+ */
+export async function playMedia(
+  rootId: string,
+  filePath: string,
+  playerId?: string | null,
+  playerCustomCmd?: string | null,
+): Promise<void> {
   const normalizedPath = normalizeMediaPath(filePath)
+  const body: Record<string, unknown> = { file_path: normalizedPath }
+  if (playerId) body.player_id = playerId
+  if (playerCustomCmd) body.player_custom_cmd = playerCustomCmd
   try {
     const response = await fetch(`/api/roots/${encodeURIComponent(rootId)}/play`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ file_path: normalizedPath }),
+      body: JSON.stringify(body),
     })
     if (!response.ok) {
       const error = await response.json()
@@ -181,28 +208,32 @@ export async function openFolder(rootId: string, folderPath: string): Promise<vo
 }
 
 /**
- * Return player integration capabilities for the current OS.
- */
-export async function getPlayerStatus(): Promise<PlayerStatus> {
-  const response = await fetch("/api/player/status")
-  if (!response.ok) {
-    throw new Error(`Failed to load player status: ${response.statusText}`)
-  }
-  return response.json()
-}
-
-/**
  * Return whether MPC-BE local web control is currently reachable.
+ * @param port - Optional custom port (default 13579)
  */
-export async function isMpcBeReachable(): Promise<boolean> {
+export async function isMpcBeReachable(port?: number | null): Promise<boolean> {
   try {
-    const response = await fetch("/api/mpcbe/status")
+    const url = port ? `/api/mpcbe/status?port=${port}` : "/api/mpcbe/status"
+    const response = await fetch(url)
     if (!response.ok) return false
     const data = await response.json().catch(() => ({}))
     return Boolean(data.reachable)
   } catch {
     return false
   }
+}
+
+/**
+ * Return player integration capabilities for the current OS.
+ * @param port - Optional custom MPC-BE port (default 13579)
+ */
+export async function getPlayerStatus(port?: number | null): Promise<PlayerStatus> {
+  const url = port ? `/api/player/status?port=${port}` : "/api/player/status"
+  const response = await fetch(url)
+  if (!response.ok) {
+    throw new Error(`Failed to load player status: ${response.statusText}`)
+  }
+  return response.json()
 }
 
 /**

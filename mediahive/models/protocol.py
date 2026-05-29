@@ -54,6 +54,8 @@ class PlayMediaRequest(msgspec.Struct):
     """POST /api/roots/{root_id}/play body."""
 
     file_path: str = ""
+    player_id: str | None = None
+    player_custom_cmd: str | None = None
 
 
 class OpenFolderRequest(msgspec.Struct):

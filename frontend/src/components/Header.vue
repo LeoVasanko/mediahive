@@ -143,6 +143,66 @@
           </section>
 
           <section class="settings-section">
+            <h2 class="settings-section-title">Player</h2>
+            <p class="settings-section-desc">Choose which media player to launch files with.</p>
+
+            <div class="player-layout">
+              <div class="player-list">
+                <label
+                  v-for="player in detectedPlayers"
+                  :key="player.id"
+                  class="player-radio-label"
+                >
+                  <input
+                    class="player-radio"
+                    type="radio"
+                    name="player-selection"
+                    :checked="settings.playerId === player.id"
+                    @change="setPlayer(player.id)"
+                  />
+                  {{ player.name }}
+                </label>
+              </div>
+
+              <div class="player-options">
+                <template v-if="settings.playerId === 'custom'">
+                  <div class="player-option-group">
+                    <label class="player-option-label">Custom Command</label>
+                    <input
+                      class="player-option-input"
+                      type="text"
+                      placeholder='C:\Player\player.exe "%s"'
+                      v-model="customCmd"
+                      @change="setCustomCmd(customCmd)"
+                    />
+                    <p class="player-option-hint">Use %s as placeholder for the file path.</p>
+                  </div>
+                </template>
+
+                <template v-if="selectedPlayerFamily === 'mpc'">
+                  <div class="player-option-group">
+                    <label class="player-option-label" for="mpc-port">MPC Web UI Port</label>
+                    <input
+                      id="mpc-port"
+                      class="player-option-input player-option-input--short"
+                      type="number"
+                      placeholder="13579"
+                      :value="settings.playerMpcPort ?? ''"
+                      @input="onMpcPortInput"
+                    />
+                    <p class="player-option-hint">
+                      Port for MPC-BE/HC web interface. Leave empty to disable remote control.
+                    </p>
+                    <p v-if="settings.playerMpcPort !== null" class="player-family-note">
+                      Web remote control enabled
+                    </p>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </section>
+
+          <section class="settings-section">
             <h2 class="settings-section-title">Preferred Format</h2>
             <p class="settings-section-desc">Preferred format when multiple versions are available.</p>
 
@@ -242,7 +302,8 @@ import { ref, watch, computed, onMounted, onUnmounted } from "vue"
 import { useRouter, useRoute } from "vue-router"
 import { navAttrs } from "../composables/useKeyboardNavigation"
 import logoUrl from "../assets/mediahive.webp"
-import { fetchRoots, replaceRoots, pickFolderAndAddRoot } from "../api"
+import { fetchRoots, replaceRoots, pickFolderAndAddRoot, fetchPlayers } from "../api"
+import type { PlayerInfo } from "../api"
 import HexKeyboard from "./HexKeyboard.vue"
 import {
   useSettings,
@@ -251,6 +312,14 @@ import {
 } from "../composables/useSettings"
 
 const settings = useSettings()
+
+const detectedPlayers = ref<PlayerInfo[]>([])
+const customCmd = ref(settings.playerCustomCmd || "")
+
+const selectedPlayerFamily = computed(() => {
+  const p = detectedPlayers.value.find((p) => p.id === settings.playerId)
+  return p?.family ?? "default"
+})
 
 interface RootEntry {
   root_id: string
@@ -309,6 +378,33 @@ function setPreferredHdr(value: HdrPreference) {
   settings.preferredHdr = value
 }
 
+function setPlayer(id: string) {
+  settings.playerId = id
+}
+
+function setCustomCmd(cmd: string) {
+  settings.playerCustomCmd = cmd.trim() || null
+}
+
+function onMpcPortInput(e: Event) {
+  const target = e.target as HTMLInputElement
+  const value = target.value.trim()
+  if (value === "") {
+    settings.playerMpcPort = null
+  } else {
+    const num = parseInt(value, 10)
+    settings.playerMpcPort = isNaN(num) || num <= 0 ? null : num
+  }
+}
+
+async function refreshPlayers() {
+  try {
+    detectedPlayers.value = await fetchPlayers()
+  } catch (e) {
+    console.error("Failed to fetch players:", e)
+  }
+}
+
 async function refreshRoots() {
   try {
     const data = await fetchRoots()
@@ -360,7 +456,10 @@ async function addRoot() {
 }
 
 watch(showSettings, (visible) => {
-  if (visible) void refreshRoots()
+  if (visible) {
+    void refreshRoots()
+    void refreshPlayers()
+  }
 })
 
 // Check if we're on a detail page
@@ -709,5 +808,85 @@ onUnmounted(() => {
   height: 15px;
   cursor: pointer;
   accent-color: var(--accent, #3b82f6);
+}
+
+.player-layout {
+  display: grid;
+  grid-template-columns: 9.5em 1fr;
+  gap: 1.25em;
+  align-items: start;
+}
+
+.player-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.player-radio-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  color: var(--text-primary);
+  font-size: 0.85rem;
+}
+
+.player-radio {
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+  accent-color: var(--accent, #3b82f6);
+}
+
+.player-options {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.player-option-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.player-option-label {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.player-option-input {
+  width: 100%;
+  max-width: 400px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  outline: none;
+}
+
+.player-option-input:focus {
+  border-color: var(--accent, #3b82f6);
+}
+
+.player-option-input--short {
+  width: 120px;
+  max-width: none;
+}
+
+.player-option-hint {
+  margin: 2px 0 0;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.player-family-note {
+  margin: 4px 0 0;
+  font-size: 0.8rem;
+  color: #22c55e;
 }
 </style>

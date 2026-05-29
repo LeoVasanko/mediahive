@@ -37,11 +37,12 @@ from mediahive.models.protocol import (
     PlayMediaRequest,
     RootsRequest,
 )
+from mediahive.players import detect_players, launch_player
 from mediahive.root_registry import Supervisor
 
 logger = logging.getLogger("mediahive.server")
 
-MPC_BE_BASE_URL = "http://127.0.0.1:13579"
+MPC_BE_DEFAULT_PORT = 13579
 
 # Suppress console windows when spawning subprocesses on Windows
 _POPEN_KWARGS: dict = (
@@ -484,9 +485,16 @@ async def ws_endpoint(ws: WebSocket, root_id: str) -> None:
 # --- Media actions ---
 
 
+@app.get("/api/players")
+async def list_players():
+    """Return detected media players available on this system."""
+    players = detect_players()
+    return {"players": [msgspec.structs.asdict(p) for p in players]}
+
+
 @app.post("/api/roots/{root_id}/play")
 async def play_media(root_id: str, request: Request):
-    """Open a media file with the system's default player."""
+    """Open a media file with the selected player."""
     ctx = _get_context(root_id)
     req = msgspec.json.decode(await request.body(), type=PlayMediaRequest)
     file_path = ctx.root_path / req.file_path
@@ -494,8 +502,25 @@ async def play_media(root_id: str, request: Request):
     if not file_path.exists():
         raise HTTPException(status_code=404, detail=f"File not found: {req.file_path}")
 
+    # Resolve player path if a specific detected player was chosen
+    player_path: str | None = None
+    if req.player_id and req.player_id not in ("default", "custom"):
+        for p in detect_players():
+            if p.id == req.player_id:
+                player_path = p.path
+                break
+        if not player_path:
+            raise HTTPException(
+                status_code=400, detail=f"Player not found: {req.player_id}"
+            )
+
     try:
-        _open_with_default_app(file_path)
+        launch_player(
+            req.player_id or "default",
+            file_path,
+            player_path=player_path,
+            custom_cmd=req.player_custom_cmd,
+        )
         return {"status": "ok"}
     except (OSError, subprocess.SubprocessError, RuntimeError, ValueError) as e:
         raise HTTPException(status_code=500, detail=f"Failed to play media: {e}")
@@ -546,24 +571,29 @@ async def root_playback_resume_positions(root_id: str):
 # --- MPC-BE / Player status ---
 
 
+def _mpcbe_url(port: int | None = None) -> str:
+    """Build MPC-BE base URL from optional custom port."""
+    return f"http://127.0.0.1:{port or MPC_BE_DEFAULT_PORT}"
+
+
 @app.get("/api/mpcbe/status")
-async def mpcbe_status():
+async def mpcbe_status(port: int | None = None):
     """Check whether MPC-BE web interface is reachable."""
-    return {"reachable": _mpcbe_request("/")}
+    return {"reachable": _mpcbe_request("/", port=port)}
 
 
 @app.get("/api/player/status")
-async def player_status():
+async def player_status(port: int | None = None):
     """Return whether remote player control is currently available."""
-    return {"remote": _mpcbe_request("/")}
+    return {"remote": _mpcbe_request("/", port=port)}
 
 
-def _mpcbe_request(path: str, timeout: float = 0.75) -> bool:
+def _mpcbe_request(path: str, timeout: float = 0.75, port: int | None = None) -> bool:
     """Call MPC-BE's local web interface and return True on HTTP success."""
     if sys.platform != "win32":
         return False
 
-    url = f"{MPC_BE_BASE_URL}{path}"
+    url = f"{_mpcbe_url(port)}{path}"
     req = urllib.request.Request(url=url, method="GET")
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
