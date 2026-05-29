@@ -16,6 +16,8 @@ interface RootState {
   movieMap: Map<string, Movie>
   seriesMap: Map<string, Series>
   connected: boolean
+  initialized: boolean
+  pendingMessages: WsMessage[]
   reconnectTimer: ReturnType<typeof setTimeout> | null
 }
 
@@ -252,23 +254,30 @@ export function useMediaWebSocket() {
 
   function updateMergedState() {
     mediaIndex.value = buildIndex()
-    // Loading is done when at least one root has connected and sent init
-    let anyConnected = false
+    // Consider a root "connected" only after init is received.
+    let anyInitialized = false
     for (const state of roots.value.values()) {
-      if (state.connected) {
-        anyConnected = true
+      if (state.connected && state.initialized) {
+        anyInitialized = true
         break
       }
     }
-    if (anyConnected) {
+    if (anyInitialized) {
       loading.value = false
       error.value = null
     }
-    connected.value = anyConnected
+    connected.value = anyInitialized
   }
 
   function processJson(state: RootState, text: string) {
     const msg = JSON.parse(text) as WsMessage
+
+    // Prevent out-of-order corruption: buffer delta messages until we receive
+    // the initial full-state payload.
+    if (msg.type !== "init" && !state.initialized) {
+      state.pendingMessages.push(msg)
+      return
+    }
 
     switch (msg.type) {
       case "init": {
@@ -276,6 +285,17 @@ export function useMediaWebSocket() {
         state.seriesMap.clear()
         for (const m of msg.data.movies) state.movieMap.set(m.id, m)
         for (const s of msg.data.series) state.seriesMap.set(s.id, s)
+        state.initialized = true
+
+        // Replay any deltas that arrived before init completed.
+        if (state.pendingMessages.length > 0) {
+          const queued = state.pendingMessages
+          state.pendingMessages = []
+          for (const queuedMsg of queued) {
+            processJson(state, JSON.stringify(queuedMsg))
+          }
+        }
+
         updateMergedState()
         console.log(
           `[WS ${state.rootId}] init: ${state.movieMap.size} movies, ${state.seriesMap.size} series`,
@@ -347,6 +367,8 @@ export function useMediaWebSocket() {
       movieMap: new Map(),
       seriesMap: new Map(),
       connected: false,
+      initialized: false,
+      pendingMessages: [],
       reconnectTimer: null,
     }
     roots.value.set(rootId, state)
@@ -359,6 +381,8 @@ export function useMediaWebSocket() {
 
       ws.onopen = () => {
         state.connected = true
+        state.initialized = false
+        state.pendingMessages = []
         updateMergedState()
         console.log(`[WS ${rootId}] Connected`)
       }
@@ -367,6 +391,8 @@ export function useMediaWebSocket() {
 
       ws.onclose = (ev) => {
         state.connected = false
+        state.initialized = false
+        state.pendingMessages = []
         state.ws = null
         updateMergedState()
         console.log(`[WS ${rootId}] Closed (code=${ev.code})`)

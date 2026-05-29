@@ -273,7 +273,7 @@ async function refreshRoots() {
         path: r.path,
         status: r.status,
       })
-      if (r.status === "ready" || r.status === "scanning" || r.status === "loading") {
+      if (r.status === "ready" || r.status === "scanning") {
         activeIds.push(r.root_id)
       }
     }

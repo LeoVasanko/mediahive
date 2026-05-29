@@ -37,7 +37,6 @@ The server exposes per-root endpoints:
   WS   /api/roots/{root_id}/ws  Live index updates & task progress
   POST /api/roots/{root_id}/scan    Trigger a new scan
   GET  /api/roots/{root_id}/status  Current root status
-  GET  /api/roots/{root_id}/index   Full index as JSON (HTTP fallback)
         """,
     )
     parser.add_argument(

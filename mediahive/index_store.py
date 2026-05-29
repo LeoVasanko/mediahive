@@ -33,6 +33,8 @@ logger = logging.getLogger("mediahive.index_store")
 
 # Debounce interval for writing snapshots to disk (seconds)
 SNAPSHOT_DEBOUNCE = 5.0
+# Debounce interval for rebuilding the in-memory API snapshot (seconds)
+SNAPSHOT_CACHE_DEBOUNCE = 0.25
 
 
 class IndexStore:
@@ -67,6 +69,17 @@ class IndexStore:
         self._snapshot_dirty = False
         self._snapshot_task: asyncio.Task | None = None
 
+        # In-memory API snapshot cache (served by get_full_index)
+        self._snapshot_cache_dirty = True
+        self._snapshot_cache_task: asyncio.Task | None = None
+        self._cached_snapshot = IndexSnapshot(
+            generated_at=datetime.now().isoformat(),
+            media_root=self.media_root,
+            stats=MediaStats(),
+            movies=[],
+            series=[],
+        )
+
     # ------------------------------------------------------------------
     # Persistence
     # ------------------------------------------------------------------
@@ -82,90 +95,55 @@ class IndexStore:
         ap = AsyncPath(self.snapshot_path)
         if not await ap.exists():
             logger.info("No snapshot found at %s, starting fresh", self.snapshot_path)
+            self._schedule_snapshot_cache_refresh()
             return
         try:
             raw = await ap.read_bytes()
-            await asyncio.to_thread(self._load_snapshot_sync, raw)
+            loaded_movies, loaded_series = await asyncio.to_thread(
+                self._load_snapshot_sync,
+                raw,
+            )
+            self._merge_loaded_snapshot(
+                loaded_movies,
+                loaded_series,
+            )
+
+            self._schedule_snapshot_cache_refresh()
         except Exception:
             logger.exception("Failed to load snapshot from %s", self.snapshot_path)
 
-    def _load_snapshot_sync(self, raw: bytes) -> None:
+    def _load_snapshot_sync(self, raw: bytes) -> tuple[list[Movie], list[Series]]:
         """Parse snapshot bytes in a thread-pool context."""
         data = msgspec.json.decode(raw, type=IndexSnapshot)
+        loaded_movies: list[Movie] = []
+        loaded_series: list[Series] = []
         for m in data.movies:
-            if m.showreel_source_sets:
-                filtered_source_sets = []
-                for source_set in m.showreel_source_sets:
-                    filtered_sources = [
-                        p
-                        for p in source_set
-                        if (
-                            Path(self.media_root, p).exists()
-                            if self.media_root
-                            else Path(p).exists()
-                        )
-                    ]
-                    if filtered_sources:
-                        filtered_source_sets.append(filtered_sources)
-                m.showreel_source_sets = filtered_source_sets or None
-                m.showreel_images = (
-                    [source_set[0] for source_set in filtered_source_sets]
-                    if filtered_source_sets
-                    else None
-                )
-            elif m.showreel_images:
-                filtered_images = [
-                    p
-                    for p in m.showreel_images
-                    if (
-                        Path(self.media_root, p).exists()
-                        if self.media_root
-                        else Path(p).exists()
-                    )
-                ]
-                m.showreel_images = filtered_images or None
-                m.showreel_source_sets = (
-                    [[p] for p in filtered_images] if filtered_images else None
-                )
             m.id = self._maybe_migrate_id(m.id)
             m.root_id = self.root_id
-            self.movies[m.id] = m
+            loaded_movies.append(m)
         for s in data.series:
-            for season in s.seasons:
-                for ep in season.episodes:
-                    if ep.reel_sources:
-                        filtered_sources = [
-                            p
-                            for p in ep.reel_sources
-                            if (
-                                Path(self.media_root, p).exists()
-                                if self.media_root
-                                else Path(p).exists()
-                            )
-                        ]
-                        ep.reel_sources = filtered_sources or None
-                        ep.reel_image = (
-                            filtered_sources[0] if filtered_sources else None
-                        )
-                    elif ep.reel_image:
-                        full = (
-                            Path(self.media_root, ep.reel_image)
-                            if self.media_root
-                            else Path(ep.reel_image)
-                        )
-                        if full.exists():
-                            ep.reel_sources = [ep.reel_image]
-                        else:
-                            ep.reel_image = None
-                            ep.reel_sources = None
             s.id = self._maybe_migrate_id(s.id)
             s.root_id = self.root_id
-            self.series[s.id] = s
+            loaded_series.append(s)
         logger.info(
             "Loaded snapshot: %d movies, %d series",
-            len(self.movies),
-            len(self.series),
+            len(loaded_movies),
+            len(loaded_series),
         )
+        return loaded_movies, loaded_series
+
+    def _merge_loaded_snapshot(
+        self,
+        movies: list[Movie],
+        series: list[Series],
+    ) -> None:
+        """Merge loaded snapshot items without overriding newer in-memory updates."""
+        for movie in movies:
+            if movie.id not in self.movies:
+                self.movies[movie.id] = movie
+        for show in series:
+            if show.id not in self.series:
+                self.series[show.id] = show
 
     async def _write_snapshot(self) -> None:
         """Write current index to disk (called from debounce task)."""
@@ -190,6 +168,35 @@ class IndexStore:
         self._snapshot_dirty = True
         if self._snapshot_task is None or self._snapshot_task.done():
             self._snapshot_task = asyncio.create_task(self._snapshot_writer())
+        self._schedule_snapshot_cache_refresh()
+
+    def _schedule_snapshot_cache_refresh(self) -> None:
+        """Schedule a debounced rebuild of the in-memory API snapshot cache."""
+        self._snapshot_cache_dirty = True
+        if self._snapshot_cache_task is None or self._snapshot_cache_task.done():
+            self._snapshot_cache_task = asyncio.create_task(
+                self._snapshot_cache_writer()
+            )
+
+    async def _refresh_snapshot_cache_once(self) -> None:
+        """Rebuild cached snapshot once using copied store values."""
+        movies = list(self.movies.values())
+        series = list(self.series.values())
+        self._cached_snapshot = await asyncio.to_thread(
+            self._build_snapshot_from_lists,
+            movies,
+            series,
+        )
+
+    async def _snapshot_cache_writer(self) -> None:
+        """Refresh the in-memory snapshot cache while mutations are pending."""
+        while True:
+            await asyncio.sleep(SNAPSHOT_CACHE_DEBOUNCE)
+            if self._snapshot_cache_dirty:
+                self._snapshot_cache_dirty = False
+                await self._refresh_snapshot_cache_once()
+            else:
+                break
 
     async def _snapshot_writer(self) -> None:
         """Flush to disk every SNAPSHOT_DEBOUNCE seconds while dirty."""
@@ -203,6 +210,12 @@ class IndexStore:
 
     async def flush_snapshot(self) -> None:
         """Force-write a snapshot immediately (e.g. on shutdown)."""
+        if self._snapshot_cache_task and not self._snapshot_cache_task.done():
+            self._snapshot_cache_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._snapshot_cache_task
+        await self._refresh_snapshot_cache_once()
+
         if self._snapshot_task and not self._snapshot_task.done():
             self._snapshot_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -310,8 +323,11 @@ class IndexStore:
         series: list[Series],
     ) -> IndexSnapshot:
         """Build a sorted IndexSnapshot with computed stats from list copies."""
-        movies_list = sorted(movies, key=lambda x: (x.title.lower(), x.year or 0))
-        series_list = sorted(series, key=lambda x: x.title.lower())
+        movies_list = sorted(
+            movies,
+            key=lambda x: ((x.title or "").lower(), x.year or 0),
+        )
+        series_list = sorted(series, key=lambda x: (x.title or "").lower())
 
         total_movie_versions = sum(len(m.torrents) for m in movies_list)
         total_series_episodes = sum(
@@ -339,5 +355,5 @@ class IndexStore:
         )
 
     def get_full_index(self) -> IndexSnapshot:
-        """Return the full index as an IndexSnapshot."""
-        return self._build_snapshot()
+        """Return the latest in-memory IndexSnapshot cache."""
+        return self._cached_snapshot

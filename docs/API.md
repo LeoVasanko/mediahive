@@ -11,7 +11,6 @@ All media paths are scoped to a **root**, identified by a stable `root_id`.
 | `GET` | `/api/config` | Returns the current root configuration. |
 | `GET` | `/api/roots` | List all active roots with status. |
 | `PUT` | `/api/roots` | Atomically replace the full root set. |
-| `GET` | `/api/roots/{root_id}/index` | Returns the media index for one root. |
 | `GET` | `/api/roots/{root_id}/status` | Returns scanner and library status for one root. |
 | `POST` | `/api/roots/{root_id}/scan` | Triggers a new scan for one root. |
 | `POST` | `/api/roots/{root_id}/play` | Opens a media file with the system player. |

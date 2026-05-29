@@ -34,7 +34,6 @@ from mediahive.hivescan.images import close_image_client
 from mediahive.hivescan.scanner import RootScanner
 from mediahive.hivescan.tmdb_client import close_http_client
 from mediahive.models.protocol import (
-    MsgspecResponse,
     OpenFolderRequest,
     PlayMediaRequest,
     RootsRequest,
@@ -285,7 +284,7 @@ async def _attach_scanners() -> None:
     """Ensure every active root context has a running scanner."""
     async with _attach_scanners_lock:
         for ctx in supervisor.all_contexts().values():
-            if ctx.scanner is None and ctx.status in {"ready", "loading"}:
+            if ctx.scanner is None and ctx.status == "ready":
                 try:
                     scanner = RootScanner(ctx.root_id, ctx.root_path, ctx.send_event)
                     await scanner.start()
@@ -294,6 +293,13 @@ async def _attach_scanners() -> None:
                     logger.exception(
                         "Failed to attach scanner for root %s", ctx.root_id
                     )
+
+
+async def _attach_scanners_loop() -> None:
+    """Periodically attach scanners as roots transition to ready."""
+    while True:
+        await _attach_scanners()
+        await asyncio.sleep(1)
 
 
 async def _activate_all_roots() -> None:
@@ -359,6 +365,7 @@ async def lifespan(_app: FastAPI):
     # Defer root activation to a background task so the server starts
     # immediately and macOS permission dialogs do not block startup.
     activation_task = asyncio.create_task(_activate_all_roots())
+    scanner_attach_task = asyncio.create_task(_attach_scanners_loop())
 
     logger.info("Server ready; waiting for root activation")
 
@@ -368,6 +375,10 @@ async def lifespan(_app: FastAPI):
         activation_task.cancel()
         with suppress(asyncio.CancelledError):
             await activation_task
+
+        scanner_attach_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await scanner_attach_task
 
         await supervisor.shutdown()
 
@@ -432,13 +443,6 @@ async def put_roots(request: Request):
         ],
         "failed": failed,
     }
-
-
-@app.get("/api/roots/{root_id}/index")
-async def get_root_index(root_id: str):
-    """Return the full index for a single root."""
-    ctx = _get_context(root_id)
-    return MsgspecResponse(ctx.store.get_full_index())
 
 
 @app.get("/api/roots/{root_id}/status")

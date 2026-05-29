@@ -105,9 +105,21 @@ class RootContext:
         # Event queue and consumer
         self._events: asyncio.Queue[ScanEvent] = asyncio.Queue()
         self._consumer_task: asyncio.Task | None = None
+        self._startup_task: asyncio.Task | None = None
 
     async def start(self) -> None:
-        """Load snapshot and start event consumer."""
+        """Start consumer immediately and load snapshot in the background."""
+        self.status = "loading"
+        self.error = None
+
+        if self._consumer_task is None or self._consumer_task.done():
+            self._consumer_task = asyncio.create_task(self._consume_events())
+
+        if self._startup_task is None or self._startup_task.done():
+            self._startup_task = asyncio.create_task(self._load_snapshot_background())
+
+    async def _load_snapshot_background(self) -> None:
+        """Load snapshot without blocking root activation paths."""
         try:
             await self.store.load_snapshot()
             self.status = "ready"
@@ -117,15 +129,20 @@ class RootContext:
                 len(self.store.movies),
                 len(self.store.series),
             )
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:
             self.status = "error"
             self.error = str(exc)
             logger.exception("Root %s failed to load snapshot", self.root_id)
 
-        self._consumer_task = asyncio.create_task(self._consume_events())
-
     async def stop(self) -> None:
         """Stop consumer, flush snapshot, stop scanner."""
+        if self._startup_task and not self._startup_task.done():
+            self._startup_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._startup_task
+
         if self.scanner is not None:
             try:
                 await self.scanner.stop()

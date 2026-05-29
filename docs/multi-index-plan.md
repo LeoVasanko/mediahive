@@ -45,7 +45,6 @@ Every `Movie.id` and `Series.id` is namespaced with its `root_id`:
 |----------|-------------|
 | `GET /api/roots` | List all roots (name, path, root_id, status) |
 | `PUT /api/roots` | Atomically replace full root map `{name: path}` |
-| `GET /api/roots/{root_id}/index` | Full index for one root |
 | `GET /api/roots/{root_id}/status` | Per-root scanning/loading/error state |
 | `POST /api/roots/{root_id}/scan` | Trigger scan for one root |
 | `WS /api/roots/{root_id}/ws` | Per-root WebSocket (init/upsert/remove/task) |
