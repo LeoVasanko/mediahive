@@ -10,6 +10,9 @@ export interface CastMember {
   id?: number | null
 }
 
+export type CastCreditWire = [character: string | null, id: number | null]
+export type PersonWire = [name: string, profile_path: string | null, gender: CastGender | null]
+
 export interface Person {
   name: string
   profile_path: string | null
@@ -36,7 +39,7 @@ export interface Info {
   tagline: string | null
   similar: SimilarMedia[] | null
   keywords: string[] | null
-  cast: CastMember[] | null
+  cast: CastCreditWire[] | null
   director: string | null
   creators: string[] | null
   number_of_seasons: number | null
@@ -195,7 +198,7 @@ export interface WsInitMessage {
   data: {
     movies: Record<string, Movie>
     series: Record<string, Series>
-    people?: Record<string, Person> | Record<number, Person>
+    people?: Record<string, PersonWire>
   }
 }
 
@@ -204,7 +207,7 @@ export interface WsUpsertMessage {
   kind: "movie" | "series"
   id: string
   item: Movie | Series
-  people?: Record<string, Person> | Record<number, Person>
+  people?: Record<string, PersonWire>
 }
 
 export interface WsRemoveMessage {

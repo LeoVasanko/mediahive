@@ -2,6 +2,7 @@ import { shallowRef, readonly, onUnmounted } from "vue"
 import type {
   Movie,
   MovieUi,
+  Person,
   Series,
   SeriesUi,
   Episode,
@@ -17,6 +18,7 @@ interface RootState {
   ws: WebSocket | null
   movieMap: Map<string, MovieUi>
   seriesMap: Map<string, SeriesUi>
+  peopleMap: Map<number, Person>
   connected: boolean
   initialized: boolean
   pendingMessages: WsMessage[]
@@ -139,65 +141,86 @@ export function useMediaWebSocket() {
     return Object.fromEntries(sorted)
   }
 
-  function withMovieIdentity(id: string, movie: Movie, rootId: string): MovieUi {
-    return { ...normalizeMovie(movie, rootId), id, root_id: rootId }
+  function withMovieIdentity(
+    id: string,
+    movie: Movie,
+    rootId: string,
+    people: Map<number, Person>,
+  ): MovieUi {
+    return { ...normalizeMovie(movie, rootId, people), id, root_id: rootId }
   }
 
-  function withSeriesIdentity(id: string, series: Series, rootId: string): SeriesUi {
-    return { ...normalizeSeries(series, rootId), id, root_id: rootId }
+  function withSeriesIdentity(
+    id: string,
+    series: Series,
+    rootId: string,
+    people: Map<number, Person>,
+  ): SeriesUi {
+    return { ...normalizeSeries(series, rootId, people), id, root_id: rootId }
   }
 
-  function normalizeCastMember(member: unknown): {
+  function normalizeCastMember(
+    member: unknown,
+    people: Map<number, Person>,
+  ): {
     name: string
     character: string | null
     profile_path: string | null
     gender: string | null
     id: number | null
   } {
-    if (Array.isArray(member)) {
+    if (!Array.isArray(member)) {
       return {
-        name: typeof member[0] === "string" ? member[0] : "",
-        character: typeof member[1] === "string" ? member[1] : null,
-        profile_path: typeof member[2] === "string" ? member[2] : null,
-        gender: typeof member[3] === "string" ? member[3] : null,
-        id: typeof member[4] === "number" ? member[4] : null,
+        name: "",
+        character: null,
+        profile_path: null,
+        gender: null,
+        id: null,
       }
     }
-    const obj = member as {
-      name?: unknown
-      character?: unknown
-      profile_path?: unknown
-      gender?: unknown
-      id?: unknown
-    } | null
+
+    // Current wire format: CastCredit(array_like=True) => [character, id]
+    const character = typeof member[0] === "string" ? member[0] : null
+    const id = typeof member[1] === "number" ? member[1] : null
+    const person = id !== null ? people.get(id) || null : null
     return {
-      name: typeof obj?.name === "string" ? obj.name : "",
-      character: typeof obj?.character === "string" ? obj.character : null,
-      profile_path: typeof obj?.profile_path === "string" ? obj.profile_path : null,
-      gender: typeof obj?.gender === "string" ? obj.gender : null,
-      id: typeof obj?.id === "number" ? obj.id : null,
+      name: person?.name || "",
+      character,
+      profile_path: person?.profile_path || null,
+      gender: person?.gender || null,
+      id,
     }
   }
 
   function normalizeSimilarMember(member: unknown): { id: number; title: string } {
-    if (Array.isArray(member)) {
-      return {
-        id: typeof member[0] === "number" ? member[0] : 0,
-        title: typeof member[1] === "string" ? member[1] : "",
-      }
+    if (!Array.isArray(member)) {
+      return { id: 0, title: "" }
     }
-    const obj = member as { id?: unknown; title?: unknown } | null
     return {
-      id: typeof obj?.id === "number" ? obj.id : 0,
-      title: typeof obj?.title === "string" ? obj.title : "",
+      id: typeof member[0] === "number" ? member[0] : 0,
+      title: typeof member[1] === "string" ? member[1] : "",
     }
   }
 
-  function normalizeInfo<T extends { cast?: unknown; similar?: unknown }>(info: T | null): T | null {
+  function normalizePerson(member: unknown): Person | null {
+    if (!Array.isArray(member)) return null
+    return {
+      name: typeof member[0] === "string" ? member[0] : "",
+      profile_path: typeof member[1] === "string" ? member[1] : null,
+      gender: typeof member[2] === "string" ? member[2] : null,
+    }
+  }
+
+  function normalizeInfo<T extends { cast?: unknown; similar?: unknown }>(
+    info: T | null,
+    people: Map<number, Person>,
+  ): T | null {
     if (!info) return info
     let next: T = info
     if (Array.isArray((info as { cast?: unknown }).cast)) {
-      const cast = ((info as { cast?: unknown[] }).cast || []).map(normalizeCastMember)
+      const cast = ((info as { cast?: unknown[] }).cast || [])
+        .map((member) => normalizeCastMember(member, people))
+        .filter((member) => member.name.length > 0)
       next = { ...next, cast } as T
     }
     if (Array.isArray((info as { similar?: unknown }).similar)) {
@@ -207,15 +230,19 @@ export function useMediaWebSocket() {
     return next
   }
 
-  function normalizeMovie(movie: Movie, rootId: string | null): Movie {
+  function normalizeMovie(movie: Movie, rootId: string | null, people: Map<number, Person>): Movie {
     return {
       ...movie,
       files: annotateFiles(movie.files, rootId),
-      info: normalizeInfo(movie.info),
+      info: normalizeInfo(movie.info, people),
     }
   }
 
-  function normalizeSeries(series: Series, rootId: string | null): Series {
+  function normalizeSeries(
+    series: Series,
+    rootId: string | null,
+    people: Map<number, Person>,
+  ): Series {
     return {
       ...series,
       seasons: (series.seasons || []).map((season) => ({
@@ -225,7 +252,7 @@ export function useMediaWebSocket() {
           files: annotateFiles(episode.files, rootId),
         })),
       })),
-      info: normalizeInfo(series.info),
+      info: normalizeInfo(series.info, people),
     }
   }
 
@@ -394,13 +421,22 @@ export function useMediaWebSocket() {
 
     switch (msg.type) {
       case "init": {
+        state.peopleMap.clear()
+        for (const [id, person] of Object.entries(msg.data.people || {})) {
+          const parsed = Number(id)
+          const normalized = normalizePerson(person)
+          if (Number.isFinite(parsed)) {
+            state.peopleMap.set(parsed, normalized || { name: "", profile_path: null, gender: null })
+          }
+        }
+
         state.movieMap.clear()
         state.seriesMap.clear()
         for (const [id, m] of Object.entries(msg.data.movies || {})) {
-          state.movieMap.set(id, withMovieIdentity(id, m, state.rootId))
+          state.movieMap.set(id, withMovieIdentity(id, m, state.rootId, state.peopleMap))
         }
         for (const [id, s] of Object.entries(msg.data.series || {})) {
-          state.seriesMap.set(id, withSeriesIdentity(id, s, state.rootId))
+          state.seriesMap.set(id, withSeriesIdentity(id, s, state.rootId, state.peopleMap))
         }
         state.initialized = true
 
@@ -420,15 +456,25 @@ export function useMediaWebSocket() {
         break
       }
       case "upsert": {
+        if (msg.people) {
+          for (const [id, person] of Object.entries(msg.people)) {
+            const parsed = Number(id)
+            const normalized = normalizePerson(person)
+            if (Number.isFinite(parsed)) {
+              state.peopleMap.set(parsed, normalized || { name: "", profile_path: null, gender: null })
+            }
+          }
+        }
+
         if (msg.kind === "movie") {
           state.movieMap.set(
             msg.id,
-            withMovieIdentity(msg.id, msg.item as Movie, state.rootId),
+            withMovieIdentity(msg.id, msg.item as Movie, state.rootId, state.peopleMap),
           )
         } else {
           state.seriesMap.set(
             msg.id,
-            withSeriesIdentity(msg.id, msg.item as Series, state.rootId),
+            withSeriesIdentity(msg.id, msg.item as Series, state.rootId, state.peopleMap),
           )
         }
         updateMergedState()
@@ -489,6 +535,7 @@ export function useMediaWebSocket() {
       ws: null,
       movieMap: new Map(),
       seriesMap: new Map(),
+      peopleMap: new Map(),
       connected: false,
       initialized: false,
       pendingMessages: [],
