@@ -78,6 +78,7 @@
             class="episode-tile"
             v-bind="getEpisodeNavAttrs(sIndex, eIndex)"
             @click="handlePlay(episode)"
+            @focusin="handleEpisodeFocus(sIndex)"
             @keydown.enter.prevent="handleEpisodeEnter($event, episode)"
             @mouseenter="handleEpisodeHover(`${sIndex}-${eIndex}`, true)"
             @mouseleave="handleEpisodeHover(`${sIndex}-${eIndex}`, false)"
@@ -92,7 +93,8 @@
               <video
                 v-if="getEpisodeVideoSources(episode).length > 0"
                 :ref="(el) => setVideoRef(el as HTMLVideoElement, `${sIndex}-${eIndex}`)"
-                :autoplay="safariAutoplay"
+                :autoplay="false"
+                preload="auto"
                 loop
                 muted
                 playsinline
@@ -654,8 +656,95 @@ function handleVersionContextMenu(event: MouseEvent, torrent: Torrent) {
 
 // Video refs for hover effects
 const videoRefs = ref<Map<string, HTMLVideoElement>>(new Map())
-let videoIndex = 0
 const safariAutoplay = isSafariBrowser()
+const activeSeasonIndex = ref(0)
+const SEASON_VIDEO_STARTUP_STEP_MS = 500
+const seasonStartupTimers = new Map<string, ReturnType<typeof setTimeout>>()
+let seasonStartupToken = 0
+
+function parseEpisodeKey(key: string): { seasonIndex: number; episodeIndex: number } | null {
+  const [seasonPart, episodePart] = key.split("-")
+  const seasonIndex = parseInt(seasonPart || "", 10)
+  const episodeIndex = parseInt(episodePart || "", 10)
+  if (!Number.isFinite(seasonIndex) || !Number.isFinite(episodeIndex)) {
+    return null
+  }
+  return { seasonIndex, episodeIndex }
+}
+
+function clearSeasonStartupTimers() {
+  for (const timeoutId of seasonStartupTimers.values()) {
+    clearTimeout(timeoutId)
+  }
+  seasonStartupTimers.clear()
+}
+
+function pauseEpisodeVideo(video: HTMLVideoElement) {
+  video.pause()
+  if (video.readyState >= 1) {
+    video.currentTime = 0
+  }
+  video.muted = true
+  video.volume = 0
+}
+
+function syncSeasonVideoPlayback() {
+  seasonStartupToken += 1
+  const token = seasonStartupToken
+  clearSeasonStartupTimers()
+  for (const interval of volumeFadeIntervals.values()) {
+    clearInterval(interval)
+  }
+  volumeFadeIntervals.clear()
+
+  const activeSeasonVideos: Array<{ key: string; episodeIndex: number; video: HTMLVideoElement }> = []
+
+  for (const [key, video] of videoRefs.value.entries()) {
+    const parsed = parseEpisodeKey(key)
+    if (!parsed) {
+      pauseEpisodeVideo(video)
+      continue
+    }
+
+    if (parsed.seasonIndex !== activeSeasonIndex.value) {
+      pauseEpisodeVideo(video)
+      continue
+    }
+
+    pauseEpisodeVideo(video)
+    activeSeasonVideos.push({
+      key,
+      episodeIndex: parsed.episodeIndex,
+      video,
+    })
+  }
+
+  activeSeasonVideos.sort((a, b) => a.episodeIndex - b.episodeIndex)
+
+  for (let i = 0; i < activeSeasonVideos.length; i += 1) {
+    const { key, video } = activeSeasonVideos[i]
+    const timeoutId = setTimeout(() => {
+      if (token !== seasonStartupToken || activeSeasonIndex.value < 0) return
+      if (safariAutoplay && video.readyState >= 1) {
+        video.currentTime = 0.001
+      }
+      video.play().catch(() => {})
+      seasonStartupTimers.delete(key)
+    }, i * SEASON_VIDEO_STARTUP_STEP_MS)
+    seasonStartupTimers.set(key, timeoutId)
+  }
+}
+
+function setActiveSeason(seasonIndex: number) {
+  if (seasonIndex < 0) return
+  if (activeSeasonIndex.value === seasonIndex) return
+  activeSeasonIndex.value = seasonIndex
+  syncSeasonVideoPlayback()
+}
+
+function handleEpisodeFocus(seasonIndex: number) {
+  setActiveSeason(seasonIndex)
+}
 
 function cleanupVideo(video: HTMLVideoElement | null | undefined) {
   if (!video) return
@@ -664,22 +753,27 @@ function cleanupVideo(video: HTMLVideoElement | null | undefined) {
   video.load()
 }
 
-// Set video ref with staggered playback
+// Track mounted videos and sync playback with active season.
 function setVideoRef(el: HTMLVideoElement | null, key: string) {
   if (el) {
     videoRefs.value.set(key, el)
-    // Staggered start times with 0.2 second offset
-    const index = videoIndex++
-    setTimeout(
+    el.addEventListener(
+      "loadeddata",
       () => {
-        if (safariAutoplay && el.readyState >= 1) {
-          el.currentTime = 0.001 + (index % 6) * 0.03
+        const parsed = parseEpisodeKey(key)
+        if (!parsed || parsed.seasonIndex !== activeSeasonIndex.value) {
+          pauseEpisodeVideo(el)
         }
-        el.play().catch(() => {}) // Ignore autoplay policy errors
       },
-      safariAutoplay ? 0 : index * 200,
+      { once: true },
     )
+    syncSeasonVideoPlayback()
   } else {
+    const timeoutId = seasonStartupTimers.get(key)
+    if (timeoutId) {
+      clearTimeout(timeoutId)
+      seasonStartupTimers.delete(key)
+    }
     const old = videoRefs.value.get(key)
     if (old) {
       cleanupVideo(old)
@@ -695,6 +789,8 @@ const volumeFadeIntervals = new Map<string, ReturnType<typeof setInterval>>()
 function handleEpisodeHover(key: string, isEntering: boolean) {
   const video = videoRefs.value.get(key)
   if (!video) return
+  const parsed = parseEpisodeKey(key)
+  if (!parsed || parsed.seasonIndex !== activeSeasonIndex.value) return
 
   // Clear any existing fade for this video
   const existingInterval = volumeFadeIntervals.get(key)
@@ -847,6 +943,15 @@ onMounted(() => {
   window.addEventListener("mediahive:gamepad-action", handleGamepadAction as EventListener)
   window.addEventListener("resize", scheduleEpisodeNavLayoutRecompute, { passive: true })
   nextTick(() => {
+    const focusSeasonNumber = props.focusEpisode?.seasonNumber
+    if (typeof focusSeasonNumber === "number") {
+      const focusSeasonIndex =
+        props.series.seasons.findIndex((season) => season.season_number === focusSeasonNumber) ?? -1
+      if (focusSeasonIndex >= 0) {
+        activeSeasonIndex.value = focusSeasonIndex
+      }
+    }
+    syncSeasonVideoPlayback()
     scheduleEpisodeNavLayoutRecompute()
   })
 })
@@ -854,6 +959,7 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener("mediahive:gamepad-action", handleGamepadAction as EventListener)
   window.removeEventListener("resize", scheduleEpisodeNavLayoutRecompute)
+  clearSeasonStartupTimers()
   if (navLayoutFrame !== null) {
     window.cancelAnimationFrame(navLayoutFrame)
     navLayoutFrame = null
@@ -869,6 +975,29 @@ onUnmounted(() => {
   }
   videoRefs.value.clear()
 })
+
+watch(
+  () => props.focusEpisode,
+  (episode) => {
+    if (!episode) return
+    const seasonIndex = props.series.seasons.findIndex(
+      (season) => season.season_number === episode.seasonNumber,
+    )
+    if (seasonIndex >= 0) {
+      setActiveSeason(seasonIndex)
+    }
+  },
+)
+
+watch(
+  () => props.series.seasons.map((season) => season.episodes.length),
+  () => {
+    if (activeSeasonIndex.value >= props.series.seasons.length) {
+      activeSeasonIndex.value = Math.max(0, props.series.seasons.length - 1)
+    }
+    syncSeasonVideoPlayback()
+  },
+)
 </script>
 
 <style scoped>
