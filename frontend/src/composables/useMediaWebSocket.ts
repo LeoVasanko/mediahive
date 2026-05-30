@@ -1,5 +1,7 @@
 import { shallowRef, readonly, onUnmounted } from "vue"
 import type {
+  CastGender,
+  CastMember,
   Movie,
   MovieUi,
   Person,
@@ -162,13 +164,7 @@ export function useMediaWebSocket() {
   function normalizeCastMember(
     member: unknown,
     people: Map<number, Person>,
-  ): {
-    name: string
-    character: string | null
-    profile_path: string | null
-    gender: string | null
-    id: number | null
-  } {
+  ): CastMember {
     if (!Array.isArray(member)) {
       return {
         name: "",
@@ -187,7 +183,7 @@ export function useMediaWebSocket() {
       name: person?.name || "",
       character,
       profile_path: person?.profile_path || null,
-      gender: person?.gender || null,
+      gender: person?.gender ?? null,
       id,
     }
   }
@@ -204,10 +200,24 @@ export function useMediaWebSocket() {
 
   function normalizePerson(member: unknown): Person | null {
     if (!Array.isArray(member)) return null
+    const gender = normalizeCastGender(member[2])
     return {
       name: typeof member[0] === "string" ? member[0] : "",
       profile_path: typeof member[1] === "string" ? member[1] : null,
-      gender: typeof member[2] === "string" ? member[2] : null,
+      gender,
+    }
+  }
+
+  function normalizeCastGender(value: unknown): CastGender | null {
+    if (typeof value !== "string") return null
+    switch (value) {
+      case "female":
+      case "male":
+      case "non_binary":
+      case "unknown":
+        return value
+      default:
+        return null
     }
   }
 

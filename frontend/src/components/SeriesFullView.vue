@@ -227,7 +227,7 @@ import ReleaseActionMenu from "./ReleaseActionMenu.vue"
 import { sortTorrentsByPreference } from "../composables/useSettings"
 
 const props = defineProps<{
-  series: Series
+  series: Series & { root_id?: string | null }
   allMovies: MovieUi[]
   focusEpisode?: { seasonNumber: number; episodeNumber: number } | null
   hasResumePosition: (filePath: string | null) => boolean
@@ -737,7 +737,7 @@ function handleOpenFolder(folderPath: string, rootId?: string | null) {
 
 function handleVersionActivate(torrent: Torrent, event: MouseEvent | KeyboardEvent) {
   if (!torrent.playable_file) return
-  const rootId = torrent.root_id || props.series.root_id
+  const rootId = torrent.root_id ?? props.series.root_id ?? null
   if (event.altKey) {
     handleOpenFolder(torrent.playable_file, rootId)
     return
@@ -747,7 +747,7 @@ function handleVersionActivate(torrent: Torrent, event: MouseEvent | KeyboardEve
 
 function handleVersionShortcutKeydown(event: KeyboardEvent, torrent: Torrent) {
   if (!torrent.playable_file) return
-  const rootId = torrent.root_id || props.series.root_id
+  const rootId = torrent.root_id ?? props.series.root_id ?? null
   const key = event.key.toLowerCase()
   if (key === "e" && (event.metaKey || event.ctrlKey)) {
     event.preventDefault()
@@ -759,7 +759,7 @@ function handleVersionShortcutKeydown(event: KeyboardEvent, torrent: Torrent) {
 function handleVersionContextMenu(event: MouseEvent, torrent: Torrent) {
   event.preventDefault()
   event.stopPropagation()
-  const rootId = torrent.root_id || props.series.root_id
+  const rootId = torrent.root_id ?? props.series.root_id ?? null
   versionActionMenu.value = {
     visible: true,
     x: event.clientX,
@@ -1013,7 +1013,7 @@ function handleEpisodeHover(eventOrKey: MouseEvent | string, keyOrIsEntering: st
 
   if (isEntering) {
     hoveredEpisodeAudioKey = key
-    videoRefs.value.forEach((v, k) => {
+    videoRefs.value.forEach((_, k) => {
       if (k !== key) {
         rampEpisodeVolume(k, 0)
       }

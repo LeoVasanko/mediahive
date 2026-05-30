@@ -39,7 +39,7 @@ export interface Info {
   tagline: string | null
   similar: SimilarMedia[] | null
   keywords: string[] | null
-  cast: CastCreditWire[] | null
+  cast: CastMember[] | null
   director: string | null
   creators: string[] | null
   number_of_seasons: number | null
