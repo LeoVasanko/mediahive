@@ -3,6 +3,7 @@
     class="media-row"
     :class="{ 'media-row-wrap': wrap }"
     :data-sync-scroll-row="!wrap && rowIndex !== undefined ? 'true' : undefined"
+    :data-sync-scroll-group="!wrap && rowIndex !== undefined ? 'browse' : undefined"
   >
     <MediaCard
       v-for="(item, index) in items"

@@ -35,11 +35,14 @@ const ROW_ATTR = "data-nav-row"
 const COL_ATTR = "data-nav-col"
 const ENTRY_COL_ATTR = "data-nav-entry-col"
 const SYNC_SCROLL_ROW_ATTR = "data-sync-scroll-row"
+const SYNC_SCROLL_GROUP_ATTR = "data-sync-scroll-group"
+const DEFAULT_SYNC_SCROLL_GROUP = "browse"
 
 const SYNC_SCROLL_FIRST_CONTENT_ROW = 2
 const SYNC_SCROLL_DEADZONE_RATIO = 0.18
 const SYNC_SCROLL_EASING_MS = 220
 const SYNC_SCROLL_TAIL_VAR = "--sync-row-tail"
+const SYNC_SCROLL_LEFT_DEADZONE_VAR = "--sync-row-left-deadzone"
 const SYNC_SCROLL_RIGHT_DEADZONE_VAR = "--sync-row-right-deadzone"
 
 // ---------------------------------------------------------------------------
@@ -59,16 +62,29 @@ interface ScrollMetrics {
   stride: number // cardWidth + gap
   paddingLeft: number
   viewportWidth: number
+  leftDeadzone: number
   rightDeadzone: number
 }
-let gMetrics: ScrollMetrics | null = null
+const gMetricsByGroup = new Map<string, ScrollMetrics>()
 
-function invalidateMetrics() {
-  gMetrics = null
+function getRowSyncGroup(row: HTMLElement): string {
+  return row.getAttribute(SYNC_SCROLL_GROUP_ATTR) || DEFAULT_SYNC_SCROLL_GROUP
 }
 
-function measureGlobalMetrics(): boolean {
-  const rows = getSyncedRows()
+function getSyncRowsByGroup(group: string): HTMLElement[] {
+  return getSyncedRows().filter((row) => getRowSyncGroup(row) === group)
+}
+
+function invalidateMetrics(group?: string) {
+  if (group) {
+    gMetricsByGroup.delete(group)
+    return
+  }
+  gMetricsByGroup.clear()
+}
+
+function measureGlobalMetrics(group: string): boolean {
+  const rows = getSyncRowsByGroup(group)
   for (const row of rows) {
     const cards = row.querySelectorAll<HTMLElement>(`.media-card[${FOCUSABLE_ATTR}]`)
     if (cards.length < 2) continue
@@ -81,29 +97,42 @@ function measureGlobalMetrics(): boolean {
     const paddingLeft = parseFloat(rowStyle.paddingLeft || "0")
     const viewportWidth = row.clientWidth
     const deadzoneInset = Math.max(paddingLeft, (viewportWidth - cardWidth) * SYNC_SCROLL_DEADZONE_RATIO)
+    const leftDeadzoneRaw = rowStyle.getPropertyValue(SYNC_SCROLL_LEFT_DEADZONE_VAR).trim()
+    const leftDeadzone = Number.isFinite(parseFloat(leftDeadzoneRaw))
+      ? Math.max(0, parseFloat(leftDeadzoneRaw))
+      : deadzoneInset
     const rightDeadzoneRaw = rowStyle.getPropertyValue(SYNC_SCROLL_RIGHT_DEADZONE_VAR).trim()
     const rightDeadzone = Number.isFinite(parseFloat(rightDeadzoneRaw))
       ? Math.max(0, parseFloat(rightDeadzoneRaw))
       : deadzoneInset
-    gMetrics = { cardWidth, stride, paddingLeft, viewportWidth, rightDeadzone }
+    gMetricsByGroup.set(group, {
+      cardWidth,
+      stride,
+      paddingLeft,
+      viewportWidth,
+      leftDeadzone,
+      rightDeadzone,
+    })
     return true
   }
   return false
 }
 
-function getMetrics(): ScrollMetrics | null {
-  if (!gMetrics) {
-    measureGlobalMetrics()
+function getMetrics(group: string): ScrollMetrics | null {
+  let metrics = gMetricsByGroup.get(group) || null
+  if (!metrics) {
+    measureGlobalMetrics(group)
+    metrics = gMetricsByGroup.get(group) || null
   }
-  return gMetrics
+  return metrics
 }
 
 // On first navigation into a view, snap the global virtual offset to whatever
 // the first synced row is already scrolled to. This avoids animating from 0
 // every time the view is entered.
-function initCurrentOffsetFromDOM() {
+function initCurrentOffsetFromDOM(group: string) {
   if (syncedRowsCurrentOffset !== 0) return
-  const rows = getSyncedRows()
+  const rows = getSyncRowsByGroup(group)
   for (const row of rows) {
     const sl = row.scrollLeft
     if (sl > 0) {
@@ -126,7 +155,7 @@ function getRowItemCount(row: HTMLElement): number {
 // last item at the right edge of the safe zone. Computed purely from global
 // metrics and item count — no DOM queries.
 function getRowMaxScroll(row: HTMLElement): number {
-  const m = getMetrics()
+  const m = getMetrics(getRowSyncGroup(row))
   if (!m) return 0
   const n = getRowItemCount(row)
   if (n === 0) return 0
@@ -221,23 +250,35 @@ function animateSyncedRows(now: number) {
 }
 
 function updateSyncedRowTarget(anchorCol: number, anchorRow: HTMLElement | null = null) {
-  const rows = getSyncedRows()
+  const group = anchorRow ? getRowSyncGroup(anchorRow) : DEFAULT_SYNC_SCROLL_GROUP
+  const rows = getSyncRowsByGroup(group)
   if (rows.length === 0) return
 
-  initCurrentOffsetFromDOM()
+  initCurrentOffsetFromDOM(group)
 
-  const m = getMetrics()
+  const m = getMetrics(group)
   if (!m) return
 
   const itemLeft = m.paddingLeft + anchorCol * m.stride
-  const maxVisibleLeft = Math.max(
+  const leftVisibleLimit = Math.max(
+    m.paddingLeft,
+    m.leftDeadzone,
+  )
+  const rightVisibleLimit = Math.max(
     m.paddingLeft,
     m.viewportWidth - m.cardWidth - m.rightDeadzone,
   )
 
-  // Ideal unclamped offset: position the anchor column at the right edge of
-  // the safe zone, or 0 if it fits without scrolling.
-  let desiredOffset = Math.max(0, itemLeft - maxVisibleLeft)
+  // Keep focus inside the deadzone: no scroll while the focused item remains
+  // between left and right limits.
+  const itemViewportLeft = itemLeft - syncedRowsCurrentOffset
+  let desiredOffset = syncedRowsCurrentOffset
+  if (itemViewportLeft > rightVisibleLimit) {
+    desiredOffset = itemLeft - rightVisibleLimit
+  } else if (itemViewportLeft < leftVisibleLimit) {
+    desiredOffset = itemLeft - leftVisibleLimit
+  }
+  desiredOffset = Math.max(0, desiredOffset)
 
   // Clamp to the anchor row's own limit so the global target is always
   // reachable by the row that drove the navigation.
@@ -332,7 +373,12 @@ function syncRowsToElement(element: HTMLElement) {
 }
 
 function handleSyncedRowResize() {
-  invalidateMetrics()
+  const activeRow = focusedElement.value?.closest<HTMLElement>(`[${SYNC_SCROLL_ROW_ATTR}="true"]`)
+  if (activeRow) {
+    invalidateMetrics(getRowSyncGroup(activeRow))
+  } else {
+    invalidateMetrics()
+  }
   if (lastSyncedAnchorCol === null) {
     resetSyncedRows(true)
     return
@@ -608,7 +654,8 @@ function findNextElement(
       return entryTarget?.element || null
     }
 
-    const m = getMetrics()
+    const activeRow = current.closest<HTMLElement>(`[${SYNC_SCROLL_ROW_ATTR}="true"]`)
+    const m = activeRow ? getMetrics(getRowSyncGroup(activeRow)) : null
     const currentRect = current.getBoundingClientRect()
     const actualCurrentCenterX = currentRect.left + currentRect.width / 2
     const closestByViewport = findElementClosestToLogicalViewportX(

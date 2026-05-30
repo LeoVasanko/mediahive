@@ -110,6 +110,7 @@
               v-if="limitedMovieCast.length > 0"
               class="cast-list"
               data-sync-scroll-row="true"
+              data-sync-scroll-group="cast"
               data-nav-cast-row="true"
             >
               <a
@@ -1098,8 +1099,7 @@ onUnmounted(() => {
   left: calc(-50vw + 50%);
   width: 100vw;
   margin: 0;
-  padding: 4px calc(var(--cast-safe-end) + var(--sync-row-tail)) 8px
-    calc(var(--cast-safe-start) + var(--sync-row-tail));
+  padding: 4px calc(var(--cast-safe-end) + var(--sync-row-tail)) 8px var(--cast-safe-start);
   z-index: 0;
   display: flex;
   flex-wrap: nowrap;
