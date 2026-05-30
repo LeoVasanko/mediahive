@@ -111,8 +111,7 @@ class IndexStore:
         raw: bytes,
     ) -> tuple[dict[str, Movie], dict[str, Series], dict[int, Person]]:
         """Parse snapshot bytes in a thread-pool context."""
-        payload = msgspec.json.decode(raw)
-        data = msgspec.convert(payload, type=IndexSnapshot)
+        data = msgspec.json.decode(raw, type=IndexSnapshot)
         loaded_movies = dict(data.movies)
         loaded_series = dict(data.series)
         loaded_people = dict(data.people)
