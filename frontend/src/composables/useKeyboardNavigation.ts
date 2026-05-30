@@ -54,6 +54,7 @@ let syncedRowsCurrentOffset = 0
 let syncedRowsTargetOffset = 0
 let lastSyncedAnchorCol: number | null = null
 let lastSyncedRowsAnimationAt: number | null = null
+let activeSyncedScrollGroup = DEFAULT_SYNC_SCROLL_GROUP
 
 // Global metrics measured once from the first synced row. All calculations use
 // these same values for every row to avoid per-row DOM query inconsistencies.
@@ -131,6 +132,13 @@ function getMetrics(group: string): ScrollMetrics | null {
 // the first synced row is already scrolled to. This avoids animating from 0
 // every time the view is entered.
 function initCurrentOffsetFromDOM(group: string) {
+  if (activeSyncedScrollGroup !== group) {
+    stopSyncedRowAnimation()
+    activeSyncedScrollGroup = group
+    syncedRowsCurrentOffset = 0
+    syncedRowsTargetOffset = 0
+  }
+
   if (syncedRowsCurrentOffset !== 0) return
   const rows = getSyncRowsByGroup(group)
   for (const row of rows) {
@@ -172,13 +180,19 @@ function clampRowScrollOffset(row: HTMLElement, offset: number): number {
   return Math.min(Math.max(offset, 0), getRowMaxScroll(row))
 }
 
-function applySyncedRowScroll(offset: number, rows: HTMLElement[] = getSyncedRows()) {
+function applySyncedRowScroll(
+  offset: number,
+  rows: HTMLElement[] = getSyncRowsByGroup(activeSyncedScrollGroup),
+) {
   for (const row of rows) {
     row.scrollLeft = clampRowScrollOffset(row, offset)
   }
 }
 
-function setAllRowTails(tailPx: number, rows: HTMLElement[] = getSyncedRows()) {
+function setAllRowTails(
+  tailPx: number,
+  rows: HTMLElement[] = getSyncRowsByGroup(activeSyncedScrollGroup),
+) {
   const value = `${Math.max(0, tailPx)}px`
   for (const row of rows) {
     row.style.setProperty(SYNC_SCROLL_TAIL_VAR, value)
@@ -224,7 +238,7 @@ function stopSyncedRowAnimation() {
 }
 
 function animateSyncedRows(now: number) {
-  const rows = getSyncedRows()
+  const rows = getSyncRowsByGroup(activeSyncedScrollGroup)
   if (rows.length === 0) {
     stopSyncedRowAnimation()
     return
@@ -383,7 +397,7 @@ function handleSyncedRowResize() {
     resetSyncedRows(true)
     return
   }
-  updateSyncedRowTarget(lastSyncedAnchorCol)
+  updateSyncedRowTarget(lastSyncedAnchorCol, activeRow || null)
 }
 
 function ensureElementVisibleVertically(element: HTMLElement) {
