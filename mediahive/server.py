@@ -491,7 +491,7 @@ async def play_media(root_id: str, request: Request):
     """Open a media file with the selected player."""
     ctx = _get_context(root_id)
     req = msgspec.json.decode(await request.body(), type=PlayMediaRequest)
-    file_path = ctx.root_path / req.file_path
+    file_path = _resolve_root_scoped_path(ctx.root_path, req.file_path)
 
     if not file_path.exists():
         raise HTTPException(status_code=404, detail=f"File not found: {req.file_path}")
@@ -525,7 +525,7 @@ async def open_folder(root_id: str, request: Request):
     """Open a folder in the system file explorer."""
     ctx = _get_context(root_id)
     req = msgspec.json.decode(await request.body(), type=OpenFolderRequest)
-    target_path = ctx.root_path / req.folder_path
+    target_path = _resolve_root_scoped_path(ctx.root_path, req.folder_path)
 
     if not target_path.exists():
         raise HTTPException(

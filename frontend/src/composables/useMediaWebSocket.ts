@@ -23,6 +23,8 @@ interface RootState {
   reconnectTimer: ReturnType<typeof setTimeout> | null
 }
 
+const MERGED_KEY_DELIMITER = "::"
+
 /**
  * Composable that connects to per-root MediaHive WebSockets and keeps
  * a merged media index updated in real time.
@@ -104,11 +106,19 @@ export function useMediaWebSocket() {
         k,
         {
           ...t,
-          playable_file: expandPlayablePath(k, t.playable_file || null),
+          playable_file: expandPlayablePath(resolveFilePathKey(k), t.playable_file || null),
           root_id: t.root_id || rootId,
         },
       ]),
     )
+  }
+
+  function resolveFilePathKey(key: string): string {
+    const delimIndex = key.indexOf(MERGED_KEY_DELIMITER)
+    if (delimIndex >= 0) {
+      return key.slice(delimIndex + MERGED_KEY_DELIMITER.length)
+    }
+    return key
   }
 
   function mergeTorrentDicts(
@@ -117,7 +127,7 @@ export function useMediaWebSocket() {
   ): { [key: string]: Torrent } {
     const merged: { [key: string]: Torrent } = { ...a }
     for (const [k, t] of Object.entries(b)) {
-      const uniqueKey = merged[k] ? `${t.root_id || "unknown"}:${k}` : k
+      const uniqueKey = merged[k] ? `${t.root_id || "unknown"}${MERGED_KEY_DELIMITER}${k}` : k
       merged[uniqueKey] = t
     }
     const sorted = Object.entries(merged).sort(([, t1], [, t2]) => {
@@ -130,11 +140,11 @@ export function useMediaWebSocket() {
   }
 
   function withMovieIdentity(id: string, movie: Movie, rootId: string): MovieUi {
-    return { ...normalizeMovie(movie), id, root_id: rootId }
+    return { ...normalizeMovie(movie, rootId), id, root_id: rootId }
   }
 
   function withSeriesIdentity(id: string, series: Series, rootId: string): SeriesUi {
-    return { ...normalizeSeries(series), id, root_id: rootId }
+    return { ...normalizeSeries(series, rootId), id, root_id: rootId }
   }
 
   function normalizeCastMember(member: unknown): {
@@ -197,16 +207,24 @@ export function useMediaWebSocket() {
     return next
   }
 
-  function normalizeMovie(movie: Movie): Movie {
+  function normalizeMovie(movie: Movie, rootId: string | null): Movie {
     return {
       ...movie,
+      files: annotateFiles(movie.files, rootId),
       info: normalizeInfo(movie.info),
     }
   }
 
-  function normalizeSeries(series: Series): Series {
+  function normalizeSeries(series: Series, rootId: string | null): Series {
     return {
       ...series,
+      seasons: (series.seasons || []).map((season) => ({
+        ...season,
+        episodes: (season.episodes || []).map((episode) => ({
+          ...episode,
+          files: annotateFiles(episode.files, rootId),
+        })),
+      })),
       info: normalizeInfo(series.info),
     }
   }
