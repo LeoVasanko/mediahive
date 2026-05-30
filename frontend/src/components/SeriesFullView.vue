@@ -76,8 +76,7 @@
             v-for="(episode, eIndex) in season.episodes"
             :key="`${sIndex}-${episode.episode_number}`"
             class="episode-tile"
-            tabindex="0"
-            v-bind="navAttrs(sIndex + 2, eIndex)"
+            v-bind="getEpisodeNavAttrs(sIndex, eIndex)"
             @click="handlePlay(episode)"
             @keydown.enter.prevent="handleEpisodeEnter($event, episode)"
             @mouseenter="handleEpisodeHover(`${sIndex}-${eIndex}`, true)"
@@ -139,7 +138,7 @@
             :key="movie.id"
             type="button"
             class="linked-movie-card"
-            v-bind="navAttrs(series.seasons.length + 2, movieIndex)"
+            v-bind="navAttrs(linkedMoviesNavRow, movieIndex)"
             @click="emit('selectMovie', movie.id)"
           >
             <img
@@ -236,6 +235,102 @@ const emit = defineEmits<{
 }>()
 
 const seriesRootRef = ref<HTMLElement | null>(null)
+const episodeNavCoords = ref<Map<string, { row: number; col: number }>>(new Map())
+const linkedMoviesNavRow = ref(2)
+let navLayoutFrame: number | null = null
+
+function getEpisodeKey(seasonIndex: number, episodeIndex: number): string {
+  return `${seasonIndex}-${episodeIndex}`
+}
+
+function getEpisodeNavAttrs(seasonIndex: number, episodeIndex: number) {
+  const key = getEpisodeKey(seasonIndex, episodeIndex)
+  const coords = episodeNavCoords.value.get(key) || { row: seasonIndex + 2, col: episodeIndex }
+  return {
+    ...navAttrs(coords.row, coords.col),
+    "data-season-index": seasonIndex,
+    "data-episode-index": episodeIndex,
+  }
+}
+
+function recomputeEpisodeNavLayout() {
+  const root = seriesRootRef.value
+  if (!root) return
+
+  const nextCoords = new Map<string, { row: number; col: number }>()
+  let currentRow = 2
+
+  for (let seasonIndex = 0; seasonIndex < props.series.seasons.length; seasonIndex += 1) {
+    const tiles = Array.from(
+      root.querySelectorAll<HTMLElement>(`.episode-tile[data-season-index="${seasonIndex}"]`),
+    ).sort((a, b) => {
+      const aIndex = parseInt(a.getAttribute("data-episode-index") || "0", 10)
+      const bIndex = parseInt(b.getAttribute("data-episode-index") || "0", 10)
+      return aIndex - bIndex
+    })
+
+    if (tiles.length === 0) {
+      const fallbackCount = props.series.seasons[seasonIndex]?.episodes?.length || 0
+      for (let episodeIndex = 0; episodeIndex < fallbackCount; episodeIndex += 1) {
+        nextCoords.set(getEpisodeKey(seasonIndex, episodeIndex), {
+          row: currentRow,
+          col: episodeIndex,
+        })
+      }
+      if (fallbackCount > 0) {
+        currentRow += 1
+      }
+      continue
+    }
+
+    let lastTop: number | null = null
+    let rowOffset = -1
+    let colInRow = 0
+
+    for (const tile of tiles) {
+      const episodeIndex = parseInt(tile.getAttribute("data-episode-index") || "-1", 10)
+      if (episodeIndex < 0) continue
+
+      const { top } = tile.getBoundingClientRect()
+      if (lastTop === null || Math.abs(top - lastTop) > 4) {
+        lastTop = top
+        rowOffset += 1
+        colInRow = 0
+      }
+
+      nextCoords.set(getEpisodeKey(seasonIndex, episodeIndex), {
+        row: currentRow + rowOffset,
+        col: colInRow,
+      })
+      colInRow += 1
+    }
+
+    if (rowOffset >= 0) {
+      currentRow += rowOffset + 1
+    }
+  }
+
+  episodeNavCoords.value = nextCoords
+  linkedMoviesNavRow.value = currentRow
+}
+
+function scheduleEpisodeNavLayoutRecompute() {
+  if (navLayoutFrame !== null) return
+  navLayoutFrame = window.requestAnimationFrame(() => {
+    navLayoutFrame = null
+    recomputeEpisodeNavLayout()
+  })
+}
+
+watch(
+  () => props.series.seasons.map((season) => season.episodes.length),
+  () => {
+    nextTick(() => {
+      scheduleEpisodeNavLayoutRecompute()
+    })
+  },
+  { immediate: true },
+)
 
 // Focus on matched episode when provided
 watch(
@@ -253,8 +348,7 @@ watch(
               (e) => e.episode_number === ep.episodeNumber,
             ) ?? -1
           if (episodeIndex >= 0) {
-            // Find the episode tile element using nav attributes
-            const selector = `[data-nav-row="${seasonIndex + 2}"][data-nav-col="${episodeIndex}"]`
+            const selector = `.episode-tile[data-season-index="${seasonIndex}"][data-episode-index="${episodeIndex}"]`
             const element = seriesRootRef.value?.querySelector(selector) as HTMLElement | null
             if (element) {
               element.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" })
@@ -484,12 +578,12 @@ function handleGamepadAction(event: Event) {
   const active = document.activeElement as HTMLElement | null
   if (!active || !active.classList.contains("episode-tile")) return
 
-  const row = parseInt(active.getAttribute("data-nav-row") || "-1", 10)
-  const col = parseInt(active.getAttribute("data-nav-col") || "-1", 10)
-  if (row < 2 || col < 0) return
+  const seasonIndex = parseInt(active.getAttribute("data-season-index") || "-1", 10)
+  const episodeIndex = parseInt(active.getAttribute("data-episode-index") || "-1", 10)
+  if (seasonIndex < 0 || episodeIndex < 0) return
 
-  const season = props.series.seasons?.[row - 2]
-  const episode = season?.episodes?.[col]
+  const season = props.series.seasons?.[seasonIndex]
+  const episode = season?.episodes?.[episodeIndex]
   if (!episode) return
 
   actionEvent.preventDefault()
@@ -751,10 +845,19 @@ function handleEpisodeEnter(event: KeyboardEvent, episode: Episode) {
 
 onMounted(() => {
   window.addEventListener("mediahive:gamepad-action", handleGamepadAction as EventListener)
+  window.addEventListener("resize", scheduleEpisodeNavLayoutRecompute, { passive: true })
+  nextTick(() => {
+    scheduleEpisodeNavLayoutRecompute()
+  })
 })
 
 onUnmounted(() => {
   window.removeEventListener("mediahive:gamepad-action", handleGamepadAction as EventListener)
+  window.removeEventListener("resize", scheduleEpisodeNavLayoutRecompute)
+  if (navLayoutFrame !== null) {
+    window.cancelAnimationFrame(navLayoutFrame)
+    navLayoutFrame = null
+  }
   // Clear all volume fade intervals
   for (const interval of volumeFadeIntervals.values()) {
     clearInterval(interval)
