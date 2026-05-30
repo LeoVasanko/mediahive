@@ -70,7 +70,7 @@
         <!-- Browse/Search page (left panel) -->
         <main
           ref="browsePanelRef"
-          class="main-content page-slider-panel"
+          class="main-content page-slider-panel scrollbar-hidden"
           data-nav-scope="browse"
           @scroll.passive="handlePanelScroll('browse')"
         >
@@ -165,7 +165,7 @@
         <!-- Detail page (right panel) -->
         <main
           ref="detailPanelRef"
-          class="main-content page-slider-panel page-slider-detail-panel"
+          class="main-content page-slider-panel page-slider-detail-panel scrollbar-hidden"
           data-nav-scope="detail"
           @scroll.passive="handlePanelScroll('detail')"
         >

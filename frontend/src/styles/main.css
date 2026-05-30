@@ -61,6 +61,17 @@ html:not(.pointer-visible) * {
   overflow: hidden;
 }
 
+.scrollbar-hidden {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.scrollbar-hidden::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
 /* Scrollbar styling */
 ::-webkit-scrollbar {
   width: 8px;
@@ -525,6 +536,14 @@ html.mouse-active .media-card:hover .media-card-info {
   justify-content: center;
   padding: 40px 20px;
   overflow-y: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.modal-overlay::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
 }
 
 .modal-content {

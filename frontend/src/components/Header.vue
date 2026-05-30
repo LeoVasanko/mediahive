@@ -109,7 +109,7 @@
           <div class="settings-header-spacer"></div>
         </div>
 
-        <div class="settings-content">
+        <div class="settings-content scrollbar-hidden">
           <section class="settings-section">
             <h2 class="settings-section-title">Media Roots</h2>
             <p class="settings-section-desc">Folders scanned and indexed by MediaHive.</p>

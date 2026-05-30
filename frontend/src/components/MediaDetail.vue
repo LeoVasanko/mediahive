@@ -1479,20 +1479,14 @@ html:not(.mouse-active) .cast-card.nav-focused::after {
   overflow-x: auto;
   padding-bottom: 8px;
   scroll-behavior: smooth;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
 
 .showreel-images::-webkit-scrollbar {
-  height: 6px;
-}
-
-.showreel-images::-webkit-scrollbar-track {
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 3px;
-}
-
-.showreel-images::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.2);
-  border-radius: 3px;
+  width: 0;
+  height: 0;
+  display: none;
 }
 
 .showreel-image {
