@@ -399,53 +399,94 @@ function startStaggeredPlayback() {
 
 // Volume fade animation tracking
 const volumeFadeIntervals = new Map<number, ReturnType<typeof setInterval>>()
+const AUDIO_FADE_STEP = 0.04
+const AUDIO_FADE_INTERVAL_MS = 40
+const AUDIO_IDLE_FADE_DELAY_MS = 1600
+const AUDIO_LEAVE_FADE_DELAY_MS = 350
+const AUDIO_HOVER_TARGET_VOLUME = 0.5
+let hoveredVideoIndex: number | null = null
+let hoverAudioIdleTimer: ReturnType<typeof setTimeout> | null = null
 
-// Handle hover-based audio fade in/out
-function handleVideoHover(index: number, isEntering: boolean) {
+function clearHoverAudioIdleTimer() {
+  if (hoverAudioIdleTimer !== null) {
+    clearTimeout(hoverAudioIdleTimer)
+    hoverAudioIdleTimer = null
+  }
+}
+
+function rampVideoVolume(index: number, targetVolume: number) {
   const video = videoRefs.value[index]
   if (!video) return
 
-  // Clear any existing fade for this video
   const existingInterval = volumeFadeIntervals.get(index)
   if (existingInterval) {
     clearInterval(existingInterval)
     volumeFadeIntervals.delete(index)
   }
 
-  if (isEntering) {
-    // Mute all other videos immediately
-    document.querySelectorAll("video").forEach((v) => {
-      if (v !== video) {
-        v.volume = 0
-        v.muted = true
-      }
-    })
-
-    // Fade in this video's audio
+  const clampedTarget = Math.max(0, Math.min(1, targetVolume))
+  if (clampedTarget > 0 && video.muted) {
+    video.volume = 0
+  }
+  if (clampedTarget > 0) {
     video.muted = false
-    const fadeIn = setInterval(() => {
-      if (video.volume < 0.95) {
-        video.volume = Math.min(1, video.volume + 0.1)
-      } else {
-        video.volume = 1
-        clearInterval(fadeIn)
-        volumeFadeIntervals.delete(index)
-      }
-    }, 30)
-    volumeFadeIntervals.set(index, fadeIn)
-  } else {
-    // Fade out this video's audio
-    const fadeOut = setInterval(() => {
-      if (video.volume > 0.05) {
-        video.volume = Math.max(0, video.volume - 0.1)
-      } else {
-        video.volume = 0
+  }
+
+  const fadeInterval = setInterval(() => {
+    const delta = clampedTarget - video.volume
+    if (Math.abs(delta) <= AUDIO_FADE_STEP) {
+      video.volume = clampedTarget
+      if (clampedTarget <= 0.001) {
         video.muted = true
-        clearInterval(fadeOut)
-        volumeFadeIntervals.delete(index)
       }
-    }, 30)
-    volumeFadeIntervals.set(index, fadeOut)
+      clearInterval(fadeInterval)
+      volumeFadeIntervals.delete(index)
+      return
+    }
+
+    video.volume += delta > 0 ? AUDIO_FADE_STEP : -AUDIO_FADE_STEP
+  }, AUDIO_FADE_INTERVAL_MS)
+
+  volumeFadeIntervals.set(index, fadeInterval)
+}
+
+function scheduleHoverAudioIdleFade(index: number, delayMs: number = AUDIO_IDLE_FADE_DELAY_MS) {
+  clearHoverAudioIdleTimer()
+  hoverAudioIdleTimer = setTimeout(() => {
+    rampVideoVolume(index, 0)
+    if (hoveredVideoIndex === index) {
+      hoveredVideoIndex = null
+    }
+  }, delayMs)
+}
+
+function handleHoverAudioMouseMove() {
+  if (!document.documentElement.classList.contains("mouse-active")) return
+  if (hoveredVideoIndex === null) return
+  scheduleHoverAudioIdleFade(hoveredVideoIndex)
+}
+
+// Handle hover-based audio fade in/out
+function handleVideoHover(index: number, isEntering: boolean) {
+  if (!document.documentElement.classList.contains("mouse-active")) return
+
+  const video = videoRefs.value[index]
+  if (!video) return
+
+  if (isEntering) {
+    hoveredVideoIndex = index
+    for (let i = 0; i < videoRefs.value.length; i++) {
+      if (i !== index && videoRefs.value[i]) {
+        rampVideoVolume(i, 0)
+      }
+    }
+    rampVideoVolume(index, AUDIO_HOVER_TARGET_VOLUME)
+    scheduleHoverAudioIdleFade(index)
+  } else {
+    if (hoveredVideoIndex === index) {
+      hoveredVideoIndex = null
+    }
+    scheduleHoverAudioIdleFade(index, AUDIO_LEAVE_FADE_DELAY_MS)
   }
 }
 
@@ -859,11 +900,14 @@ function handleResize() {
 onMounted(() => {
   document.addEventListener("keydown", handleMovieMenuKeydown, true)
   window.addEventListener("resize", handleResize)
+  window.addEventListener("mousemove", handleHoverAudioMouseMove, { passive: true })
 })
 
 onUnmounted(() => {
   document.removeEventListener("keydown", handleMovieMenuKeydown, true)
   window.removeEventListener("resize", handleResize)
+  window.removeEventListener("mousemove", handleHoverAudioMouseMove)
+  clearHoverAudioIdleTimer()
   disposeOutOfBoundsHandler?.()
   disposeOutOfBoundsHandler = null
   lastReleaseShortcutRow = null

@@ -921,6 +921,72 @@ function setVideoRef(el: HTMLVideoElement | null, key: string) {
 
 // Volume fade animation tracking
 const volumeFadeIntervals = new Map<string, ReturnType<typeof setInterval>>()
+const AUDIO_FADE_STEP = 0.04
+const AUDIO_FADE_INTERVAL_MS = 40
+const AUDIO_IDLE_FADE_DELAY_MS = 1600
+const AUDIO_LEAVE_FADE_DELAY_MS = 350
+const AUDIO_HOVER_TARGET_VOLUME = 0.5
+let hoveredEpisodeAudioKey: string | null = null
+let hoverEpisodeAudioIdleTimer: ReturnType<typeof setTimeout> | null = null
+
+function clearEpisodeHoverAudioIdleTimer() {
+  if (hoverEpisodeAudioIdleTimer !== null) {
+    clearTimeout(hoverEpisodeAudioIdleTimer)
+    hoverEpisodeAudioIdleTimer = null
+  }
+}
+
+function rampEpisodeVolume(key: string, targetVolume: number) {
+  const video = videoRefs.value.get(key)
+  if (!video) return
+
+  const existingInterval = volumeFadeIntervals.get(key)
+  if (existingInterval) {
+    clearInterval(existingInterval)
+    volumeFadeIntervals.delete(key)
+  }
+
+  const clampedTarget = Math.max(0, Math.min(1, targetVolume))
+  if (clampedTarget > 0 && video.muted) {
+    video.volume = 0
+  }
+  if (clampedTarget > 0) {
+    video.muted = false
+  }
+
+  const fadeInterval = setInterval(() => {
+    const delta = clampedTarget - video.volume
+    if (Math.abs(delta) <= AUDIO_FADE_STEP) {
+      video.volume = clampedTarget
+      if (clampedTarget <= 0.001) {
+        video.muted = true
+      }
+      clearInterval(fadeInterval)
+      volumeFadeIntervals.delete(key)
+      return
+    }
+
+    video.volume += delta > 0 ? AUDIO_FADE_STEP : -AUDIO_FADE_STEP
+  }, AUDIO_FADE_INTERVAL_MS)
+
+  volumeFadeIntervals.set(key, fadeInterval)
+}
+
+function scheduleEpisodeHoverAudioIdleFade(key: string, delayMs: number = AUDIO_IDLE_FADE_DELAY_MS) {
+  clearEpisodeHoverAudioIdleTimer()
+  hoverEpisodeAudioIdleTimer = setTimeout(() => {
+    rampEpisodeVolume(key, 0)
+    if (hoveredEpisodeAudioKey === key) {
+      hoveredEpisodeAudioKey = null
+    }
+  }, delayMs)
+}
+
+function handleEpisodeHoverAudioMouseMove() {
+  if (!document.documentElement.classList.contains("mouse-active")) return
+  if (!hoveredEpisodeAudioKey) return
+  scheduleEpisodeHoverAudioIdleFade(hoveredEpisodeAudioKey)
+}
 
 // Handle hover-based audio fade in/out for episode videos
 function handleEpisodeHover(eventOrKey: MouseEvent | string, keyOrIsEntering: string | boolean, maybeIsEntering?: boolean) {
@@ -945,47 +1011,20 @@ function handleEpisodeHover(eventOrKey: MouseEvent | string, keyOrIsEntering: st
 
   if (parsed.seasonIndex !== activeSeasonIndex.value) return
 
-  // Clear any existing fade for this video
-  const existingInterval = volumeFadeIntervals.get(key)
-  if (existingInterval) {
-    clearInterval(existingInterval)
-    volumeFadeIntervals.delete(key)
-  }
-
   if (isEntering) {
-    // Mute all other videos immediately
+    hoveredEpisodeAudioKey = key
     videoRefs.value.forEach((v, k) => {
       if (k !== key) {
-        v.volume = 0
-        v.muted = true
+        rampEpisodeVolume(k, 0)
       }
     })
-
-    // Fade in this video's audio
-    video.muted = false
-    const fadeIn = setInterval(() => {
-      if (video.volume < 0.95) {
-        video.volume = Math.min(1, video.volume + 0.1)
-      } else {
-        video.volume = 1
-        clearInterval(fadeIn)
-        volumeFadeIntervals.delete(key)
-      }
-    }, 30)
-    volumeFadeIntervals.set(key, fadeIn)
+    rampEpisodeVolume(key, AUDIO_HOVER_TARGET_VOLUME)
+    scheduleEpisodeHoverAudioIdleFade(key)
   } else {
-    // Fade out this video's audio
-    const fadeOut = setInterval(() => {
-      if (video.volume > 0.05) {
-        video.volume = Math.max(0, video.volume - 0.1)
-      } else {
-        video.volume = 0
-        video.muted = true
-        clearInterval(fadeOut)
-        volumeFadeIntervals.delete(key)
-      }
-    }, 30)
-    volumeFadeIntervals.set(key, fadeOut)
+    if (hoveredEpisodeAudioKey === key) {
+      hoveredEpisodeAudioKey = null
+    }
+    scheduleEpisodeHoverAudioIdleFade(key, AUDIO_LEAVE_FADE_DELAY_MS)
   }
 }
 
@@ -1096,6 +1135,7 @@ onMounted(() => {
   window.addEventListener("mediahive:gamepad-action", handleGamepadAction as EventListener)
   window.addEventListener("resize", scheduleEpisodeNavLayoutRecompute, { passive: true })
   window.addEventListener("resize", scheduleSeasonLayoutRecompute, { passive: true })
+  window.addEventListener("mousemove", handleEpisodeHoverAudioMouseMove, { passive: true })
   nextTick(() => {
     const focusSeasonNumber = props.focusEpisode?.seasonNumber
     if (typeof focusSeasonNumber === "number") {
@@ -1115,6 +1155,8 @@ onUnmounted(() => {
   window.removeEventListener("mediahive:gamepad-action", handleGamepadAction as EventListener)
   window.removeEventListener("resize", scheduleEpisodeNavLayoutRecompute)
   window.removeEventListener("resize", scheduleSeasonLayoutRecompute)
+  window.removeEventListener("mousemove", handleEpisodeHoverAudioMouseMove)
+  clearEpisodeHoverAudioIdleTimer()
   clearSeasonStartupTimers()
   if (seasonLayoutFrame !== null) {
     window.cancelAnimationFrame(seasonLayoutFrame)
