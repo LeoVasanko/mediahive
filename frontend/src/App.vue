@@ -35,6 +35,7 @@
       :mpc-be-connected="mpcBeConnected"
       :nav-row="1"
       :position="headerPosition"
+      :style="headerStyle"
       @search="updateSearchQuery"
       @go-back="goBack"
     />
@@ -62,7 +63,12 @@
     <div v-else class="page-slider">
       <div class="page-slider-track" :class="{ 'is-detail-open': isDetailOpen }">
         <!-- Browse/Search page (left panel) -->
-        <main class="main-content page-slider-panel" data-nav-scope="browse">
+        <main
+          ref="browsePanelRef"
+          class="main-content page-slider-panel"
+          data-nav-scope="browse"
+          @scroll.passive="handlePanelScroll('browse')"
+        >
           <!-- Movies and Series views - both always rendered for smooth transitions -->
           <div v-if="!searchQuery" class="view-container">
             <Transition name="view-zoom" mode="out-in">
@@ -152,7 +158,12 @@
         </main>
 
         <!-- Detail page (right panel) -->
-        <main class="main-content page-slider-panel page-slider-detail-panel" data-nav-scope="detail">
+        <main
+          ref="detailPanelRef"
+          class="main-content page-slider-panel page-slider-detail-panel"
+          data-nav-scope="detail"
+          @scroll.passive="handlePanelScroll('detail')"
+        >
           <MediaDetail
             v-if="detailItemForRender"
             v-show="isDetailOpen"
@@ -317,9 +328,21 @@ const mpcBeConnected = ref(false)
 const resumePositions = ref<Record<string, number>>({})
 const searchQuery = ref(getRouteSearchQuery())
 const searchReturnPath = ref<string | null>(null)
+const browsePanelRef = ref<HTMLElement | null>(null)
+const detailPanelRef = ref<HTMLElement | null>(null)
+const browsePanelScrollTop = ref(0)
+const detailPanelScrollTop = ref(0)
 const MPC_BE_OPENING_GRACE_MS = 4000
 const mpcBeOpeningUntil = ref(0)
 let mpcBePollTimer: number | null = null
+
+function handlePanelScroll(scope: "browse" | "detail") {
+  if (scope === "browse") {
+    browsePanelScrollTop.value = browsePanelRef.value?.scrollTop || 0
+    return
+  }
+  detailPanelScrollTop.value = detailPanelRef.value?.scrollTop || 0
+}
 
 function isMpcFamilySelected(): boolean {
   // Empty port means Web UI is disabled
@@ -620,6 +643,8 @@ function handleEscapeKey(event: KeyboardEvent) {
 onMounted(() => {
   void refreshPlayerStatus()
   void refreshResumePositions()
+  browsePanelScrollTop.value = browsePanelRef.value?.scrollTop || 0
+  detailPanelScrollTop.value = detailPanelRef.value?.scrollTop || 0
   setActiveNavigationScope(isDetailOpen.value ? "detail" : "browse")
   document.addEventListener("keydown", handleEscapeKey)
   window.addEventListener("mediahive:gamepad-action", onGamepadAction as EventListener)
@@ -706,6 +731,20 @@ const selectedItem = computed(() => {
 const isDetailOpen = computed(() => selectedItem.value !== null)
 const lastDetailItem = ref<MediaItem | null>(null)
 const detailItemForRender = computed(() => selectedItem.value ?? lastDetailItem.value)
+
+const activePanelScrollTop = computed(() => {
+  if (loading.value || error.value) return 0
+  return isDetailOpen.value ? detailPanelScrollTop.value : browsePanelScrollTop.value
+})
+
+const headerStyle = computed(() => {
+  if (route.path === "/settings") {
+    return {}
+  }
+  return {
+    transform: `translateY(${-activePanelScrollTop.value}px)`,
+  }
+})
 
 watch(selectedItem, (item) => {
   if (item) {
@@ -1317,7 +1356,9 @@ async function handleOpenFolder(folderPath: string, explicitRootId?: string | nu
 
 <style scoped>
 .app {
+  height: 100vh;
   min-height: 100vh;
+  overflow: hidden;
 }
 
 /* Scanning progress debug overlay */
@@ -1407,12 +1448,14 @@ async function handleOpenFolder(folderPath: string, explicitRootId?: string | nu
 
 .page-slider {
   width: 100vw;
-  overflow-x: hidden;
+  height: 100vh;
+  overflow: hidden;
 }
 
 .page-slider-track {
   display: flex;
   width: 200vw;
+  height: 100vh;
   transition: transform 420ms cubic-bezier(0.22, 0.61, 0.36, 1);
   will-change: transform;
 }
@@ -1425,6 +1468,11 @@ async function handleOpenFolder(folderPath: string, explicitRootId?: string | nu
   flex: 0 0 100vw;
   width: 100vw;
   min-width: 100vw;
+  height: 100vh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .page-slider-detail-panel {

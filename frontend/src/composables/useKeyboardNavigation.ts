@@ -387,26 +387,39 @@ function handleSyncedRowResize() {
 }
 
 function ensureElementVisibleVertically(element: HTMLElement) {
+  const scrollContainer = element.closest<HTMLElement>("[data-nav-scope]")
+  const viewportRect = scrollContainer?.getBoundingClientRect() || null
+
+  const scrollByTop = (delta: number) => {
+    if (scrollContainer) {
+      scrollContainer.scrollBy({
+        top: delta,
+        behavior: "smooth",
+      })
+      return
+    }
+    window.scrollBy({
+      top: delta,
+      behavior: "smooth",
+    })
+  }
+
   if (element.hasAttribute("data-nav-release-item")) {
     const rootStyle = window.getComputedStyle(document.documentElement)
     const headerHeight = parseFloat(rootStyle.getPropertyValue("--header-height") || "0")
     const topMargin = headerHeight + 24
     const bottomMargin = 24
     const rect = element.getBoundingClientRect()
+    const topBoundary = (viewportRect?.top || 0) + topMargin
+    const bottomBoundary = (viewportRect?.bottom || window.innerHeight) - bottomMargin
 
-    if (rect.top < topMargin) {
-      window.scrollBy({
-        top: rect.top - topMargin,
-        behavior: "smooth",
-      })
+    if (rect.top < topBoundary) {
+      scrollByTop(rect.top - topBoundary)
       return
     }
 
-    if (rect.bottom > window.innerHeight - bottomMargin) {
-      window.scrollBy({
-        top: rect.bottom - (window.innerHeight - bottomMargin),
-        behavior: "smooth",
-      })
+    if (rect.bottom > bottomBoundary) {
+      scrollByTop(rect.bottom - bottomBoundary)
     }
     return
   }
@@ -416,20 +429,16 @@ function ensureElementVisibleVertically(element: HTMLElement) {
   const topMargin = headerHeight + 24
   const bottomMargin = 24
   const rect = element.getBoundingClientRect()
+  const topBoundary = (viewportRect?.top || 0) + topMargin
+  const bottomBoundary = (viewportRect?.bottom || window.innerHeight) - bottomMargin
 
-  if (rect.top < topMargin) {
-    window.scrollBy({
-      top: rect.top - topMargin,
-      behavior: "smooth",
-    })
+  if (rect.top < topBoundary) {
+    scrollByTop(rect.top - topBoundary)
     return
   }
 
-  if (rect.bottom > window.innerHeight - bottomMargin) {
-    window.scrollBy({
-      top: rect.bottom - (window.innerHeight - bottomMargin),
-      behavior: "smooth",
-    })
+  if (rect.bottom > bottomBoundary) {
+    scrollByTop(rect.bottom - bottomBoundary)
   }
 }
 
