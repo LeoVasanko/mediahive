@@ -418,7 +418,7 @@ class RootScanner:
                         )
                     )
                 )
-            async for movie, showreel_task in _process_movies(
+            async for movie_id, movie, showreel_task, people in _process_movies(
                 categories,
                 self._output_dir,
                 fetch_covers=True,
@@ -426,9 +426,21 @@ class RootScanner:
                 media_root=media_root_str,
                 root_id=self.root_id,
             ):
-                await self._send(Upsert(kind="movie", item=movie))
+                await self._send(
+                    Upsert(
+                        kind="movie",
+                        id=movie_id,
+                        item=movie,
+                        people=people or None,
+                    )
+                )
                 if showreel_task:
-                    await self._showreel_queue.put(("movie", showreel_task, movie))
+                    await self._showreel_queue.put((
+                        "movie",
+                        movie_id,
+                        showreel_task,
+                        movie,
+                    ))
                     logger.info(
                         "[%d/%d] Movie: %s (showreel queued, queue=%d)",
                         processed + 1,
@@ -468,7 +480,7 @@ class RootScanner:
                         )
                     )
                 )
-            async for series, ep_reel_tasks in _process_series(
+            async for series_id, series, ep_reel_tasks, people in _process_series(
                 categories,
                 self._output_dir,
                 fetch_covers=True,
@@ -476,9 +488,16 @@ class RootScanner:
                 media_root=media_root_str,
                 root_id=self.root_id,
             ):
-                await self._send(Upsert(kind="series", item=series))
+                await self._send(
+                    Upsert(
+                        kind="series",
+                        id=series_id,
+                        item=series,
+                        people=people or None,
+                    )
+                )
                 for task in ep_reel_tasks:
-                    await self._showreel_queue.put(("episode", task, series))
+                    await self._showreel_queue.put(("episode", series_id, task, series))
                 if ep_reel_tasks:
                     logger.info(
                         "[%d/%d] Series: %s (%d episode reels queued, queue=%d)",
@@ -563,7 +582,7 @@ class RootScanner:
 
         while True:
             try:
-                kind, task_data, item = await self._showreel_queue.get()
+                kind, item_id, task_data, item = await self._showreel_queue.get()
                 task_id = f"showreel-{uuid.uuid4().hex[:8]}"
                 remaining = self._showreel_queue.qsize()
 
@@ -603,7 +622,7 @@ class RootScanner:
                         paths = [sources[0] for sources in source_sets if sources]
                         movie.showreel_images = paths or None
                         movie.showreel_source_sets = source_sets or None
-                        await self._send(Upsert(kind="movie", item=movie))
+                        await self._send(Upsert(kind="movie", id=item_id, item=movie))
                         await self._send(
                             Task(
                                 data=TaskInfo(
@@ -688,7 +707,7 @@ class RootScanner:
                                             )
                                         )
                                         episode.reel_sources = reel_sources or None
-                        await self._send(Upsert(kind="series", item=series))
+                        await self._send(Upsert(kind="series", id=item_id, item=series))
                         await self._send(
                             Task(
                                 data=TaskInfo(

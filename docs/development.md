@@ -40,6 +40,14 @@ uv run --extra gui python -m mediahive.winmain /path/to/media/folder
 
 This launches the same pywebview-based desktop flow used by the Windows build.
 
+## Migrate Existing Index Snapshots
+
+```bash
+uv run python scripts/indexmigr.py /path/to/media/root --write
+```
+
+This applies versioned snapshot migrations to `.mediahive/index.json` outside the main application. Use it before starting a newer build against an older index.
+
 ## Notes
 
 - The selected media folder is scanned continuously by the backend.

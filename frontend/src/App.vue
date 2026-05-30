@@ -176,7 +176,9 @@ import { ref, computed, onMounted, onUnmounted, watch } from "vue"
 import { useRouter, useRoute } from "vue-router"
 import type {
   Movie,
+  MovieUi,
   Series,
+  SeriesUi,
   MediaItem,
   EpisodeWithSeries,
   TaskInfo,
@@ -732,7 +734,7 @@ function showDetail(item: MediaItem) {
   if (item.type === "episode") {
     // For episodes, play directly if possible, otherwise show the series
     const epData = item.data as EpisodeWithSeries
-    const playableFile = Object.values(epData.episode.torrents || {})[0]?.playable_file
+    const playableFile = Object.values(epData.episode.files || {})[0]?.playable_file
     if (playableFile) {
       handlePlay(playableFile)
     } else {
@@ -800,10 +802,10 @@ function focusDetailEntryTarget(item: MediaItem): boolean {
 }
 
 // Convert raw data to MediaItem format
-function movieToMediaItem(movie: Movie): MediaItem {
+function movieToMediaItem(movie: MovieUi): MediaItem {
   // Get resolution from first torrent if available
-  const torrents = Object.values(movie.torrents || {})
-  const resolution = torrents.length > 0 ? torrents[0].resolution : null
+  const files = Object.values(movie.files || {})
+  const resolution = files.length > 0 ? files[0].resolution : null
 
   return {
     id: movie.id,
@@ -819,7 +821,7 @@ function movieToMediaItem(movie: Movie): MediaItem {
   }
 }
 
-function seriesToMediaItem(series: Series): MediaItem {
+function seriesToMediaItem(series: SeriesUi): MediaItem {
   // For series, collect reel images from all episodes
   const reelImages: string[] = []
   const reelSourceSets: string[][] = []
@@ -1249,7 +1251,7 @@ function reloadPage() {
 function findRootIdForPath(filePath: string): string | null {
   if (!mediaIndex.value) return null
   for (const movie of mediaIndex.value.movies) {
-    for (const torrent of Object.values(movie.torrents || {})) {
+    for (const torrent of Object.values(movie.files || {})) {
       if (torrent.playable_file === filePath) {
         return torrent.root_id || movie.root_id
       }
@@ -1258,7 +1260,7 @@ function findRootIdForPath(filePath: string): string | null {
   for (const series of mediaIndex.value.series) {
     for (const season of series.seasons || []) {
       for (const episode of season.episodes || []) {
-        for (const torrent of Object.values(episode.torrents || {})) {
+        for (const torrent of Object.values(episode.files || {})) {
           if (torrent.playable_file === filePath) {
             return torrent.root_id || series.root_id
           }

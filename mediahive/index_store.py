@@ -18,7 +18,6 @@ from fastapi import WebSocket
 
 from mediahive.models.data import (
     IndexSnapshot,
-    MediaStats,
     Movie,
     Series,
     TaskInfo,
@@ -28,6 +27,7 @@ from mediahive.models.protocol import (
     WsInit,
     WsInitData,
 )
+from mediahive.models.tmdb import Person
 
 logger = logging.getLogger("mediahive.index_store")
 
@@ -51,16 +51,15 @@ class IndexStore:
     def __init__(
         self,
         snapshot_path: Path,
-        media_root: str | None = None,
-        root_id: str | None = None,
     ) -> None:
         self.snapshot_path = snapshot_path
-        self.media_root = media_root
-        self.root_id = root_id
 
         # The index: keyed by item id
         self.movies: dict[str, Movie] = {}
         self.series: dict[str, Series] = {}
+        self.people: dict[int, Person] = {}
+        self._movie_tmdb_ids: dict[int, str] = {}
+        self._series_tmdb_ids: dict[int, str] = {}
 
         # Connected WebSocket clients
         self._clients: set[WebSocket] = set()
@@ -74,21 +73,14 @@ class IndexStore:
         self._snapshot_cache_task: asyncio.Task | None = None
         self._cached_snapshot = IndexSnapshot(
             generated_at=datetime.now().isoformat(),
-            media_root=self.media_root,
-            stats=MediaStats(),
-            movies=[],
-            series=[],
+            movies={},
+            series={},
+            people={},
         )
 
     # ------------------------------------------------------------------
     # Persistence
     # ------------------------------------------------------------------
-
-    def _maybe_migrate_id(self, item_id: str) -> str:
-        """Strip any legacy root_id prefix, leaving only the content hash."""
-        if ":" in item_id:
-            return item_id.split(":", 1)[1]
-        return item_id
 
     async def load_snapshot(self) -> None:
         """Load index from disk snapshot (recovery on startup)."""
@@ -99,67 +91,141 @@ class IndexStore:
             return
         try:
             raw = await ap.read_bytes()
-            loaded_movies, loaded_series = await asyncio.to_thread(
+            loaded_movies, loaded_series, loaded_people = await asyncio.to_thread(
                 self._load_snapshot_sync,
                 raw,
             )
             self._merge_loaded_snapshot(
                 loaded_movies,
                 loaded_series,
+                loaded_people,
             )
+            self._rebuild_tmdb_indexes()
 
             self._schedule_snapshot_cache_refresh()
         except Exception:
             logger.exception("Failed to load snapshot from %s", self.snapshot_path)
 
-    def _load_snapshot_sync(self, raw: bytes) -> tuple[list[Movie], list[Series]]:
+    def _load_snapshot_sync(
+        self,
+        raw: bytes,
+    ) -> tuple[dict[str, Movie], dict[str, Series], dict[int, Person]]:
         """Parse snapshot bytes in a thread-pool context."""
-        data = msgspec.json.decode(raw, type=IndexSnapshot)
-        loaded_movies: list[Movie] = []
-        loaded_series: list[Series] = []
-        for m in data.movies:
-            m.id = self._maybe_migrate_id(m.id)
-            m.root_id = self.root_id
-            loaded_movies.append(m)
-        for s in data.series:
-            s.id = self._maybe_migrate_id(s.id)
-            s.root_id = self.root_id
-            loaded_series.append(s)
+        payload = msgspec.json.decode(raw)
+        data = msgspec.convert(payload, type=IndexSnapshot)
+        loaded_movies = dict(data.movies)
+        loaded_series = dict(data.series)
+        loaded_people = dict(data.people)
         logger.info(
-            "Loaded snapshot: %d movies, %d series",
+            "Loaded snapshot: %d movies, %d series, %d people",
             len(loaded_movies),
             len(loaded_series),
+            len(loaded_people),
         )
-        return loaded_movies, loaded_series
+        return loaded_movies, loaded_series, loaded_people
 
     def _merge_loaded_snapshot(
         self,
-        movies: list[Movie],
-        series: list[Series],
+        movies: dict[str, Movie],
+        series: dict[str, Series],
+        people: dict[int, Person],
     ) -> None:
         """Merge loaded snapshot items without overriding newer in-memory updates."""
-        for movie in movies:
-            if movie.id not in self.movies:
-                self.movies[movie.id] = movie
-        for show in series:
-            if show.id not in self.series:
-                self.series[show.id] = show
+        for item_id, movie in movies.items():
+            if item_id not in self.movies:
+                self.movies[item_id] = movie
+        for item_id, show in series.items():
+            if item_id not in self.series:
+                self.series[item_id] = show
+        for person_id, person in people.items():
+            self.people[person_id] = person
+
+    @staticmethod
+    def _get_tmdb_id(item: Movie | Series) -> int | None:
+        if item.info is None:
+            return None
+        return item.info.tmdb_id
+
+    def _rebuild_tmdb_indexes(self) -> None:
+        """Rebuild TMDb id lookup maps from the current in-memory items."""
+        self._movie_tmdb_ids.clear()
+        self._series_tmdb_ids.clear()
+        for item_id, movie in self.movies.items():
+            tmdb_id = self._get_tmdb_id(movie)
+            if tmdb_id is not None:
+                self._movie_tmdb_ids[tmdb_id] = item_id
+        for item_id, series in self.series.items():
+            tmdb_id = self._get_tmdb_id(series)
+            if tmdb_id is not None:
+                self._series_tmdb_ids[tmdb_id] = item_id
+
+    def _dedupe_tmdb_duplicates(self) -> None:
+        """Remove duplicate entries that point at the same TMDb item."""
+        seen_movies: dict[int, str] = {}
+        for item_id, movie in list(self.movies.items()):
+            tmdb_id = self._get_tmdb_id(movie)
+            if tmdb_id is None:
+                continue
+            existing_id = seen_movies.get(tmdb_id)
+            if existing_id is None:
+                seen_movies[tmdb_id] = item_id
+                continue
+            if existing_id != item_id:
+                self.movies.pop(item_id, None)
+
+        seen_series: dict[int, str] = {}
+        for item_id, series in list(self.series.items()):
+            tmdb_id = self._get_tmdb_id(series)
+            if tmdb_id is None:
+                continue
+            existing_id = seen_series.get(tmdb_id)
+            if existing_id is None:
+                seen_series[tmdb_id] = item_id
+                continue
+            if existing_id != item_id:
+                self.series.pop(item_id, None)
+
+        self._rebuild_tmdb_indexes()
+
+    def _collapse_movie_tmdb_duplicates(self, tmdb_id: int, keep_id: str) -> None:
+        """Remove other movie entries that share a TMDb id."""
+        for item_id, movie in list(self.movies.items()):
+            if item_id == keep_id:
+                continue
+            if self._get_tmdb_id(movie) == tmdb_id:
+                self.movies.pop(item_id, None)
+        self._rebuild_tmdb_indexes()
+
+    def _collapse_series_tmdb_duplicates(self, tmdb_id: int, keep_id: str) -> None:
+        """Remove other series entries that share a TMDb id."""
+        for item_id, series in list(self.series.items()):
+            if item_id == keep_id:
+                continue
+            if self._get_tmdb_id(series) == tmdb_id:
+                self.series.pop(item_id, None)
+        self._rebuild_tmdb_indexes()
 
     async def _write_snapshot(self) -> None:
         """Write current index to disk (called from debounce task)."""
         # Copy values on the event loop thread, then do full snapshot build + disk I/O
         # in a worker thread to keep the loop responsive.
-        movies = list(self.movies.values())
-        series = list(self.series.values())
-        await asyncio.to_thread(self._write_snapshot_sync, movies, series)
+        movies = dict(self.movies)
+        series = dict(self.series)
+        people = dict(self.people)
+        await asyncio.to_thread(self._write_snapshot_sync, movies, series, people)
         logger.debug("Snapshot written to %s", self.snapshot_path)
 
-    def _write_snapshot_sync(self, movies: list[Movie], series: list[Series]) -> None:
+    def _write_snapshot_sync(
+        self,
+        movies: dict[str, Movie],
+        series: dict[str, Series],
+        people: dict[int, Person],
+    ) -> None:
         """Build and write snapshot synchronously in a worker thread."""
-        snapshot = self._build_snapshot_from_lists(movies, series)
+        snapshot = self._build_snapshot_from_maps(movies, series, people)
         self.snapshot_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.snapshot_path.with_suffix(".tmp")
-        tmp.write_bytes(msgspec.json.format(msgspec.json.encode(snapshot), indent=2))
+        tmp.write_bytes(msgspec.json.encode(snapshot))
         # Path.replace is atomic and overwrites on all platforms.
         tmp.replace(self.snapshot_path)
 
@@ -180,12 +246,14 @@ class IndexStore:
 
     async def _refresh_snapshot_cache_once(self) -> None:
         """Rebuild cached snapshot once using copied store values."""
-        movies = list(self.movies.values())
-        series = list(self.series.values())
+        movies = dict(self.movies)
+        series = dict(self.series)
+        people = dict(self.people)
         self._cached_snapshot = await asyncio.to_thread(
-            self._build_snapshot_from_lists,
+            self._build_snapshot_from_maps,
             movies,
             series,
+            people,
         )
 
     async def _snapshot_cache_writer(self) -> None:
@@ -226,45 +294,91 @@ class IndexStore:
     # Mutations
     # ------------------------------------------------------------------
 
-    def upsert_movie(self, item: Movie) -> bool:
+    def upsert_movie(
+        self,
+        item_id: str,
+        item: Movie,
+        people: dict[int, Person] | None = None,
+    ) -> bool:
         """Insert or update a movie. Returns True if it was a real change."""
-        item.id = self._maybe_migrate_id(item.id)
-        if not item.root_id and self.root_id:
-            item.root_id = self.root_id
-        existing = self.movies.get(item.id)
+        tmdb_id = self._get_tmdb_id(item)
+        existing_id = self._movie_tmdb_ids.get(tmdb_id) if tmdb_id is not None else None
+        if existing_id is not None and existing_id != item_id:
+            item_id = existing_id
+
+        existing = self.movies.get(item_id)
+        if tmdb_id is not None:
+            self._movie_tmdb_ids[tmdb_id] = item_id
+            self._collapse_movie_tmdb_duplicates(tmdb_id, item_id)
+
         if existing is not None:
             if msgspec.json.encode(existing) == msgspec.json.encode(item):
+                if people:
+                    self.people.update(people)
+                    self._schedule_snapshot()
+                    self._broadcast(
+                        Upsert(kind="movie", id=item_id, item=item, people=people)
+                    )
+                    return True
                 return False
-        self.movies[item.id] = item
+        self.movies[item_id] = item
+        if people:
+            self.people.update(people)
         self._schedule_snapshot()
-        self._broadcast(Upsert(kind="movie", item=item))
+        self._broadcast(Upsert(kind="movie", id=item_id, item=item, people=people))
         return True
 
-    def upsert_series(self, item: Series) -> bool:
+    def upsert_series(
+        self,
+        item_id: str,
+        item: Series,
+        people: dict[int, Person] | None = None,
+    ) -> bool:
         """Insert or update a series. Returns True if it was a real change."""
-        item.id = self._maybe_migrate_id(item.id)
-        if not item.root_id and self.root_id:
-            item.root_id = self.root_id
-        existing = self.series.get(item.id)
+        tmdb_id = self._get_tmdb_id(item)
+        existing_id = (
+            self._series_tmdb_ids.get(tmdb_id) if tmdb_id is not None else None
+        )
+        if existing_id is not None and existing_id != item_id:
+            item_id = existing_id
+
+        existing = self.series.get(item_id)
+        if tmdb_id is not None:
+            self._series_tmdb_ids[tmdb_id] = item_id
+            self._collapse_series_tmdb_duplicates(tmdb_id, item_id)
+
         if existing is not None:
             if msgspec.json.encode(existing) == msgspec.json.encode(item):
+                if people:
+                    self.people.update(people)
+                    self._schedule_snapshot()
+                    self._broadcast(
+                        Upsert(kind="series", id=item_id, item=item, people=people)
+                    )
+                    return True
                 return False
-        self.series[item.id] = item
+        self.series[item_id] = item
+        if people:
+            self.people.update(people)
         self._schedule_snapshot()
-        self._broadcast(Upsert(kind="series", item=item))
+        self._broadcast(Upsert(kind="series", id=item_id, item=item, people=people))
         return True
 
     def remove_movie(self, item_id: str) -> None:
         """Remove a movie from the index and broadcast."""
-        item_id = self._maybe_migrate_id(item_id)
         self.movies.pop(item_id, None)
+        for tmdb_id, mapped_id in list(self._movie_tmdb_ids.items()):
+            if mapped_id == item_id:
+                self._movie_tmdb_ids.pop(tmdb_id, None)
         self._schedule_snapshot()
         self._broadcast(Remove(kind="movie", id=item_id))
 
     def remove_series(self, item_id: str) -> None:
         """Remove a series from the index and broadcast."""
-        item_id = self._maybe_migrate_id(item_id)
         self.series.pop(item_id, None)
+        for tmdb_id, mapped_id in list(self._series_tmdb_ids.items()):
+            if mapped_id == item_id:
+                self._series_tmdb_ids.pop(tmdb_id, None)
         self._schedule_snapshot()
         self._broadcast(Remove(kind="series", id=item_id))
 
@@ -280,8 +394,9 @@ class IndexStore:
         # Send full current state
         msg = WsInit(
             data=WsInitData(
-                movies=list(self.movies.values()),
-                series=list(self.series.values()),
+                movies=dict(self.movies),
+                series=dict(self.series),
+                people=dict(self.people),
             )
         )
         await ws.send_bytes(msgspec.json.encode(msg))
@@ -317,41 +432,26 @@ class IndexStore:
     # Read helpers
     # ------------------------------------------------------------------
 
-    def _build_snapshot_from_lists(
+    def _build_snapshot_from_maps(
         self,
-        movies: list[Movie],
-        series: list[Series],
+        movies: dict[str, Movie],
+        series: dict[str, Series],
+        people: dict[int, Person],
     ) -> IndexSnapshot:
-        """Build a sorted IndexSnapshot with computed stats from list copies."""
-        movies_list = sorted(
-            movies,
-            key=lambda x: ((x.title or "").lower(), x.year or 0),
-        )
-        series_list = sorted(series, key=lambda x: (x.title or "").lower())
-
-        total_movie_versions = sum(len(m.torrents) for m in movies_list)
-        total_series_episodes = sum(
-            sum(len(season.episodes) for season in s.seasons) for s in series_list
-        )
-
+        """Build a keyed IndexSnapshot from map copies."""
         return IndexSnapshot(
             generated_at=datetime.now().isoformat(),
-            media_root=self.media_root,
-            stats=MediaStats(
-                total_movies=len(movies_list),
-                total_movie_versions=total_movie_versions,
-                total_series=len(series_list),
-                total_series_episodes=total_series_episodes,
-            ),
-            movies=movies_list,
-            series=series_list,
+            movies=movies,
+            series=series,
+            people=people,
         )
 
     def _build_snapshot(self) -> IndexSnapshot:
         """Build a sorted IndexSnapshot with computed stats."""
-        return self._build_snapshot_from_lists(
-            list(self.movies.values()),
-            list(self.series.values()),
+        return self._build_snapshot_from_maps(
+            dict(self.movies),
+            dict(self.series),
+            dict(self.people),
         )
 
     def get_full_index(self) -> IndexSnapshot:

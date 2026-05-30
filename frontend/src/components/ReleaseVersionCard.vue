@@ -218,7 +218,7 @@ function normalizeQualityBadge(value: string): string {
 
 const hasDolbyVision = computed(() => {
   return (
-    props.torrent.has_dolby_vision === true ||
+    props.torrent.dovi === true ||
     hasAnyTag(
       dolbyVisionPattern,
       props.torrent.quality,
@@ -231,7 +231,7 @@ const hasDolbyVision = computed(() => {
 
 const hasDolbyAtmos = computed(() => {
   return (
-    props.torrent.has_dolby_atmos === true ||
+    props.torrent.atmos === true ||
     hasAnyTag(
       dolbyAtmosPattern,
       props.torrent.quality,
@@ -244,7 +244,7 @@ const hasDolbyAtmos = computed(() => {
 
 const hasHdr = computed(() => {
   return (
-    props.torrent.is_hdr === true ||
+    props.torrent.hdr === true ||
     hasAnyTag(
       hdrPattern,
       props.torrent.quality,

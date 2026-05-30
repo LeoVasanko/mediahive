@@ -35,9 +35,11 @@ Each active root gets an isolated `RootContext` managed by the `Supervisor`:
 
 ### Item IDs
 
-Every `Movie.id` and `Series.id` is namespaced with its `root_id`:
-- Format: `{root_id}:{content_hash}`
-- Old snapshots are auto-migrated on load: IDs lacking the prefix get it prepended.
+`root_id` is stored separately on each item.
+
+- `Movie.id` uses a slug built from the movie title and year, for example `spider-man-no-way-home-2021`.
+- `Series.id` uses a slug built from the series title, for example `lost`.
+- Legacy snapshot migrations are handled by `scripts/indexmigr.py`, not during app startup.
 
 ## API
 

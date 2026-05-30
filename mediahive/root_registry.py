@@ -95,9 +95,7 @@ class RootContext:
         self.error: str | None = None
 
         snapshot_path = root_path / ".mediahive" / "index.json"
-        self.store = IndexStore(
-            snapshot_path, media_root=root_path.as_posix(), root_id=root_id
-        )
+        self.store = IndexStore(snapshot_path)
 
         # Scanner is injected later by the supervisor
         self.scanner: object | None = None
@@ -170,9 +168,9 @@ class RootContext:
                 event = await self._events.get()
                 if isinstance(event, Upsert):
                     if event.kind == "movie":
-                        self.store.upsert_movie(event.item)
+                        self.store.upsert_movie(event.id, event.item, event.people)
                     else:
-                        self.store.upsert_series(event.item)
+                        self.store.upsert_series(event.id, event.item, event.people)
                 elif isinstance(event, Task):
                     self.store.broadcast_task(event.data)
             except asyncio.CancelledError:
@@ -231,9 +229,7 @@ class Supervisor:
                 continue
             movies.extend(ctx.store.movies.values())
             series.extend(ctx.store.series.values())
-            total_movie_versions += sum(
-                len(m.torrents) for m in ctx.store.movies.values()
-            )
+            total_movie_versions += sum(len(m.files) for m in ctx.store.movies.values())
             total_series_episodes += sum(
                 sum(len(season.episodes) for season in s.seasons)
                 for s in ctx.store.series.values()
@@ -242,7 +238,7 @@ class Supervisor:
         from datetime import datetime
 
         return {
-            "version": 7,
+            "v": 1,
             "generated_at": datetime.now().isoformat(),
             "stats": {
                 "total_movies": len(movies),

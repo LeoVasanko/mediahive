@@ -124,7 +124,7 @@
               >
                 <img
                   v-if="castMember.profile_path && !castMember.profile_path.startsWith('/')"
-                  :src="getCoverUrl(castMember.profile_path, item.root_id)"
+                  :src="getCastProfileUrl(castMember.profile_path)"
                   :alt="castMember.name"
                   class="cast-photo"
                 />
@@ -202,7 +202,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch, onMounted, onUnmounted, nextTick } from "vue"
-import type { CastMember, MediaItem, Movie, Series, Torrent } from "../types"
+import type { CastMember, MediaItem, Movie, MovieUi, Series, Torrent } from "../types"
 import {
   getCoverUrl,
   getVideoPreviewUrl,
@@ -499,7 +499,7 @@ function getShowreelSourceAttributes(path: string): VideoSourceAttributes {
 const movieVersions = computed((): Torrent[] => {
   if (props.item.type !== "movies") return []
   const movie = props.item.data as Movie
-  return sortTorrentsByPreference(Object.values(movie.torrents || {}))
+  return sortTorrentsByPreference(Object.values(movie.files || {}))
 })
 
 // Page backdrop background
@@ -583,6 +583,15 @@ function getCastPlaceholderUrl(gender?: CastMember["gender"]): string {
   return gender === "female" ? castPlaceholderFemaleUrl : castPlaceholderMaleUrl
 }
 
+function getCastProfileUrl(profilePath: string | null): string {
+  if (!profilePath) return ""
+  if (profilePath.includes("/")) {
+    return getCoverUrl(profilePath, props.item.root_id)
+  }
+  const castPath = `.mediahive/people/${profilePath}`
+  return getCoverUrl(castPath, props.item.root_id)
+}
+
 function formatRuntime(minutes: number): string {
   const hours = Math.floor(minutes / 60)
   const mins = minutes % 60
@@ -656,7 +665,7 @@ function handlePlayVersion(filePath: string | null) {
 function handleVersionContextMenu(event: MouseEvent, version: Torrent) {
   event.preventDefault()
   event.stopPropagation()
-  const rootId = version.root_id || ((props.item.data as Movie).root_id ?? props.item.root_id)
+  const rootId = version.root_id || ((props.item.data as MovieUi).root_id ?? props.item.root_id)
   versionActionMenu.value = {
     visible: true,
     x: event.clientX,
@@ -675,7 +684,7 @@ function handleVersionContextMenu(event: MouseEvent, version: Torrent) {
 
 function handleVersionShortcutKeydown(event: KeyboardEvent, version: Torrent) {
   if (!version.playable_file) return
-  const rootId = version.root_id || ((props.item.data as Movie).root_id ?? props.item.root_id)
+  const rootId = version.root_id || ((props.item.data as MovieUi).root_id ?? props.item.root_id)
   const key = event.key.toLowerCase()
   if (key === "e" && (event.metaKey || event.ctrlKey)) {
     event.preventDefault()
@@ -718,7 +727,7 @@ function handlePlay(filePath: string | null) {
 
 function handleVersionActivate(version: Torrent, event: MouseEvent | KeyboardEvent) {
   if (!version.playable_file) return
-  const rootId = version.root_id || ((props.item.data as Movie).root_id ?? props.item.root_id)
+  const rootId = version.root_id || ((props.item.data as MovieUi).root_id ?? props.item.root_id)
   if (event.altKey) {
     handleOpenFolder(version.playable_file, rootId)
     return

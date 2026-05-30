@@ -13,9 +13,10 @@ import httpx
 from aiopathlib import AsyncPath
 
 from mediahive.models.tmdb import (
-    CastMember,
+    CastCredit,
     EpisodeInfo,
     Info,
+    Person,
     SeasonInfo,
     SimilarMedia,
 )
@@ -371,7 +372,10 @@ async def _search_movie_with_fallbacks(title: str, year: int | None) -> dict | N
     return None
 
 
-async def fetch_movie_info(title: str, year: int | None = None) -> Info | None:
+async def fetch_movie_info(
+    title: str,
+    year: int | None = None,
+) -> tuple[Info, str | None, str | None, dict[int, Person]] | None:
     """Fetch comprehensive movie info from TMDb."""
     data = await _search_movie_with_fallbacks(title, year)
 
@@ -385,16 +389,19 @@ async def fetch_movie_info(title: str, year: int | None = None) -> Info | None:
     details = await fetch_movie_details(movie_id)
     if not details:
         # Fall back to basic info from search
-        return Info(
-            tmdb_id=movie_id,
-            title=result.get("title"),
-            original_title=result.get("original_title"),
-            rating=result.get("vote_average"),
-            vote_count=result.get("vote_count"),
-            overview=result.get("overview"),
-            poster_path=result.get("poster_path"),
-            backdrop_path=result.get("backdrop_path"),
-            release_date=result.get("release_date"),
+        return (
+            Info(
+                tmdb_id=movie_id,
+                title=result.get("title"),
+                original_title=result.get("original_title"),
+                rating=result.get("vote_average"),
+                vote_count=result.get("vote_count"),
+                overview=result.get("overview"),
+                release_date=result.get("release_date"),
+            ),
+            result.get("poster_path"),
+            result.get("backdrop_path"),
+            {},
         )
 
     # Extract genres
@@ -421,15 +428,22 @@ async def fetch_movie_info(title: str, year: int | None = None) -> Info | None:
     # Extract full cast
     credits_data = details.get("credits", {})
     cast_data = credits_data.get("cast", [])
-    cast = [
-        CastMember(
-            name=c["name"],
-            character=c.get("character", ""),
-            profile_path=c.get("profile_path"),
-            gender=_map_person_gender(c.get("gender")),
+    cast: list[CastCredit] = []
+    people: dict[int, Person] = {}
+    for c in cast_data:
+        person_id = c.get("id")
+        cast.append(
+            CastCredit(
+                character=c.get("character", "") or None,
+                id=person_id if isinstance(person_id, int) else None,
+            )
         )
-        for c in cast_data
-    ]
+        if isinstance(person_id, int):
+            people[person_id] = Person(
+                name=c.get("name") or "",
+                profile_path=c.get("profile_path"),
+                gender=_map_person_gender(c.get("gender")),
+            )
 
     # Extract director from crew
     crew = credits_data.get("crew", [])
@@ -438,30 +452,30 @@ async def fetch_movie_info(title: str, year: int | None = None) -> Info | None:
 
     # Extract similar movies (limit to 10)
     similar_data = details.get("similar", {}).get("results", [])[:10]
-    similar = [
-        SimilarMedia(id=s["id"], title=s["title"], poster_path=s.get("poster_path"))
-        for s in similar_data
-    ]
+    similar = [SimilarMedia(id=s["id"], title=s["title"]) for s in similar_data]
 
-    return Info(
-        tmdb_id=movie_id,
-        title=details.get("title"),
-        original_title=details.get("original_title"),
-        alternative_titles=alternative_titles,
-        rating=details.get("vote_average"),
-        vote_count=details.get("vote_count"),
-        overview=details.get("overview"),
-        genres=genres or None,
-        release_date=details.get("release_date"),
-        runtime=details.get("runtime"),
-        status=details.get("status"),
-        tagline=details.get("tagline"),
-        poster_path=details.get("poster_path"),
-        backdrop_path=details.get("backdrop_path"),
-        similar=similar or None,
-        keywords=keywords or None,
-        cast=cast or None,
-        director=director,
+    return (
+        Info(
+            tmdb_id=movie_id,
+            title=details.get("title"),
+            original_title=details.get("original_title"),
+            alternative_titles=alternative_titles,
+            rating=details.get("vote_average"),
+            vote_count=details.get("vote_count"),
+            overview=details.get("overview"),
+            genres=genres or None,
+            release_date=details.get("release_date"),
+            runtime=details.get("runtime"),
+            status=details.get("status"),
+            tagline=details.get("tagline"),
+            similar=similar or None,
+            keywords=keywords or None,
+            cast=cast or None,
+            director=director,
+        ),
+        details.get("poster_path"),
+        details.get("backdrop_path"),
+        people,
     )
 
 
@@ -487,7 +501,9 @@ async def _search_series_with_fallbacks(title: str) -> dict | None:
     return None
 
 
-async def fetch_series_info(title: str) -> Info | None:
+async def fetch_series_info(
+    title: str,
+) -> tuple[Info, str | None, str | None, dict[int, Person]] | None:
     """Fetch comprehensive TV series info from TMDb."""
     data = await _search_series_with_fallbacks(title)
 
@@ -501,15 +517,18 @@ async def fetch_series_info(title: str) -> Info | None:
     details = await fetch_series_details(series_id)
     if not details:
         # Fall back to basic info from search
-        return Info(
-            tmdb_id=series_id,
-            title=result.get("name"),
-            original_title=result.get("original_name"),
-            rating=result.get("vote_average"),
-            vote_count=result.get("vote_count"),
-            overview=result.get("overview"),
-            poster_path=result.get("poster_path"),
-            backdrop_path=result.get("backdrop_path"),
+        return (
+            Info(
+                tmdb_id=series_id,
+                title=result.get("name"),
+                original_title=result.get("original_name"),
+                rating=result.get("vote_average"),
+                vote_count=result.get("vote_count"),
+                overview=result.get("overview"),
+            ),
+            result.get("poster_path"),
+            result.get("backdrop_path"),
+            {},
         )
 
     # Extract genres
@@ -522,15 +541,22 @@ async def fetch_series_info(title: str) -> Info | None:
     # Extract full cast
     credits_data = details.get("credits", {})
     cast_data = credits_data.get("cast", [])
-    cast = [
-        CastMember(
-            name=c["name"],
-            character=c.get("character", ""),
-            profile_path=c.get("profile_path"),
-            gender=_map_person_gender(c.get("gender")),
+    cast: list[CastCredit] = []
+    people: dict[int, Person] = {}
+    for c in cast_data:
+        person_id = c.get("id")
+        cast.append(
+            CastCredit(
+                character=c.get("character", "") or None,
+                id=person_id if isinstance(person_id, int) else None,
+            )
         )
-        for c in cast_data
-    ]
+        if isinstance(person_id, int):
+            people[person_id] = Person(
+                name=c.get("name") or "",
+                profile_path=c.get("profile_path"),
+                gender=_map_person_gender(c.get("gender")),
+            )
 
     # Extract creators
     creators = [c["name"] for c in details.get("created_by", [])]
@@ -540,32 +566,32 @@ async def fetch_series_info(title: str) -> Info | None:
 
     # Extract similar series (limit to 10)
     similar_data = details.get("similar", {}).get("results", [])[:10]
-    similar = [
-        SimilarMedia(id=s["id"], title=s["name"], poster_path=s.get("poster_path"))
-        for s in similar_data
-    ]
+    similar = [SimilarMedia(id=s["id"], title=s["name"]) for s in similar_data]
 
     # Get first air date
     first_air_date = details.get("first_air_date")
 
-    return Info(
-        tmdb_id=series_id,
-        title=details.get("name"),
-        original_title=details.get("original_name"),
-        rating=details.get("vote_average"),
-        vote_count=details.get("vote_count"),
-        overview=details.get("overview"),
-        genres=genres or None,
-        release_date=first_air_date,
-        status=details.get("status"),
-        tagline=details.get("tagline"),
-        poster_path=details.get("poster_path"),
-        backdrop_path=details.get("backdrop_path"),
-        similar=similar or None,
-        keywords=keywords or None,
-        cast=cast or None,
-        creators=creators or None,
-        number_of_seasons=details.get("number_of_seasons"),
-        number_of_episodes=details.get("number_of_episodes"),
-        networks=networks or None,
+    return (
+        Info(
+            tmdb_id=series_id,
+            title=details.get("name"),
+            original_title=details.get("original_name"),
+            rating=details.get("vote_average"),
+            vote_count=details.get("vote_count"),
+            overview=details.get("overview"),
+            genres=genres or None,
+            release_date=first_air_date,
+            status=details.get("status"),
+            tagline=details.get("tagline"),
+            similar=similar or None,
+            keywords=keywords or None,
+            cast=cast or None,
+            creators=creators or None,
+            number_of_seasons=details.get("number_of_seasons"),
+            number_of_episodes=details.get("number_of_episodes"),
+            networks=networks or None,
+        ),
+        details.get("poster_path"),
+        details.get("backdrop_path"),
+        people,
     )

@@ -1,7 +1,9 @@
 import { shallowRef, readonly, onUnmounted } from "vue"
 import type {
   Movie,
+  MovieUi,
   Series,
+  SeriesUi,
   Episode,
   Season,
   Torrent,
@@ -13,8 +15,8 @@ import type {
 interface RootState {
   rootId: string
   ws: WebSocket | null
-  movieMap: Map<string, Movie>
-  seriesMap: Map<string, Series>
+  movieMap: Map<string, MovieUi>
+  seriesMap: Map<string, SeriesUi>
   connected: boolean
   initialized: boolean
   pendingMessages: WsMessage[]
@@ -79,18 +81,33 @@ export function useMediaWebSocket() {
     else if (res.includes("720") || res === "hd") score += 60
     else if (res.includes("480") || res === "sd") score += 40
     else if (res.includes("360")) score += 20
-    if (t.has_dolby_vision) score += 15
-    if (t.is_hdr) score += 10
-    if (t.has_dolby_atmos) score += 5
+    if (t.dovi) score += 15
+    if (t.hdr) score += 10
+    if (t.atmos) score += 5
     return score
   }
 
-  function annotateTorrents(
-    torrents: { [key: string]: Torrent },
+  function expandPlayablePath(fileKey: string, playableFile: string | null): string | null {
+    if (!playableFile) return fileKey
+    if (playableFile.startsWith("concat:") || playableFile.includes("://")) return playableFile
+    if (playableFile.startsWith(`${fileKey}/`)) return playableFile
+    if (playableFile.startsWith("/")) return playableFile.replace(/^\/+/, "")
+    return `${fileKey}/${playableFile}`
+  }
+
+  function annotateFiles(
+    files: { [key: string]: Torrent },
     rootId: string | null,
   ): { [key: string]: Torrent } {
     return Object.fromEntries(
-      Object.entries(torrents || {}).map(([k, t]) => [k, { ...t, root_id: t.root_id || rootId }]),
+      Object.entries(files || {}).map(([k, t]) => [
+        k,
+        {
+          ...t,
+          playable_file: expandPlayablePath(k, t.playable_file || null),
+          root_id: t.root_id || rootId,
+        },
+      ]),
     )
   }
 
@@ -112,13 +129,95 @@ export function useMediaWebSocket() {
     return Object.fromEntries(sorted)
   }
 
-  function mergeMovies(a: Movie, b: Movie): Movie {
-    const torrentsA = annotateTorrents(a.torrents, a.root_id)
-    const torrentsB = annotateTorrents(b.torrents, b.root_id)
+  function withMovieIdentity(id: string, movie: Movie, rootId: string): MovieUi {
+    return { ...normalizeMovie(movie), id, root_id: rootId }
+  }
+
+  function withSeriesIdentity(id: string, series: Series, rootId: string): SeriesUi {
+    return { ...normalizeSeries(series), id, root_id: rootId }
+  }
+
+  function normalizeCastMember(member: unknown): {
+    name: string
+    character: string | null
+    profile_path: string | null
+    gender: string | null
+    id: number | null
+  } {
+    if (Array.isArray(member)) {
+      return {
+        name: typeof member[0] === "string" ? member[0] : "",
+        character: typeof member[1] === "string" ? member[1] : null,
+        profile_path: typeof member[2] === "string" ? member[2] : null,
+        gender: typeof member[3] === "string" ? member[3] : null,
+        id: typeof member[4] === "number" ? member[4] : null,
+      }
+    }
+    const obj = member as {
+      name?: unknown
+      character?: unknown
+      profile_path?: unknown
+      gender?: unknown
+      id?: unknown
+    } | null
+    return {
+      name: typeof obj?.name === "string" ? obj.name : "",
+      character: typeof obj?.character === "string" ? obj.character : null,
+      profile_path: typeof obj?.profile_path === "string" ? obj.profile_path : null,
+      gender: typeof obj?.gender === "string" ? obj.gender : null,
+      id: typeof obj?.id === "number" ? obj.id : null,
+    }
+  }
+
+  function normalizeSimilarMember(member: unknown): { id: number; title: string } {
+    if (Array.isArray(member)) {
+      return {
+        id: typeof member[0] === "number" ? member[0] : 0,
+        title: typeof member[1] === "string" ? member[1] : "",
+      }
+    }
+    const obj = member as { id?: unknown; title?: unknown } | null
+    return {
+      id: typeof obj?.id === "number" ? obj.id : 0,
+      title: typeof obj?.title === "string" ? obj.title : "",
+    }
+  }
+
+  function normalizeInfo<T extends { cast?: unknown; similar?: unknown }>(info: T | null): T | null {
+    if (!info) return info
+    let next: T = info
+    if (Array.isArray((info as { cast?: unknown }).cast)) {
+      const cast = ((info as { cast?: unknown[] }).cast || []).map(normalizeCastMember)
+      next = { ...next, cast } as T
+    }
+    if (Array.isArray((info as { similar?: unknown }).similar)) {
+      const similar = ((info as { similar?: unknown[] }).similar || []).map(normalizeSimilarMember)
+      next = { ...next, similar } as T
+    }
+    return next
+  }
+
+  function normalizeMovie(movie: Movie): Movie {
+    return {
+      ...movie,
+      info: normalizeInfo(movie.info),
+    }
+  }
+
+  function normalizeSeries(series: Series): Series {
+    return {
+      ...series,
+      info: normalizeInfo(series.info),
+    }
+  }
+
+  function mergeMovies(a: MovieUi, b: MovieUi): MovieUi {
+    const filesA = annotateFiles(a.files, a.root_id)
+    const filesB = annotateFiles(b.files, b.root_id)
     return {
       ...a,
       id: getContentHash(a.id),
-      torrents: mergeTorrentDicts(torrentsA, torrentsB),
+      files: mergeTorrentDicts(filesA, filesB),
       info: a.info || b.info,
       cover_path: a.cover_path || b.cover_path,
       backdrop_path: a.backdrop_path || b.backdrop_path,
@@ -135,11 +234,11 @@ export function useMediaWebSocket() {
     rootIdA: string | null,
     rootIdB: string | null,
   ): Episode {
-    const torrentsA = annotateTorrents(a.torrents, rootIdA)
-    const torrentsB = annotateTorrents(b.torrents, rootIdB)
+    const filesA = annotateFiles(a.files, rootIdA)
+    const filesB = annotateFiles(b.files, rootIdB)
     return {
       ...a,
-      torrents: mergeTorrentDicts(torrentsA, torrentsB),
+      files: mergeTorrentDicts(filesA, filesB),
       reel_image: a.reel_image || b.reel_image,
       reel_sources: a.reel_sources?.length ? a.reel_sources : b.reel_sources,
     }
@@ -162,7 +261,7 @@ export function useMediaWebSocket() {
       } else {
         episodeMap.set(ep.episode_number, {
           ...ep,
-          torrents: annotateTorrents(ep.torrents, rootIdB),
+          files: annotateFiles(ep.files, rootIdB),
         })
       }
     }
@@ -173,14 +272,14 @@ export function useMediaWebSocket() {
     }
   }
 
-  function mergeSeries(a: Series, b: Series): Series {
+  function mergeSeries(a: SeriesUi, b: SeriesUi): SeriesUi {
     const seasonMap = new Map<number, Season>()
     for (const season of a.seasons || []) {
       seasonMap.set(season.season_number, {
         ...season,
         episodes: season.episodes.map((ep) => ({
           ...ep,
-          torrents: annotateTorrents(ep.torrents, a.root_id),
+          files: annotateFiles(ep.files, a.root_id),
         })),
       })
     }
@@ -193,7 +292,7 @@ export function useMediaWebSocket() {
           ...season,
           episodes: season.episodes.map((ep) => ({
             ...ep,
-            torrents: annotateTorrents(ep.torrents, b.root_id),
+            files: annotateFiles(ep.files, b.root_id),
           })),
         })
       }
@@ -208,7 +307,7 @@ export function useMediaWebSocket() {
     }
   }
 
-  function mergeItemsByHash<T extends Movie | Series>(items: T[], mergeFn: (a: T, b: T) => T): T[] {
+  function mergeItemsByHash<T extends MovieUi | SeriesUi>(items: T[], mergeFn: (a: T, b: T) => T): T[] {
     const map = new Map<string, T[]>()
     for (const item of items) {
       const hash = getContentHash(item.id)
@@ -232,8 +331,8 @@ export function useMediaWebSocket() {
   }
 
   function buildIndex(): MediaIndex {
-    const movies: Movie[] = []
-    const series: Series[] = []
+    const movies: MovieUi[] = []
+    const series: SeriesUi[] = []
     for (const state of roots.value.values()) {
       movies.push(...state.movieMap.values())
       series.push(...state.seriesMap.values())
@@ -241,12 +340,8 @@ export function useMediaWebSocket() {
     const mergedMovies = mergeItemsByHash(movies, mergeMovies)
     const mergedSeries = mergeItemsByHash(series, mergeSeries)
     return {
-      version: 0,
+      v: 1,
       generated_at: new Date().toISOString(),
-      stats: {
-        total_movies: mergedMovies.length,
-        total_series: mergedSeries.length,
-      },
       movies: mergedMovies,
       series: mergedSeries,
     }
@@ -283,8 +378,12 @@ export function useMediaWebSocket() {
       case "init": {
         state.movieMap.clear()
         state.seriesMap.clear()
-        for (const m of msg.data.movies) state.movieMap.set(m.id, m)
-        for (const s of msg.data.series) state.seriesMap.set(s.id, s)
+        for (const [id, m] of Object.entries(msg.data.movies || {})) {
+          state.movieMap.set(id, withMovieIdentity(id, m, state.rootId))
+        }
+        for (const [id, s] of Object.entries(msg.data.series || {})) {
+          state.seriesMap.set(id, withSeriesIdentity(id, s, state.rootId))
+        }
         state.initialized = true
 
         // Replay any deltas that arrived before init completed.
@@ -304,9 +403,15 @@ export function useMediaWebSocket() {
       }
       case "upsert": {
         if (msg.kind === "movie") {
-          state.movieMap.set(msg.item.id, msg.item as Movie)
+          state.movieMap.set(
+            msg.id,
+            withMovieIdentity(msg.id, msg.item as Movie, state.rootId),
+          )
         } else {
-          state.seriesMap.set(msg.item.id, msg.item as Series)
+          state.seriesMap.set(
+            msg.id,
+            withSeriesIdentity(msg.id, msg.item as Series, state.rootId),
+          )
         }
         updateMergedState()
         break

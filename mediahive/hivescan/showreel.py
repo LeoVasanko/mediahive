@@ -414,10 +414,11 @@ class MediaProbeInfo:
     duration: float | None = None
     width: int | None = None
     height: int | None = None
-    is_hdr: bool = False
+    hdr: bool = False
     dovi_profile: int | None = None
-    has_dolby_vision: bool = False
-    has_dolby_atmos: bool = False
+    dovi: bool = False
+    atmos: bool = False
+    hdr10plus: bool = False
     resolution: str | None = None
     audio_languages: list[str] | None = None
     subtitle_languages: list[str] | None = None
@@ -478,10 +479,17 @@ async def probe_media_info(video_path: str) -> MediaProbeInfo:
                 info.width, info.height
             )
 
-    info.is_hdr = (
+    info.hdr = (
         "smpte2084" in lower_text
         or "arib-std-b67" in lower_text
         or "bt2020" in lower_text
+    )
+    info.hdr10plus = (
+        "hdr10+" in lower_text
+        or "hdr10plus" in lower_text
+        or "smpte st 2094" in lower_text
+        or "smpte-st-2094" in lower_text
+        or "dynamic hdr" in lower_text
     )
 
     dovi_match = _dovi_profile_re.search(text)
@@ -489,7 +497,7 @@ async def probe_media_info(video_path: str) -> MediaProbeInfo:
         info.dovi_profile = int(dovi_match.group(1))
     elif "dvhe" in lower_text or "dvh1" in lower_text or "dav1" in lower_text:
         info.dovi_profile = 7
-    info.has_dolby_vision = info.dovi_profile is not None
+    info.dovi = info.dovi_profile is not None
 
     audio_languages: list[str] = []
     for line in text.splitlines():
@@ -502,7 +510,7 @@ async def probe_media_info(video_path: str) -> MediaProbeInfo:
         if lang and lang not in audio_languages:
             audio_languages.append(lang)
         if "atmos" in line.lower():
-            info.has_dolby_atmos = True
+            info.atmos = True
     info.audio_languages = audio_languages or None
 
     subtitle_languages: list[str] = []
@@ -551,7 +559,7 @@ async def is_hdr_video(video_path: str) -> bool:
     Returns True if the video has HDR metadata (bt2020, SMPTE ST 2084, etc.)
     """
     try:
-        return (await probe_media_info(video_path)).is_hdr
+        return (await probe_media_info(video_path)).hdr
     except OSError, ValueError, RuntimeError:
         return False
 

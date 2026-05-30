@@ -7,12 +7,18 @@ export interface CastMember {
   character?: string | null
   profile_path: string | null
   gender?: CastGender | null
+  id?: number | null
+}
+
+export interface Person {
+  name: string
+  profile_path: string | null
+  gender?: CastGender | null
 }
 
 export interface SimilarMedia {
   id: number
   title: string
-  poster_path: string | null
 }
 
 export interface Info {
@@ -28,8 +34,6 @@ export interface Info {
   runtime: number | null
   status: string | null
   tagline: string | null
-  poster_path: string | null
-  backdrop_path: string | null
   similar: SimilarMedia[] | null
   keywords: string[] | null
   cast: CastMember[] | null
@@ -50,9 +54,10 @@ export interface Torrent {
   audio: string | null
   audio_languages: string[] | null
   subtitle_languages: string[] | null
-  is_hdr: boolean
-  has_dolby_vision: boolean
-  has_dolby_atmos: boolean
+  hdr?: boolean
+  dovi?: boolean
+  atmos?: boolean
+  hdr10plus?: boolean
   encoder: string | null
   size: number | null
   added_at: number | null
@@ -60,7 +65,6 @@ export interface Torrent {
 }
 
 export interface Movie {
-  id: string
   title: string | null
   info: Info | null
   year: number | null
@@ -69,8 +73,7 @@ export interface Movie {
   backdrop_path: string | null
   showreel_images: string[] | null
   showreel_source_sets: string[][] | null
-  torrents: { [key: string]: Torrent }
-  root_id: string | null
+  files: { [key: string]: Torrent }
 }
 
 export interface Episode {
@@ -84,7 +87,7 @@ export interface Episode {
   director: string | null
   reel_image: string | null
   reel_sources: string[] | null
-  torrents: { [key: string]: Torrent }
+  files: { [key: string]: Torrent }
 }
 
 export interface Season {
@@ -98,7 +101,6 @@ export interface Season {
 }
 
 export interface Series {
-  id: string
   title: string | null
   info: Info | null
   alternative_titles: string[] | null
@@ -106,6 +108,15 @@ export interface Series {
   cover_path: string | null
   backdrop_path: string | null
   seasons: Season[]
+}
+
+export interface MovieUi extends Movie {
+  id: string
+  root_id: string | null
+}
+
+export interface SeriesUi extends Series {
+  id: string
   root_id: string | null
 }
 
@@ -117,11 +128,10 @@ export interface MediaStats {
 }
 
 export interface MediaIndex {
-  version: number
+  v: number
   generated_at: string
-  stats: MediaStats
-  movies: Movie[]
-  series: Series[]
+  movies: MovieUi[]
+  series: SeriesUi[]
 }
 
 export type MediaType = "movies" | "series" | "episode"
@@ -167,7 +177,7 @@ export interface MediaItem {
 // Episode with parent series info for standalone display
 export interface EpisodeWithSeries {
   episode: Episode
-  series: Series
+  series: SeriesUi
   seasonNumber: number
 }
 
@@ -182,13 +192,19 @@ export interface TaskInfo {
 // WebSocket message types (matching server msgspec tagged structs)
 export interface WsInitMessage {
   type: "init"
-  data: { movies: Movie[]; series: Series[] }
+  data: {
+    movies: Record<string, Movie>
+    series: Record<string, Series>
+    people?: Record<string, Person> | Record<number, Person>
+  }
 }
 
 export interface WsUpsertMessage {
   type: "upsert"
   kind: "movie" | "series"
+  id: string
   item: Movie | Series
+  people?: Record<string, Person> | Record<number, Person>
 }
 
 export interface WsRemoveMessage {

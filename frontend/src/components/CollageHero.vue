@@ -570,7 +570,7 @@ function getRatingClass(item: MediaItem): string {
 function getResolution(item: MediaItem): string | null {
   if (item.type === "movies") {
     const movie = item.data as Movie
-    return Object.values(movie.torrents || {})[0]?.resolution ?? null
+    return Object.values(movie.files || {})[0]?.resolution ?? null
   }
   return null
 }

@@ -1,7 +1,9 @@
 """Utility functions for paths, sizes, and timestamps."""
 
 import os
+import re
 import time
+import unicodedata
 from pathlib import Path
 
 from aiopathlib import AsyncPath
@@ -29,6 +31,25 @@ RESOLUTION_PRIORITY = {
     "576p": 1,
     "480p": 1,
 }
+
+
+def build_movie_id(title: str | None, year: int | None) -> str:
+    """Build a readable movie ID slug from the title and year."""
+    normalized_title = unicodedata.normalize("NFKD", title or "")
+    ascii_title = normalized_title.encode("ascii", "ignore").decode("ascii")
+    slug = re.sub(r"[^a-z0-9]+", "-", ascii_title.lower()).strip("-")
+    slug = slug or "movie"
+    if year:
+        return f"{slug}-{year}"
+    return slug
+
+
+def build_series_id(title: str | None) -> str:
+    """Build a readable series ID slug from the title."""
+    normalized_title = unicodedata.normalize("NFKD", title or "")
+    ascii_title = normalized_title.encode("ascii", "ignore").decode("ascii")
+    slug = re.sub(r"[^a-z0-9]+", "-", ascii_title.lower()).strip("-")
+    return slug or "series"
 
 
 def classify_resolution_from_dimensions(
@@ -239,10 +260,9 @@ def sanitize_filename(name: str) -> str:
 
 def get_media_folder_name(title: str, year: int | None, media_type: str) -> str:
     """Get the folder name for a media item."""
-    sanitized_title = sanitize_filename(title)
-    if media_type == "movie" and year:
-        return f"{sanitized_title} ({year})"
-    return sanitized_title
+    if media_type == "movie":
+        return build_movie_id(title, year)
+    return build_series_id(title)
 
 
 def get_media_folder_path(

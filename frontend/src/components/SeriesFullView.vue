@@ -148,9 +148,9 @@
         <div class="context-menu-header">
           {{ contextMenu.episode.name || `Episode ${contextMenu.episode.episode_number}` }}
         </div>
-        <div v-if="Object.values(contextMenu.episode.torrents || {}).length > 0">
+        <div v-if="Object.values(contextMenu.episode.files || {}).length > 0">
           <ReleaseVersionCard
-            v-for="(torrent, index) in sortTorrentsByPreference(Object.values(contextMenu.episode.torrents || {}))"
+            v-for="(torrent, index) in sortTorrentsByPreference(Object.values(contextMenu.episode.files || {}))"
             :key="index"
             class="context-menu-version"
             :torrent="torrent"
@@ -556,8 +556,8 @@ function handleEpisodeHover(key: string, isEntering: boolean) {
 
 // Backdrop URL - only use backdrop_path, fall back to collage (handled in template)
 const backdropUrl = computed(() => {
-  if (props.series.info?.backdrop_path) {
-    return getCoverUrl(props.series.info.backdrop_path, props.series.root_id)
+  if (props.series.backdrop_path) {
+    return getCoverUrl(props.series.backdrop_path, props.series.root_id)
   }
   return null
 })
@@ -643,7 +643,7 @@ function truncate(text: string, maxLength: number): string {
 
 // Handle play
 function handlePlay(episode: Episode) {
-  const playableFile = Object.values(episode.torrents || {})[0]?.playable_file
+  const playableFile = Object.values(episode.files || {})[0]?.playable_file
   if (playableFile) {
     emit("play", playableFile)
   }

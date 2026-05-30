@@ -2,8 +2,8 @@
 // This file is loaded as a Web Worker, not imported as a module.
 
 import type {
-  Movie,
-  Series,
+  MovieUi,
+  SeriesUi,
   MatchedPerson,
   MatchedEpisode,
   SearchMatchInfo,
@@ -15,8 +15,8 @@ import type {
 
 export interface SearchIndexMessage {
   type: "index"
-  movies: Movie[]
-  series: Series[]
+  movies: MovieUi[]
+  series: SeriesUi[]
 }
 
 export interface SearchQueryMessage {
@@ -55,8 +55,8 @@ export interface SearchResponseMessage {
 // Worker state
 // ---------------------------------------------------------------------------
 
-let movies: Movie[] = []
-let series: Series[] = []
+let movies: MovieUi[] = []
+let series: SeriesUi[] = []
 
 // ---------------------------------------------------------------------------
 // Normalization helpers (mirrored from App.vue)
@@ -204,9 +204,9 @@ function getBestScore(query: string, ...fields: (string | null | undefined)[]): 
   return bestScore
 }
 
-function getMoviePathScore(movie: Movie, query: string): number {
+function getMoviePathScore(movie: MovieUi, query: string): number {
   const torrentFields: (string | null | undefined)[] = []
-  for (const torrent of Object.values(movie.torrents || {})) {
+  for (const torrent of Object.values(movie.files || {})) {
     torrentFields.push(torrent.title, torrent.playable_file)
   }
   let bestScore = 0
@@ -218,11 +218,11 @@ function getMoviePathScore(movie: Movie, query: string): number {
   return bestScore
 }
 
-function getSeriesPathScore(series: Series, query: string): number {
+function getSeriesPathScore(series: SeriesUi, query: string): number {
   const torrentFields: (string | null | undefined)[] = []
   for (const season of series.seasons || []) {
     for (const episode of season.episodes || []) {
-      for (const torrent of Object.values(episode.torrents || {})) {
+      for (const torrent of Object.values(episode.files || {})) {
         torrentFields.push(torrent.title, torrent.playable_file)
       }
     }
@@ -498,9 +498,9 @@ function formatMatchedPeople(people: PersonMatch[]): MatchedPerson[] {
 // MediaItem conversion (lightweight, without data payload)
 // ---------------------------------------------------------------------------
 
-function movieToSearchResult(movie: Movie): SearchResultItem {
-  const torrents = Object.values(movie.torrents || {})
-  const resolution = torrents.length > 0 ? torrents[0].resolution : null
+function movieToSearchResult(movie: MovieUi): SearchResultItem {
+  const files = Object.values(movie.files || {})
+  const resolution = files.length > 0 ? files[0].resolution : null
   return {
     id: movie.id,
     title: movie.title || "Unknown",
@@ -514,7 +514,7 @@ function movieToSearchResult(movie: Movie): SearchResultItem {
   }
 }
 
-function seriesToSearchResult(series: Series): SearchResultItem {
+function seriesToSearchResult(series: SeriesUi): SearchResultItem {
   const reelImages: string[] = []
   const reelSourceSets: string[][] = []
   for (const season of series.seasons || []) {

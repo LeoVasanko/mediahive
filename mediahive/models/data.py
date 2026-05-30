@@ -7,14 +7,14 @@ from __future__ import annotations
 
 import msgspec
 
-from .tmdb import Info
+from .tmdb import Info, Person
 
 # ---------------------------------------------------------------------------
 # Index item types (the state stored in IndexStore, sent over WS/API)
 # ---------------------------------------------------------------------------
 
 
-class Torrent(msgspec.Struct):
+class Torrent(msgspec.Struct, omit_defaults=True):
     """A torrent file, either for a movie or an episode."""
 
     title: str | None = None
@@ -26,9 +26,10 @@ class Torrent(msgspec.Struct):
     audio: str | None = None
     audio_languages: list[str] | None = None
     subtitle_languages: list[str] | None = None
-    is_hdr: bool = False
-    has_dolby_vision: bool = False
-    has_dolby_atmos: bool = False
+    hdr: bool = False
+    dovi: bool = False
+    atmos: bool = False
+    hdr10plus: bool = False
     encoder: str | None = None
     size: int | None = None
     added_at: int | None = None
@@ -47,7 +48,7 @@ class Episode(msgspec.Struct):
     director: str | None = None
     reel_image: str | None = None
     reel_sources: list[str] | None = None
-    torrents: dict[str, Torrent] = {}
+    files: dict[str, Torrent] = {}
 
 
 class Season(msgspec.Struct):
@@ -65,7 +66,6 @@ class Season(msgspec.Struct):
 class Movie(msgspec.Struct):
     """A movie in the index (one or more versions/releases)."""
 
-    id: str
     title: str | None = None
     info: Info | None = None
     year: int | None = None
@@ -74,14 +74,12 @@ class Movie(msgspec.Struct):
     backdrop_path: str | None = None
     showreel_images: list[str] | None = None
     showreel_source_sets: list[list[str]] | None = None
-    torrents: dict[str, Torrent] = {}
-    root_id: str | None = None
+    files: dict[str, Torrent] = {}
 
 
 class Series(msgspec.Struct):
     """A TV series in the index."""
 
-    id: str
     title: str | None = None
     info: Info | None = None
     alternative_titles: list[str] | None = None
@@ -89,37 +87,23 @@ class Series(msgspec.Struct):
     cover_path: str | None = None
     backdrop_path: str | None = None
     seasons: list[Season] = []
-    root_id: str | None = None
 
 
 # ---------------------------------------------------------------------------
 # Snapshot (disk format for index.json)
 # ---------------------------------------------------------------------------
 
-
-class MediaStats(msgspec.Struct):
-    """Aggregate counts for the index snapshot."""
-
-    total_movies: int = 0
-    total_movie_versions: int = 0
-    total_series: int = 0
-    total_series_episodes: int = 0
+INDEX_SNAPSHOT_VERSION = 1
 
 
 class IndexSnapshot(msgspec.Struct):
     """On-disk recovery snapshot of the full index."""
 
-    version: int = 7
+    v: int = INDEX_SNAPSHOT_VERSION
     generated_at: str = ""
-    media_root: str | None = None
-    stats: MediaStats = msgspec.UNSET  # type: ignore[assignment]
-    movies: list[Movie] = []
-    series: list[Series] = []
-
-    def __post_init__(self) -> None:
-        """Populate default stats when omitted from decoded payload."""
-        if self.stats is msgspec.UNSET:
-            self.stats = MediaStats()
+    movies: dict[str, Movie] = {}
+    series: dict[str, Series] = {}
+    people: dict[int, Person] = {}
 
 
 class TaskInfo(msgspec.Struct):

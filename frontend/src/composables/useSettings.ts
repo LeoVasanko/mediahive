@@ -103,9 +103,9 @@ export function sortTorrentsByPreference(torrents: Torrent[]): Torrent[] {
 
   function detectHdrProfile(t: Torrent): HdrProfile {
     const text = [t.title, t.quality, t.codec, t.audio].filter(Boolean).join(" ")
-    const hasDovi = t.has_dolby_vision || /dolby\s*vision|dovi|\bdv\b/i.test(text)
-    const hasHdr10Plus = /hdr10\+|hdr10plus/i.test(text)
-    const hasAnyHdr = t.is_hdr || hasHdr10Plus || hasDovi || /\bhdr\b/i.test(text)
+    const hasDovi = t.dovi || /dolby\s*vision|dovi|\bdv\b/i.test(text)
+    const hasHdr10Plus = t.hdr10plus || /hdr10\+|hdr10plus/i.test(text)
+    const hasAnyHdr = t.hdr || hasHdr10Plus || hasDovi || /\bhdr\b/i.test(text)
 
     if (hasDovi) return "dovi"
     if (hasHdr10Plus) return "hdr10plus"

@@ -10,6 +10,7 @@ from fastapi.responses import Response
 
 from .data import Movie, Series
 from .events import Remove, ScanEvent, Task, Upsert
+from .tmdb import Person
 
 # ---------------------------------------------------------------------------
 # WebSocket message types
@@ -19,8 +20,9 @@ from .events import Remove, ScanEvent, Task, Upsert
 class WsInitData(msgspec.Struct):
     """Payload of the init message."""
 
-    movies: list[Movie]
-    series: list[Series]
+    movies: dict[str, Movie]
+    series: dict[str, Series]
+    people: dict[int, Person]
 
 
 class WsInit(msgspec.Struct, tag="init"):

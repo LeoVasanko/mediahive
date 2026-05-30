@@ -12,21 +12,26 @@ import msgspec
 # ---------------------------------------------------------------------------
 
 
-class CastMember(msgspec.Struct):
-    """Actor/crew member."""
+class CastCredit(msgspec.Struct, array_like=True):
+    """Cast reference embedded in media info (character + person id)."""
+
+    character: str | None = None
+    id: int | None = None
+
+
+class Person(msgspec.Struct, array_like=True):
+    """Deduplicated person payload stored in top-level people map."""
 
     name: str
-    character: str | None = None
     profile_path: str | None = None
     gender: str | None = None
 
 
-class SimilarMedia(msgspec.Struct):
+class SimilarMedia(msgspec.Struct, array_like=True):
     """Pointer to a similar movie/series on TMDb."""
 
     id: int
     title: str
-    poster_path: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -76,11 +81,9 @@ class Info(msgspec.Struct):
     runtime: int | None = None
     status: str | None = None
     tagline: str | None = None
-    poster_path: str | None = None
-    backdrop_path: str | None = None
     similar: list[SimilarMedia] | None = None
     keywords: list[str] | None = None
-    cast: list[CastMember] | None = None
+    cast: list[CastCredit] | None = None
     director: str | None = None
     creators: list[str] | None = None
     number_of_seasons: int | None = None

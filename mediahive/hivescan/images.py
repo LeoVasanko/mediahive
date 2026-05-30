@@ -1,11 +1,12 @@
 """TMDb image downloading functions."""
 
+import re
 from pathlib import Path
 
 import httpx
 from aiopathlib import AsyncPath
 
-from mediahive.hivescan.utils import get_media_folder_path, sanitize_filename
+from mediahive.hivescan.utils import get_media_folder_path
 
 # TMDb image configuration
 TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p"
@@ -124,20 +125,28 @@ async def download_cast_profile(
     profile_path: str,
     media_folder: Path,
     cast_name: str,
-    cast_index: int,
+    person_id: int | None,
     size: str = DEFAULT_PROFILE_SIZE,
 ) -> str | None:
     """Download a cached cast profile image from TMDb."""
     if not profile_path:
         return None
 
-    cast_dir = media_folder / "cast"
-    safe_name = sanitize_filename(cast_name) or f"cast-{cast_index + 1:02d}"
-    output_path = cast_dir / f"{cast_index + 1:02d}-{safe_name}.jpg"
+    # Shared people cache avoids duplicating identical actor images per title.
+    people_dir = media_folder.parent.parent / "people"
+    safe_name = _slugify_person_name(cast_name) or "Unknown"
+    person_suffix = str(person_id) if person_id is not None else "unknown"
+    output_path = people_dir / f"{safe_name}-{person_suffix}.jpg"
 
     if await AsyncPath(output_path).exists():
         return output_path.as_posix()
 
-    await AsyncPath(cast_dir).mkdir(parents=True, exist_ok=True)
+    await AsyncPath(people_dir).mkdir(parents=True, exist_ok=True)
     url = f"{TMDB_IMAGE_BASE}/{size}{profile_path}"
     return await _download_image(url, output_path, f"cast profile for {cast_name}")
+
+
+def _slugify_person_name(name: str) -> str:
+    """Slugify a person name preserving capitals and hyphens; use dots as separators."""
+    slug = re.sub(r"[^0-9A-Za-z-]+", ".", name)
+    return re.sub(r"\.+", ".", slug).strip(".")
