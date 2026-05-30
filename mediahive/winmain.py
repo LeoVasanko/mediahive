@@ -57,6 +57,7 @@ MPC_BE_PLAYBACK_STATE_FLUSH_SECONDS = 1.0
 VOLUME_MIN = 0.0
 VOLUME_MAX = 1.5
 VOLUME_STEP = 0.01
+VOLUME_REPEAT_SECONDS = 0.02
 
 
 class _XINPUT_GAMEPAD(ctypes.Structure):
@@ -255,6 +256,8 @@ def _start_gamepad_remote(
     last_pressed_masks = [0, 0, 0, 0]
     seek_begin_hold_started_at: list[float | None] = [None, None, None, None]
     seek_begin_fired = [False, False, False, False]
+    last_volume_repeat_up_at = [0.0, 0.0, 0.0, 0.0]
+    last_volume_repeat_down_at = [0.0, 0.0, 0.0, 0.0]
     last_repeat_at = [
         dict.fromkeys(
             (*_MPC_BE_COMMANDS.keys(), *_MPC_BE_SEEK_MASK_TO_COMMANDS.keys()), 0.0
@@ -521,11 +524,29 @@ def _start_gamepad_remote(
                     if is_connected != last_connected[slot]:
                         last_connected[slot] = is_connected
 
-                    # Volume control via D-pad up / down (system master volume)
-                    if current_mask & 0x0001 and not last_pressed_masks[slot] & 0x0001:
+                    # Volume control via D-pad up/down with fixed repeat cadence
+                    is_vol_up_pressed = bool(current_mask & 0x0001)
+                    was_vol_up_pressed = bool(last_pressed_masks[slot] & 0x0001)
+                    if is_vol_up_pressed and (
+                        not was_vol_up_pressed
+                        or now - last_volume_repeat_up_at[slot] >= VOLUME_REPEAT_SECONDS
+                    ):
                         set_volume(min(volume_max(), get_volume() + VOLUME_STEP))
-                    if current_mask & 0x0002 and not last_pressed_masks[slot] & 0x0002:
+                        last_volume_repeat_up_at[slot] = now
+                    elif not is_vol_up_pressed:
+                        last_volume_repeat_up_at[slot] = 0.0
+
+                    is_vol_down_pressed = bool(current_mask & 0x0002)
+                    was_vol_down_pressed = bool(last_pressed_masks[slot] & 0x0002)
+                    if is_vol_down_pressed and (
+                        not was_vol_down_pressed
+                        or now - last_volume_repeat_down_at[slot]
+                        >= VOLUME_REPEAT_SECONDS
+                    ):
                         set_volume(max(VOLUME_MIN, get_volume() - VOLUME_STEP))
+                        last_volume_repeat_down_at[slot] = now
+                    elif not is_vol_down_pressed:
+                        last_volume_repeat_down_at[slot] = 0.0
 
                     for mask, command_id in _MPC_BE_COMMANDS.items():
                         is_pressed = bool(current_mask & mask)
