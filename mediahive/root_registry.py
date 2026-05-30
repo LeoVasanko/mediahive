@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import hashlib
 import logging
 from pathlib import Path
 
@@ -17,7 +16,7 @@ from mediahive.models.events import ScanEvent, Task, Upsert
 logger = logging.getLogger("mediahive.root_registry")
 
 # ---------------------------------------------------------------------------
-# Root ID
+# Root path normalization and friendly name derivation
 # ---------------------------------------------------------------------------
 
 
@@ -47,13 +46,6 @@ def _normalize_path(path: str) -> str:
     return posix
 
 
-def compute_root_id(path: str) -> str:
-    """Return a stable 12-char hex root ID from a normalized path."""
-    normalized = _normalize_path(path)
-    h = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
-    return h[:12]
-
-
 def _derive_root_name(path: str) -> str:
     """Derive a friendly root name from a path basename/anchor."""
     normalized = (path or "").replace("\\", "/").rstrip("/")
@@ -74,7 +66,6 @@ def _derive_root_name(path: str) -> str:
 
 
 class RootEntry(msgspec.Struct):
-    name: str
     path: str
     root_id: str
 
@@ -87,9 +78,8 @@ class RootEntry(msgspec.Struct):
 class RootContext:
     """Runtime container for a single media root."""
 
-    def __init__(self, root_id: str, root_path: Path, name: str | None = None) -> None:
+    def __init__(self, root_id: str, root_path: Path) -> None:
         self.root_id = root_id
-        self.name = name or root_id
         self.root_path = root_path
         self.status = "loading"
         self.error: str | None = None
@@ -208,7 +198,6 @@ class Supervisor:
         return [
             {
                 "root_id": ctx.root_id,
-                "name": ctx.name,
                 "path": ctx.root_path.as_posix(),
                 "status": ctx.status,
                 "error": ctx.error,
@@ -265,14 +254,12 @@ class Supervisor:
             # Validate and canonicalize
             candidates: list[RootEntry] = []
             seen_paths: set[str] = set()
-            seen_ids: set[str] = set()
             failed: list[dict] = []
 
-            for requested_name, path_str in roots.items():
+            for path_str in roots.values():
                 p = Path(path_str).expanduser()
                 if not p.exists() or not p.is_dir():
                     failed.append({
-                        "name": requested_name,
                         "path": path_str,
                         "reason": "not a directory",
                     })
@@ -280,17 +267,11 @@ class Supervisor:
                 norm = _normalize_path(p.as_posix())
                 if norm in seen_paths:
                     failed.append({
-                        "name": requested_name,
                         "path": path_str,
                         "reason": "duplicate path",
                     })
                     continue
                 seen_paths.add(norm)
-                rid = compute_root_id(str(p))
-                if rid in seen_ids:
-                    # Extremely unlikely hash collision — fall back to full hash
-                    rid = hashlib.sha256(norm.encode("utf-8")).hexdigest()[:16]
-                seen_ids.add(rid)
 
                 # Friendly names should reflect the configured root path (e.g. "Z:" -> "Z"),
                 # not the resolved physical target (which may be a UNC path).
@@ -303,7 +284,8 @@ class Supervisor:
                     unique_name = f"{base_name}{suffix}"
                     suffix += 1
 
-                candidates.append(RootEntry(name=unique_name, path=norm, root_id=rid))
+                # root_id now uses the same friendly identifier as the display name.
+                candidates.append(RootEntry(path=norm, root_id=unique_name))
 
             # Build desired root_id set
             desired_ids = {e.root_id for e in candidates}
@@ -320,13 +302,12 @@ class Supervisor:
                 existing = self._contexts.get(entry.root_id)
                 if existing and existing.root_path.as_posix() == entry.path:
                     # Reuse existing context
-                    existing.name = entry.name
                     new_contexts[entry.root_id] = existing
                 else:
                     # If existing path changed, stop old one
                     if existing:
                         asyncio.create_task(existing.stop())
-                    ctx = RootContext(entry.root_id, Path(entry.path), entry.name)
+                    ctx = RootContext(entry.root_id, Path(entry.path))
                     await ctx.start()
                     new_contexts[entry.root_id] = ctx
 
@@ -338,7 +319,7 @@ class Supervisor:
             save_config(
                 msgspec.structs.replace(
                     cfg,
-                    roots={e.name: e.path for e in candidates},
+                    roots={e.root_id: e.path for e in candidates},
                 )
             )
 

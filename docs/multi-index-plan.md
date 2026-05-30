@@ -8,9 +8,9 @@ MediaHive now supports multiple independent media roots. Each root is a filesyst
 
 ### Root Identity
 
-- **Root ID**: first 12 hex chars of SHA-256 of the *normalized* absolute path.
-- **Normalization**: resolve symlinks, lower-case Windows drive letter, strip trailing slashes, forward slashes only (`as_posix()`).
-- **Name**: derived from path basename; collisions resolved with `2`, `3`, … suffix.
+- **Root ID**: friendly root name derived from configured path basename.
+- **Name/ID collision handling**: suffixes `2`, `3`, … are appended to keep each root ID unique.
+- **Path normalization**: lower-case Windows drive letter, strip trailing slashes, forward slashes only (`as_posix()`).
 
 ### Per-Root Runtime (`RootContext`)
 
@@ -27,7 +27,7 @@ Each active root gets an isolated `RootContext` managed by the `Supervisor`:
 - Holds `dict[str, RootContext]` keyed by `root_id`.
 - `replace_roots(new_roots)` atomically swaps the active set:
   1. Validate & canonicalize paths.
-  2. Compute `root_id` for each.
+  2. Derive unique friendly `root_id` for each.
   3. Prepare new `RootContext`s (load snapshots).
   4. Swap dict atomically.
   5. Stop removed contexts in background with bounded timeout.

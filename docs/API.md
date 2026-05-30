@@ -1,7 +1,8 @@
 # API
 
 MediaHive exposes a small local API used by the desktop app and frontend.
-All media paths are scoped to a **root**, identified by a stable `root_id`.
+All media paths are scoped to a **root**, identified by a friendly `root_id`
+(same identifier shown as the root name).
 
 ## Endpoints
 

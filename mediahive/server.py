@@ -448,9 +448,7 @@ async def put_roots(request: Request):
 
     return {
         "status": "ok",
-        "accepted": [
-            {"name": e.name, "path": e.path, "root_id": e.root_id} for e in accepted
-        ],
+        "accepted": [{"path": e.path, "root_id": e.root_id} for e in accepted],
         "failed": failed,
     }
 

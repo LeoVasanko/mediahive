@@ -271,7 +271,7 @@ async function refreshRoots() {
     const activeIds: string[] = []
     for (const r of roots) {
       newMap.set(r.root_id, {
-        name: r.name,
+        name: r.root_id,
         path: r.path,
         status: r.status,
       })

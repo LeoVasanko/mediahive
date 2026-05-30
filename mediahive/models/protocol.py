@@ -75,7 +75,6 @@ class RootsRequest(msgspec.Struct):
 class RootEntryResponse(msgspec.Struct):
     """Single root entry in responses."""
 
-    name: str
     path: str
     root_id: str
 

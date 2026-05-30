@@ -11,7 +11,6 @@ export interface PlayerInfo {
 
 export interface RootStatus {
   root_id: string
-  name: string
   path: string
   status: string
   error: string | null

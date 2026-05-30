@@ -118,7 +118,7 @@
                 :class="`roots-item--${root.status}`"
               >
                 <div class="roots-item-info">
-                  <span class="roots-item-name">{{ root.name }}</span>
+                  <span class="roots-item-name">{{ root.root_id }}</span>
                   <span class="roots-item-path">{{ root.path }}</span>
                 </div>
                 <div class="roots-item-meta">
@@ -323,7 +323,6 @@ const selectedPlayerFamily = computed(() => {
 
 interface RootEntry {
   root_id: string
-  name: string
   path: string
   status: string
 }
@@ -410,7 +409,6 @@ async function refreshRoots() {
     const data = await fetchRoots()
     roots.value = data.map((r) => ({
       root_id: r.root_id,
-      name: r.name,
       path: r.path,
       status: r.status,
     }))
@@ -421,7 +419,7 @@ async function refreshRoots() {
 
 async function removeRoot(rootId: string) {
   const filtered = roots.value.filter((r) => r.root_id !== rootId)
-  const newRoots = Object.fromEntries(filtered.map((r) => [r.name, r.path]))
+  const newRoots = Object.fromEntries(filtered.map((r) => [r.root_id, r.path]))
   try {
     await replaceRoots(newRoots)
     await refreshRoots()
@@ -434,17 +432,9 @@ async function removeRoot(rootId: string) {
 async function addRoot() {
   const folder = await pickFolderAndAddRoot()
   if (!folder) return
-  const name = folder.split("/").pop() || folder.split("\\").pop() || "media"
-  // Resolve name collisions
-  let uniqueName = name
-  let suffix = 2
-  const currentNames = new Set(roots.value.map((r) => r.name))
-  while (currentNames.has(uniqueName)) {
-    uniqueName = `${name}${suffix}`
-    suffix++
-  }
-  const newRoots = Object.fromEntries(roots.value.map((r) => [r.name, r.path]))
-  newRoots[uniqueName] = folder
+  const suggestedId = folder.split("/").pop() || folder.split("\\").pop() || "media"
+  const newRoots = Object.fromEntries(roots.value.map((r) => [r.root_id, r.path]))
+  newRoots[suggestedId] = folder
   try {
     await replaceRoots(newRoots)
     await refreshRoots()
