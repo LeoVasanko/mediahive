@@ -47,10 +47,15 @@
         v-for="(season, sIndex) in series.seasons"
         :key="sIndex"
         class="season-flow"
+        :data-season-index="sIndex"
         :class="{ 'season-even': sIndex % 2 === 1 }"
       >
         <!-- Season poster - tall strip on the side -->
-        <div class="season-poster-strip" :class="{ 'strip-right': sIndex % 2 === 1 }">
+        <div
+          class="season-poster-strip"
+          :class="{ 'strip-right': sIndex % 2 === 1 }"
+          :style="getSeasonPosterStripStyle(sIndex)"
+        >
           <div class="poster-container">
             <img
               v-if="getSeasonPoster(season)"
@@ -71,7 +76,7 @@
         </div>
 
         <!-- Episodes flowing grid -->
-        <div class="episodes-flow">
+        <div class="episodes-flow" :style="getSeasonEpisodesFlowStyle(sIndex)">
           <div
             v-for="(episode, eIndex) in season.episodes"
             :key="`${sIndex}-${episode.episode_number}`"
@@ -239,7 +244,123 @@ const emit = defineEmits<{
 const seriesRootRef = ref<HTMLElement | null>(null)
 const episodeNavCoords = ref<Map<string, { row: number; col: number }>>(new Map())
 const linkedMoviesNavRow = ref(2)
+const seasonLayoutStyles = ref<
+  Map<number, { posterStyle: Record<string, string>; episodesStyle: Record<string, string> }>
+>(new Map())
 let navLayoutFrame: number | null = null
+let seasonLayoutFrame: number | null = null
+
+const EPISODE_TILE_WIDTH_FALLBACK = 200
+const EPISODE_TILE_HEIGHT_FALLBACK = 113
+const EPISODE_GAP_FALLBACK = 6
+const MIN_POSTER_WIDTH = 120
+const MAX_POSTER_WIDTH = 280
+const POSTER_ASPECT_RATIO = 3 / 2
+
+function getSeasonPosterStripStyle(seasonIndex: number): Record<string, string> {
+  return seasonLayoutStyles.value.get(seasonIndex)?.posterStyle || {}
+}
+
+function getSeasonEpisodesFlowStyle(seasonIndex: number): Record<string, string> {
+  return seasonLayoutStyles.value.get(seasonIndex)?.episodesStyle || {}
+}
+
+function parseCssPx(value: string | null | undefined, fallback = 0): number {
+  const parsed = parseFloat(value || "")
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
+function computeSeasonLayoutStyles() {
+  const root = seriesRootRef.value
+  if (!root) return
+
+  const nextStyles = new Map<
+    number,
+    { posterStyle: Record<string, string>; episodesStyle: Record<string, string> }
+  >()
+
+  for (let seasonIndex = 0; seasonIndex < props.series.seasons.length; seasonIndex += 1) {
+    const seasonFlow = root.querySelector<HTMLElement>(`.season-flow[data-season-index="${seasonIndex}"]`)
+    if (!seasonFlow) continue
+
+    const flowStyle = window.getComputedStyle(seasonFlow)
+    if (flowStyle.flexDirection.startsWith("column")) {
+      continue
+    }
+
+    const episodesFlow = seasonFlow.querySelector<HTMLElement>(".episodes-flow")
+    if (!episodesFlow) continue
+
+    const availableWidth = seasonFlow.clientWidth
+    if (availableWidth <= 0) continue
+
+    const episodesCount = props.series.seasons[seasonIndex]?.episodes?.length || 0
+    const sampleTile = episodesFlow.querySelector<HTMLElement>(".episode-tile")
+    const tileWidth = sampleTile?.offsetWidth || EPISODE_TILE_WIDTH_FALLBACK
+    const tileHeight = sampleTile?.offsetHeight || EPISODE_TILE_HEIGHT_FALLBACK
+    const episodesStyle = window.getComputedStyle(episodesFlow)
+    const columnGap = parseCssPx(episodesStyle.columnGap, EPISODE_GAP_FALLBACK)
+    const rowGap = parseCssPx(episodesStyle.rowGap, EPISODE_GAP_FALLBACK)
+    const paddingLeft = parseCssPx(episodesStyle.paddingLeft)
+    const paddingRight = parseCssPx(episodesStyle.paddingRight)
+    const paddingTop = parseCssPx(episodesStyle.paddingTop)
+    const paddingBottom = parseCssPx(episodesStyle.paddingBottom)
+    const horizontalPadding = paddingLeft + paddingRight
+    const verticalPadding = paddingTop + paddingBottom
+
+    const widthForCols = (cols: number) =>
+      cols * tileWidth + Math.max(0, cols - 1) * columnGap + horizontalPadding
+
+    const maxColsWithoutPoster = Math.max(
+      1,
+      Math.floor((availableWidth - horizontalPadding + columnGap) / (tileWidth + columnGap)),
+    )
+
+    let targetCols = Math.max(1, Math.min(Math.max(1, episodesCount), maxColsWithoutPoster))
+    let episodesWidth = widthForCols(targetCols)
+    let posterWidth = availableWidth - episodesWidth
+
+    while (targetCols > 1 && posterWidth < MIN_POSTER_WIDTH) {
+      targetCols -= 1
+      episodesWidth = widthForCols(targetCols)
+      posterWidth = availableWidth - episodesWidth
+    }
+
+    posterWidth = Math.max(MIN_POSTER_WIDTH, Math.min(MAX_POSTER_WIDTH, posterWidth))
+    episodesWidth = Math.max(0, availableWidth - posterWidth)
+
+    const rows = Math.max(1, Math.ceil(Math.max(1, episodesCount) / targetCols))
+    const episodesHeight = rows * tileHeight + Math.max(0, rows - 1) * rowGap + verticalPadding
+    const posterHeight = Math.max(140, Math.min(episodesHeight, posterWidth * POSTER_ASPECT_RATIO))
+
+    nextStyles.set(seasonIndex, {
+      posterStyle: {
+        width: `${posterWidth}px`,
+        height: `${posterHeight}px`,
+        flexBasis: `${posterWidth}px`,
+        minWidth: `${posterWidth}px`,
+        alignSelf: "flex-start",
+      },
+      episodesStyle: {
+        width: `${episodesWidth}px`,
+        flexBasis: `${episodesWidth}px`,
+        minWidth: `${episodesWidth}px`,
+        maxWidth: `${episodesWidth}px`,
+      },
+    })
+  }
+
+  seasonLayoutStyles.value = nextStyles
+}
+
+function scheduleSeasonLayoutRecompute() {
+  if (seasonLayoutFrame !== null) return
+  seasonLayoutFrame = window.requestAnimationFrame(() => {
+    seasonLayoutFrame = null
+    computeSeasonLayoutStyles()
+    scheduleEpisodeNavLayoutRecompute()
+  })
+}
 
 function getEpisodeKey(seasonIndex: number, episodeIndex: number): string {
   return `${seasonIndex}-${episodeIndex}`
@@ -328,6 +449,7 @@ watch(
   () => props.series.seasons.map((season) => season.episodes.length),
   () => {
     nextTick(() => {
+      scheduleSeasonLayoutRecompute()
       scheduleEpisodeNavLayoutRecompute()
     })
   },
@@ -942,6 +1064,7 @@ function handleEpisodeEnter(event: KeyboardEvent, episode: Episode) {
 onMounted(() => {
   window.addEventListener("mediahive:gamepad-action", handleGamepadAction as EventListener)
   window.addEventListener("resize", scheduleEpisodeNavLayoutRecompute, { passive: true })
+  window.addEventListener("resize", scheduleSeasonLayoutRecompute, { passive: true })
   nextTick(() => {
     const focusSeasonNumber = props.focusEpisode?.seasonNumber
     if (typeof focusSeasonNumber === "number") {
@@ -952,6 +1075,7 @@ onMounted(() => {
       }
     }
     syncSeasonVideoPlayback()
+    scheduleSeasonLayoutRecompute()
     scheduleEpisodeNavLayoutRecompute()
   })
 })
@@ -959,7 +1083,12 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener("mediahive:gamepad-action", handleGamepadAction as EventListener)
   window.removeEventListener("resize", scheduleEpisodeNavLayoutRecompute)
+  window.removeEventListener("resize", scheduleSeasonLayoutRecompute)
   clearSeasonStartupTimers()
+  if (seasonLayoutFrame !== null) {
+    window.cancelAnimationFrame(seasonLayoutFrame)
+    seasonLayoutFrame = null
+  }
   if (navLayoutFrame !== null) {
     window.cancelAnimationFrame(navLayoutFrame)
     navLayoutFrame = null
@@ -996,6 +1125,9 @@ watch(
       activeSeasonIndex.value = Math.max(0, props.series.seasons.length - 1)
     }
     syncSeasonVideoPlayback()
+    nextTick(() => {
+      scheduleSeasonLayoutRecompute()
+    })
   },
 )
 </script>
@@ -1213,14 +1345,14 @@ watch(
   width: 280px;
   flex-shrink: 0;
   position: relative;
-  align-self: stretch;
+  align-self: flex-start;
 }
 
 .poster-container {
   position: relative;
   width: 100%;
   height: 100%;
-  min-height: 200px;
+  min-height: 0;
 }
 
 .season-poster-img {
