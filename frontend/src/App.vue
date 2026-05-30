@@ -636,6 +636,82 @@ function onGamepadAction(event: Event) {
   }
 }
 
+function getSearchQueryFromPath(path: string | null): string {
+  if (!path || !path.startsWith("/search/")) return ""
+  const encoded = path.slice("/search/".length)
+  if (!encoded) return ""
+  try {
+    return normalizeSearchQuery(decodeURIComponent(encoded))
+  } catch {
+    return normalizeSearchQuery(encoded)
+  }
+}
+
+const searchResultsCache = new Map<string, MediaItem[]>()
+
+function getSearchResultsForTerm(term: string): MediaItem[] {
+  const key = normalizeSearchQuery(term).toLowerCase()
+  if (!key) return []
+
+  const liveQuery = normalizeSearchQuery(searchQuery.value).toLowerCase()
+  if (liveQuery === key && searchResults.value.length > 0) {
+    return searchResults.value
+  }
+
+  return searchResultsCache.get(key) || []
+}
+
+function getBrowseSequenceForItem(item: MediaItem): MediaItem[] {
+  if (item.type === "movies") {
+    return moviesByGenre.value.flatMap((category) => category.items)
+  }
+  return seriesByGenre.value.flatMap((category) => category.items)
+}
+
+function getDetailAdjacentSequence(item: MediaItem): MediaItem[] {
+  const detailSearchPath = getDetailSearchPath()
+  if (detailSearchPath) {
+    const term = getSearchQueryFromPath(detailSearchPath)
+    const searchItems = getSearchResultsForTerm(term)
+    if (searchItems.length > 0) {
+      return searchItems
+    }
+  }
+
+  return getBrowseSequenceForItem(item)
+}
+
+function showAdjacentDetail(offset: -1 | 1): boolean {
+  const current = selectedItem.value
+  if (!current) return false
+
+  const sequence = getDetailAdjacentSequence(current)
+  if (sequence.length < 2) return false
+
+  const currentIndex = sequence.findIndex((item) => item.id === current.id && item.type === current.type)
+  if (currentIndex < 0) return false
+
+  const nextIndex = currentIndex + offset
+  if (nextIndex < 0 || nextIndex >= sequence.length) return false
+
+  showDetail(sequence[nextIndex])
+  return true
+}
+
+function onRawGamepadButton(event: Event) {
+  if (event.defaultPrevented || isMpcBeGamepadCaptured()) return
+  if (!selectedItem.value) return
+
+  const customEvent = event as CustomEvent<{ button?: number }>
+  const button = customEvent.detail?.button
+  if (button !== 4 && button !== 5) return
+
+  const moved = showAdjacentDetail(button === 4 ? -1 : 1)
+  if (moved) {
+    event.preventDefault()
+  }
+}
+
 // Focus episode info for navigating to series detail from search
 const focusEpisode = ref<{ seasonNumber: number; episodeNumber: number } | null>(null)
 
@@ -851,6 +927,26 @@ function handleEscapeKey(event: KeyboardEvent) {
   // From movies list -> do nothing (stop here)
 }
 
+function handleDetailAdjacentKey(event: KeyboardEvent) {
+  if (!selectedItem.value) return
+
+  // Don't hijack typing/navigation in editable controls.
+  const target = event.target as HTMLElement | null
+  if (target) {
+    const tag = target.tagName
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target.isContentEditable) {
+      return
+    }
+  }
+
+  if (event.key !== "PageUp" && event.key !== "PageDown") return
+
+  const moved = showAdjacentDetail(event.key === "PageUp" ? -1 : 1)
+  if (moved) {
+    event.preventDefault()
+  }
+}
+
 onMounted(() => {
   void refreshPlayerStatus()
   void refreshResumePositions()
@@ -858,12 +954,16 @@ onMounted(() => {
   detailPanelScrollTop.value = detailPanelRef.value?.scrollTop || 0
   setActiveNavigationScope(isDetailOpen.value ? "detail" : "browse")
   document.addEventListener("keydown", handleEscapeKey)
+  document.addEventListener("keydown", handleDetailAdjacentKey)
   window.addEventListener("mediahive:gamepad-action", onGamepadAction as EventListener)
+  window.addEventListener("mediahive:gamepad-button", onRawGamepadButton as EventListener)
 })
 
 onUnmounted(() => {
   document.removeEventListener("keydown", handleEscapeKey)
+  document.removeEventListener("keydown", handleDetailAdjacentKey)
   window.removeEventListener("mediahive:gamepad-action", onGamepadAction as EventListener)
+  window.removeEventListener("mediahive:gamepad-button", onRawGamepadButton as EventListener)
   stopMpcBePolling()
 })
 
@@ -994,7 +1094,10 @@ function showDetail(item: MediaItem) {
       router.push({ path: `/series/${epData.series.id}`, state: searchPath ? { searchPath } : undefined })
     }
   } else {
-    const searchPath = searchQuery.value ? getSearchPath(searchQuery.value) : null
+    const detailSearchPath = getDetailSearchPath()
+    const searchPath = searchQuery.value
+      ? getSearchPath(searchQuery.value)
+      : detailSearchPath
     router.push({ path: `/${item.type}/${item.id}`, state: searchPath ? { searchPath } : undefined })
   }
 }
@@ -1015,7 +1118,10 @@ function handleActorSearch(actorName: string) {
 }
 
 function handleSelectMovieFromDetail(movieId: string) {
-  const searchPath = searchQuery.value ? getSearchPath(searchQuery.value) : null
+  const detailSearchPath = getDetailSearchPath()
+  const searchPath = searchQuery.value
+    ? getSearchPath(searchQuery.value)
+    : detailSearchPath
   router.push({ path: `/movies/${movieId}`, state: searchPath ? { searchPath } : undefined })
 }
 
@@ -1425,6 +1531,12 @@ function runSearch() {
     query: query.toLowerCase(),
   })
 }
+
+watch([searchQuery, searchResults], ([query, results]) => {
+  const key = normalizeSearchQuery(query).toLowerCase()
+  if (!key || results.length === 0) return
+  searchResultsCache.set(key, [...results])
+})
 
 watch(searchQuery, runSearch)
 watch(mediaIndex, () => {
