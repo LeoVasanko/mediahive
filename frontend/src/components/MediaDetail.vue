@@ -3,12 +3,14 @@
   <SeriesFullView
     v-if="item.type === 'series'"
     :series="item.data as Series"
+    :all-movies="allMovies"
     :focus-episode="focusEpisode"
     :has-resume-position="hasResumePosition"
     :get-root-name="getRootName"
     @close="$emit('close')"
     @play="handlePlay"
     @openFolder="handleOpenFolder"
+    @select-movie="handleSelectMovie"
   />
 
   <!-- Full page view for movies -->
@@ -225,6 +227,7 @@ import {
 
 const props = defineProps<{
   item: MediaItem
+  allMovies: MovieUi[]
   focusEpisode?: { seasonNumber: number; episodeNumber: number } | null
   hasResumePosition: (filePath: string | null) => boolean
   getRootName: (rootId: string | null | undefined) => string | null
@@ -234,6 +237,7 @@ const emit = defineEmits<{
   play: [string]
   openFolder: [string, string | null | undefined]
   searchActor: [string]
+  selectMovie: [string]
 }>()
 
 // Track expanded episode for showing multiple releases
@@ -745,6 +749,10 @@ function handleCastSelect(castName: string) {
   const name = castName.trim()
   if (!name) return
   emit("searchActor", name)
+}
+
+function handleSelectMovie(movieId: string) {
+  emit("selectMovie", movieId)
 }
 
 onMounted(() => {

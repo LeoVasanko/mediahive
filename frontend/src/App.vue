@@ -157,6 +157,7 @@
             v-if="detailItemForRender"
             v-show="isDetailOpen"
             :item="detailItemForRender"
+            :all-movies="mediaIndex?.movies ?? []"
             :focus-episode="focusEpisode"
             :has-resume-position="hasResumePosition"
             :get-root-name="getRootName"
@@ -164,6 +165,7 @@
             @play="handlePlay"
             @open-folder="handleOpenFolder"
             @search-actor="handleActorSearch"
+            @select-movie="handleSelectMovieFromDetail"
           />
         </main>
       </div>
@@ -760,6 +762,11 @@ function closeDetail() {
 
 function handleActorSearch(actorName: string) {
   updateSearchQuery(actorName)
+}
+
+function handleSelectMovieFromDetail(movieId: string) {
+  const searchPath = searchQuery.value ? getSearchPath(searchQuery.value) : null
+  router.push({ path: `/movies/${movieId}`, state: searchPath ? { searchPath } : undefined })
 }
 
 function focusDetailEntryTarget(item: MediaItem): boolean {

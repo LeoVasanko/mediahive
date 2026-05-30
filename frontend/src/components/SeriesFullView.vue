@@ -130,6 +130,35 @@
           </div>
         </div>
       </div>
+
+      <div v-if="matchingSeriesMovies.length > 0" class="linked-movies-section">
+        <h2 class="linked-movies-title">Related Movies In Library</h2>
+        <div class="linked-movies-grid">
+          <button
+            v-for="(movie, movieIndex) in matchingSeriesMovies"
+            :key="movie.id"
+            type="button"
+            class="linked-movie-card"
+            v-bind="navAttrs(series.seasons.length + 2, movieIndex)"
+            @click="emit('selectMovie', movie.id)"
+          >
+            <img
+              v-if="movie.cover_path"
+              :src="getCoverUrl(movie.cover_path, movie.root_id)"
+              class="linked-movie-poster"
+              :alt="movie.title || 'Movie'"
+            />
+            <div v-else class="linked-movie-poster linked-movie-poster-fallback"></div>
+            <div class="linked-movie-meta">
+              <span class="linked-movie-name">{{ movie.title }}</span>
+              <span class="linked-movie-sub">
+                {{ movie.year || movie.info?.release_date?.slice(0, 4) || "Unknown Year" }}
+                <template v-if="movie.info?.rating"> • ★ {{ movie.info.rating.toFixed(1) }}</template>
+              </span>
+            </div>
+          </button>
+        </div>
+      </div>
     </section>
 
     <!-- Context menu -->
@@ -184,7 +213,7 @@
 
 <script setup lang="ts">
 import { computed, ref, nextTick, watch, onMounted, onUnmounted } from "vue"
-import type { Series, Season, Episode, Torrent } from "../types"
+import type { Series, Season, Episode, Torrent, MovieUi } from "../types"
 import { getCoverUrl, getVideoPreviewUrl, getVideoSourceAttributes, isSafariBrowser } from "../api"
 import { navAttrs } from "../composables/useKeyboardNavigation"
 import ReleaseVersionCard from "./ReleaseVersionCard.vue"
@@ -193,6 +222,7 @@ import { sortTorrentsByPreference } from "../composables/useSettings"
 
 const props = defineProps<{
   series: Series
+  allMovies: MovieUi[]
   focusEpisode?: { seasonNumber: number; episodeNumber: number } | null
   hasResumePosition: (filePath: string | null) => boolean
   getRootName: (rootId: string | null | undefined) => string | null
@@ -202,6 +232,7 @@ const emit = defineEmits<{
   close: []
   play: [string]
   openFolder: [string, string | null | undefined]
+  selectMovie: [string]
 }>()
 
 const seriesRootRef = ref<HTMLElement | null>(null)
@@ -267,6 +298,67 @@ const versionActionMenu = ref<{
 })
 
 const releaseMenuOriginElement = ref<HTMLElement | null>(null)
+
+function normalizeMatchText(value: string | null | undefined): string {
+  return (value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
+const seriesMatchNeedles = computed(() => {
+  const candidates = new Set<string>()
+  const push = (value: string | null | undefined) => {
+    const normalized = normalizeMatchText(value)
+    if (normalized.length >= 3) {
+      candidates.add(normalized)
+    }
+  }
+
+  push(props.series.title)
+  push(props.series.info?.title)
+  push(props.series.info?.original_title)
+  for (const alt of props.series.alternative_titles || []) {
+    push(alt)
+  }
+  for (const alt of props.series.info?.alternative_titles || []) {
+    push(alt)
+  }
+
+  return Array.from(candidates)
+})
+
+const matchingSeriesMovies = computed(() => {
+  const needles = seriesMatchNeedles.value
+  if (needles.length === 0) return []
+
+  return (props.allMovies || [])
+    .filter((movie) => {
+      const keywords = (movie.info?.keywords || []).map((k) => normalizeMatchText(k))
+      if (!keywords.includes("based on tv series")) {
+        return false
+      }
+
+      const movieTitle = normalizeMatchText(movie.title || movie.info?.title || "")
+      if (!movieTitle) {
+        return false
+      }
+
+      return needles.some((needle) => movieTitle.includes(needle))
+    })
+    .sort((a, b) => {
+      const yearA = a.year || Number(a.info?.release_date?.slice(0, 4) || 0)
+      const yearB = b.year || Number(b.info?.release_date?.slice(0, 4) || 0)
+      if (yearA !== yearB) return yearA - yearB
+
+      const dateA = a.info?.release_date || ""
+      const dateB = b.info?.release_date || ""
+      if (dateA !== dateB) return dateA.localeCompare(dateB)
+
+      return (a.title || "").localeCompare(b.title || "")
+    })
+})
 
 // Show context menu on right-click
 function handleContextMenu(event: MouseEvent, episode: Episode) {
@@ -681,6 +773,68 @@ onUnmounted(() => {
   min-height: calc(100vh - 60px); /* Account for header height */
   background: #0a0a0a;
   overflow-x: hidden;
+}
+
+.linked-movies-section {
+  margin: 40px 30px 20px;
+}
+
+.linked-movies-title {
+  margin: 0 0 14px;
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
+.linked-movies-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 14px;
+}
+
+.linked-movie-card {
+  appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  padding: 0;
+  background: rgba(255, 255, 255, 0.03);
+  color: inherit;
+  cursor: pointer;
+  overflow: hidden;
+  text-align: left;
+}
+
+.linked-movie-card:hover,
+.linked-movie-card:focus-visible {
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.linked-movie-poster {
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  object-fit: cover;
+  display: block;
+}
+
+.linked-movie-poster-fallback {
+  background: linear-gradient(135deg, #272b34, #181c24);
+}
+
+.linked-movie-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px;
+}
+
+.linked-movie-name {
+  font-size: 0.92rem;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.linked-movie-sub {
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.75);
 }
 
 /* Hero section */
