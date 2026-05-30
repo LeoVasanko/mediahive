@@ -22,6 +22,9 @@ _METHOD_WRITE = "\033[1;94m"  # POST, PUT, DELETE, PATCH (bold bright blue)
 _HOST = "\033[38;5;242m"  # hostname (dark grey)
 _PATH = "\033[38;5;250m"  # path (white)
 _TIMING = "\033[38;5;242m"  # timing/devmode (dark grey)
+_WS_OPEN = "\033[38;5;226m"  # WebSocket connect (brightest yellow from 6x6x6 cube)
+_WS_CLOSE = "\033[38;5;142m"  # WebSocket disconnect (significantly dimmer yellow)
+_WS_STATUS = "\033[38;5;242m"  # WebSocket close status (dark grey)
 
 
 def format_ipv6_network(ip: str) -> str:
@@ -63,7 +66,7 @@ def format_ipv6_network(ip: str) -> str:
         result = ":".join(groups) + "::"
         # Simplify leading zeros in groups and compress, then strip trailing ::
         return str(IPv6Address(result + "0")).removesuffix("::")
-    except ValueError:
+    except Exception:
         return ip
 
 
@@ -126,6 +129,89 @@ def format_access_log(
     )
 
 
+# WebSocket connection counter (mod 100)
+_ws_counter = 0
+
+
+def _next_ws_id() -> int:
+    """Get next WebSocket connection ID (0-99)."""
+    global _ws_counter
+    ws_id = _ws_counter
+    _ws_counter = (_ws_counter + 1) % 100
+    return ws_id
+
+
+def log_ws_open(ws) -> int:
+    """Log WebSocket connection open. Returns connection ID for use in close."""
+    ws_id = _next_ws_id()
+
+    client = ws.client.host if ws.client else "-"
+    host = ws.headers.get("host", "-")
+    path = ws.url.path
+    origin = ws.headers.get("origin")
+
+    ip = format_client_ip(client).ljust(19)
+    # ID right-aligned like status codes (3 chars), emoji formatted like method
+    id_str = f"{_WS_OPEN}{str(ws_id).rjust(3)}{_RESET}"
+    # Emoji (2 display width) + 6 spaces = 8 display chars, but within color for alignment
+    emoji_str = f"{_METHOD_READ}🔌      {_RESET}"
+
+    # Determine if origin should be shown (omit when same as host)
+    # Origin header includes scheme (e.g., "https://example.com"), compare host part
+    origin_host = origin.split("://", 1)[-1] if origin else None
+    show_origin = origin_host and origin_host != host
+
+    host_str = f"{_HOST}{host}{_RESET}"
+    path_str = f"{_PATH}{path}{_RESET}"
+    origin_str = f" {_RESET}from {_HOST}{origin_host}{_RESET}" if show_origin else ""
+
+    logger.info(f"{ip} {id_str} {emoji_str}{host_str}{path_str}{origin_str}")
+    return ws_id
+
+
+# WebSocket close codes to human-readable status
+WS_CLOSE_CODES = {
+    1000: "ok",
+    1001: "going away",
+    1002: "protocol error",
+    1003: "unsupported",
+    1005: "no status",
+    1006: "abnormal",
+    1007: "invalid data",
+    1008: "policy violation",
+    1009: "too large",
+    1010: "extension required",
+    1011: "server error",
+    1012: "restarting",
+    1013: "try again",
+    1014: "bad gateway",
+    1015: "tls error",
+}
+
+
+def log_ws_close(ws_id: int, close_code: int | None, duration: float) -> None:
+    """Log WebSocket connection close with duration and status."""
+    # ID right-aligned like status codes (3 chars), "closed" formatted like method
+    id_str = f"{_WS_CLOSE}{str(ws_id).rjust(3)}{_RESET}"
+    # Pad within the dim color to keep full width in color (8 display chars)
+    closed_str = f"{_TIMING}closed  {_RESET}"
+    timing = f"{duration * 1000:.0f}ms"
+
+    # Convert close code to status text
+    if close_code is None:
+        code = "----"
+        status = "unknown"
+    else:
+        code = str(close_code)
+        status = WS_CLOSE_CODES.get(close_code, f"code {close_code}")
+
+    # Status code and text in normal color, not dim
+    status_str = f"{code} {status}"
+    timing_str = f"{_TIMING}{timing}{_RESET}"
+
+    logger.info(f"{' ' * 19} {id_str} {closed_str}{status_str} {timing_str}")
+
+
 class AccessLogMiddleware(BaseHTTPMiddleware):
     """Middleware that logs HTTP requests with custom format."""
 
@@ -152,14 +238,16 @@ class AccessLogMiddleware(BaseHTTPMiddleware):
         return response
 
 
-def configure_access_logging() -> None:
+def configure_access_logging():
     """Configure the access logger to output to stderr."""
     handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(logging.Formatter("%(message)s"))
     logger.addHandler(handler)
     logger.setLevel(logging.INFO)
     logger.propagate = False
-    # Avoid duplicate request lines from uvicorn when custom middleware is active.
+    # Suppress uvicorn access logs to avoid duplicate request lines.
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
-    # Suppress watchfiles "X changes detected" INFO messages.
+    # Suppress uvicorn websocket "connection open/closed" messages.
+    logging.getLogger("uvicorn.error").setLevel(logging.WARNING)
+    # Suppress watchfiles "X changes detected" INFO messages (keep WARNING for reload notification)
     logging.getLogger("watchfiles.main").setLevel(logging.WARNING)

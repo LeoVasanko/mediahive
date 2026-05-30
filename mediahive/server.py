@@ -16,6 +16,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 from contextlib import asynccontextmanager, suppress
@@ -29,7 +30,12 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi_vue import Frontend
 
 from mediahive.__main__ import DEVMODE
-from mediahive.access_logging import AccessLogMiddleware, configure_access_logging
+from mediahive.access_logging import (
+    AccessLogMiddleware,
+    configure_access_logging,
+    log_ws_close,
+    log_ws_open,
+)
 from mediahive.config import load_config
 from mediahive.hivescan.images import close_image_client
 from mediahive.hivescan.scanner import RootScanner
@@ -472,14 +478,21 @@ async def ws_endpoint(ws: WebSocket, root_id: str) -> None:
         await ws.close(code=1008, reason="Unknown root")
         return
 
+    start = time.perf_counter()
+    ws_id = log_ws_open(ws)
+    close_code: int | None = None
+
     await ctx.store.connect(ws)
     try:
         while True:
             await ws.receive_text()
-    except WebSocketDisconnect:
-        ctx.store.disconnect(ws)
+    except WebSocketDisconnect as exc:
+        close_code = exc.code
     except OSError, RuntimeError:
+        pass
+    finally:
         ctx.store.disconnect(ws)
+        log_ws_close(ws_id, close_code, time.perf_counter() - start)
 
 
 # --- Media actions ---

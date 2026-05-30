@@ -116,3 +116,6 @@ ignore = [
     # Allow unused local variables in ctypes COM boilerplate
     "F841",
 ]
+
+[tool.ruff.lint.per-file-ignores]
+"mediahive/access_logging.py" = ["BLE001", "G004"]
