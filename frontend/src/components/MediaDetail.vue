@@ -30,6 +30,7 @@
             <div class="collage-fallback-tile" :class="`collage-fallback-${slot.index + 1}`"></div>
             <video
               v-if="slot.sourcePaths.length > 0"
+              :key="`${item.id}-${slot.index}-${slot.sourcePaths.join('|')}`"
               :ref="(el) => setVideoRef(el as HTMLVideoElement, slot.index)"
               :class="{ 'is-ready': isVideoReady(slot.index) }"
               :autoplay="safariAutoplay"
@@ -555,6 +556,11 @@ watch(
     )
     videoStates.value = slots.map((slot) => (slot.sourcePaths.length > 0 ? "loading" : "missing"))
     await nextTick()
+    for (let i = 0; i < videoRefs.value.length; i++) {
+      if (slots[i]?.sourcePaths.length > 0) {
+        videoRefs.value[i]?.load()
+      }
+    }
     setTimeout(() => {
       startStaggeredPlayback()
     }, 100)
