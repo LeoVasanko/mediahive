@@ -51,7 +51,9 @@ _POPEN_KWARGS: dict = (
 )
 
 # Vue Frontend static files
-frontend = Frontend(Path(__file__).with_name("frontend-build"), cached=["/assets/"])
+frontend = Frontend(
+    Path(__file__).with_name("frontend-build"), cached=["/assets/"], spa=True
+)
 
 # Supervisor manages all root contexts
 supervisor = Supervisor()
