@@ -20,14 +20,6 @@
         loading="lazy"
         @error="imageError = true"
       />
-      <video
-        v-else-if="posterVideoUrl"
-        :src="posterVideoUrl"
-        :aria-label="item.title || 'Unknown'"
-        loop
-        muted
-        playsinline
-      ></video>
       <div v-else class="media-card-placeholder">
         {{ item.type === "movies" ? "🎬" : item.type === "episode" ? "📺" : "📺" }}
       </div>
@@ -149,15 +141,6 @@ const posterImageUrl = computed(() => {
     return null
   }
   return getCoverUrl(props.item.cover_path, props.item.root_id)
-})
-
-const posterVideoUrl = computed(() => {
-  if (props.item.cover_path && isVideoPath(props.item.cover_path)) {
-    return getCoverUrl(props.item.cover_path, props.item.root_id)
-  }
-
-  const fallbackVideo = props.item.showreel_images?.find((path) => isVideoPath(path))
-  return fallbackVideo ? getCoverUrl(fallbackVideo, props.item.root_id) : null
 })
 
 const rating = computed(() => {
