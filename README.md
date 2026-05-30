@@ -4,7 +4,7 @@
 
 Netflix style browsing of your local media archive. Supports keyboard, mouse and gamepad navigation. Uses your favorite movie player.
 
-**[Windows portable ZIP download](https://git.zi.fi/LeoVasanko/mediahive/releases)**
+**[Windows and Mac portable ZIP downloads](https://git.zi.fi/LeoVasanko/mediahive/releases)**
 
 ## What It Does
 
@@ -26,15 +26,15 @@ MediaHive is designed to work with a mouse, keyboard, or gamepad.
 | --- | --- |
 | Mouse | Click posters, rows, search, play, and folder actions directly. |
 | Keyboard | Arrow keys move focus, `Enter` activates the focused item, `Escape` goes back, and `/` jumps to search. |
-| Gamepad | D-pad or left stick moves focus, `A` selects or plays, and `B` goes back. |
+| Gamepad | D-pad or left stick moves focus, `A` selects or plays, and `B` goes back. `RB`/`LB` browses adjacent items, and the Search bar has an OSD keyboard. Player controls during playback. |
 
 ## Recommended Players
 
 - Windows: [MPC-BE](https://github.com/Aleksoid1978/MPC-BE/releases)
 - macOS: [IINA](https://iina.io/)
-- Linux: your distro's preferred default media player
+- Linux: SMPlayer
 
-MediaHive opens files with the OS default app. On Windows, if MPC-BE is your default player and Web Interface is enabled on port `13579`, MediaHive can send gamepad commands to MPC-BE. On macOS and Linux, MediaHive relies on native player controls.
+MediaHive opens files with the OS default player, but one specific player may be configured via settings. You are of course free to use any player instead.
 
 - `A` toggles play and pause.
 - `B` closes the player.
