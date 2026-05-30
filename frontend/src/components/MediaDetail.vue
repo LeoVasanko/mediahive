@@ -120,7 +120,7 @@
                 :key="`${castMember.name}-${castMember.character || ''}`"
                 class="cast-card media-card"
                 data-nav-cast-item="true"
-                v-bind="navAttrs(2 + movieVersions.length, castIndex)"
+                v-bind="navAttrs(castNavRow, castIndex)"
                 :href="`/search/${encodeURIComponent(castMember.name)}`"
                 :title="`Search for ${castMember.name}`"
                 @click.prevent="handleCastSelect(castMember.name)"
@@ -178,6 +178,34 @@
               </div>
             </div>
           </div>
+
+          <section v-if="item.type === 'movies' && similarMovies.length > 0" class="similar-movies-section">
+            <h2 class="similar-movies-title">Similar In Library</h2>
+            <div class="similar-movies-grid" data-sync-scroll-row="true" data-sync-scroll-group="similar">
+              <button
+                v-for="(movie, similarIndex) in similarMovies"
+                :key="movie.tmdbId"
+                type="button"
+                class="similar-movie-card cast-card media-card"
+                v-bind="navAttrs(similarNavRow, similarIndex)"
+                @click="handleSelectMovie(movie.localId)"
+              >
+                <img
+                  v-if="movie.coverPath"
+                  :src="getCoverUrl(movie.coverPath, movie.rootId)"
+                  :alt="movie.title || 'Movie'"
+                  class="similar-movie-poster cast-photo"
+                />
+                <div v-else class="similar-movie-poster cast-photo similar-movie-poster-fallback"></div>
+                <div class="similar-movie-meta cast-copy">
+                  <span class="similar-movie-name cast-name">{{ movie.title }}</span>
+                  <span class="similar-movie-sub cast-character">
+                    {{ movie.year || "Unknown Year" }}
+                  </span>
+                </div>
+              </button>
+            </div>
+          </section>
         </div>
       </div>
     </div>
@@ -579,6 +607,75 @@ const movieKeywords = computed(() => {
   return (props.item.data as Movie).info?.keywords
 })
 
+const viewportWidth = ref(typeof window !== "undefined" ? window.innerWidth : 1920)
+
+const similarNavRow = computed(() => 3 + movieVersions.value.length)
+
+const castNavRow = computed(() => {
+  const hasDesktopSimilarShortcut =
+    viewportWidth.value > DESKTOP_NAV_SHORTCUT_MIN_WIDTH && similarMovies.value.length > 0
+  // Desktop with similar row: keep visual cast placement but move it below similar in nav rows.
+  // Narrow layout (or no similar): preserve existing cast row directly after releases.
+  return hasDesktopSimilarShortcut ? 4 + movieVersions.value.length : 2 + movieVersions.value.length
+})
+
+const similarMovies = computed((): Array<{
+  tmdbId: number
+  title: string
+  localId: string
+  coverPath: string | null
+  rootId: string | null
+  year: string | null
+}> => {
+  if (props.item.type !== "movies") return []
+
+  const movie = props.item.data as Movie
+  const similar = movie.info?.similar || []
+  if (similar.length === 0) return []
+
+  const byTmdbId = new Map<number, MovieUi>()
+  for (const libraryMovie of props.allMovies || []) {
+    const tmdbId = libraryMovie.info?.tmdb_id
+    if (libraryMovie.id === props.item.id) continue
+
+    if (typeof tmdbId === "number" && !byTmdbId.has(tmdbId)) {
+      byTmdbId.set(tmdbId, libraryMovie)
+    }
+  }
+
+  const matches: Array<{
+    tmdbId: number
+    title: string
+    localId: string
+    coverPath: string | null
+    rootId: string | null
+    year: string | null
+  }> = []
+
+  const seenTmdbIds = new Set<number>()
+  for (const similarEntry of similar) {
+    if (seenTmdbIds.has(similarEntry.id)) continue
+    seenTmdbIds.add(similarEntry.id)
+
+    const matched = byTmdbId.get(similarEntry.id)
+    if (!matched) continue
+
+    const title = matched.title || matched.info?.title || similarEntry.title
+    if (!title) continue
+
+    matches.push({
+      tmdbId: similarEntry.id,
+      title,
+      localId: matched.id,
+      coverPath: matched.cover_path || null,
+      rootId: matched.root_id || null,
+      year: matched.year ? String(matched.year) : matched.info?.release_date?.slice(0, 4) || null,
+    })
+  }
+
+  return matches.slice(0, 24)
+})
+
 function formatKeywordLabel(keyword: string): string {
   // Keep multi-word keywords together while visually narrowing internal spacing.
   return keyword.trim().replace(/\s+/g, "\u202F")
@@ -755,12 +852,18 @@ function handleSelectMovie(movieId: string) {
   emit("selectMovie", movieId)
 }
 
+function handleResize() {
+  viewportWidth.value = window.innerWidth
+}
+
 onMounted(() => {
   document.addEventListener("keydown", handleMovieMenuKeydown, true)
+  window.addEventListener("resize", handleResize)
 })
 
 onUnmounted(() => {
   document.removeEventListener("keydown", handleMovieMenuKeydown, true)
+  window.removeEventListener("resize", handleResize)
   disposeOutOfBoundsHandler?.()
   disposeOutOfBoundsHandler = null
   lastReleaseShortcutRow = null
@@ -782,6 +885,65 @@ onUnmounted(() => {
 .movie-page {
   background-color: var(--bg-primary);
   --movie-nav-bar-width: calc(40vw + 0.8rem);
+}
+
+.similar-movies-section {
+  margin-top: 20px;
+}
+
+.similar-movies-title {
+  margin: 0 0 12px;
+  font-size: 1.15rem;
+  font-weight: 700;
+}
+
+.similar-movies-grid {
+  --sync-row-tail: 0px;
+  --sync-row-right-deadzone: 32px;
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 6px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.similar-movies-grid::-webkit-scrollbar {
+  height: 0;
+  display: none;
+}
+
+.similar-movie-card {
+  appearance: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.similar-movie-poster {
+  width: 100%;
+  height: 100%;
+}
+
+.similar-movie-poster-fallback {
+  background: linear-gradient(135deg, #282d3a, #171b24);
+}
+
+.similar-movie-meta {
+  inset: auto 0 0 0;
+}
+
+.similar-movie-name {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.similar-movie-sub {
+  white-space: nowrap;
 }
 
 .movie-menu-backdrop {
