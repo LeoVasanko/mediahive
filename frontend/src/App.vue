@@ -5,27 +5,32 @@
       <component :is="Component" v-show="false" />
     </router-view>
 
-    <!-- Scanning progress debug overlay -->
-    <div v-if="activeTasks.length > 0 || !wsConnected" class="scan-debug-overlay">
-      <div v-if="!wsConnected" class="scan-debug-item scan-debug-disconnected">
-        ⚡ Reconnecting...
+    <div v-if="showProgressPanel" class="activity-overlay">
+      <div class="activity-card">
+        <div class="activity-header">
+          <span>Library activity</span>
+          <span v-if="!wsConnected" class="activity-connection">Reconnecting...</span>
+        </div>
+        <div v-for="root in progressRoots" :key="root.rootId" class="activity-root" :class="root.toneClass">
+          <div class="activity-root-title">{{ root.rootLabel }}</div>
+          <div v-if="root.scanTarget" class="activity-root-target">{{ root.scanTarget }}</div>
+          <div class="activity-phase-row">
+            <span class="activity-phase">{{ root.phaseLabel }}</span>
+            <span v-if="root.progressLabel" class="activity-progress-label">{{ root.progressLabel }}</span>
+          </div>
+          <div class="activity-bar" :class="{ 'activity-bar-indeterminate': !root.isDeterminate }">
+            <div
+              class="activity-bar-fill"
+              :style="root.isDeterminate ? { width: `${root.progressPercent}%` } : undefined"
+            ></div>
+          </div>
+          <div v-if="root.phaseDetail" class="activity-detail">{{ root.phaseDetail }}</div>
+        </div>
       </div>
-      <div
-        v-for="task in activeTasks"
-        :key="task.id"
-        class="scan-debug-item"
-        :class="{
-          'scan-debug-done': task.status === 'completed',
-          'scan-debug-error': task.status === 'error',
-        }"
-      >
-        <span class="scan-debug-label">{{ task.id }}</span>
-        <span v-if="task.progress > 0" class="scan-debug-progress">
-          {{ Math.round(task.progress * 100) }}%
-        </span>
-        <span v-if="task.detail" class="scan-debug-detail">{{ task.detail }}</span>
-        <span class="scan-debug-status">{{ task.status }}</span>
-      </div>
+    </div>
+
+    <div v-if="libraryUpdateMessage" class="library-update-toast">
+      {{ libraryUpdateMessage }}
     </div>
 
     <!-- Persistent Header overlay - single instance -->
@@ -266,27 +271,229 @@ const {
   setActiveRoots,
 } = useMediaWebSocket()
 
-// Active tasks for the debug overlay
-const activeTasks = computed<TaskInfo[]>(() => Array.from(tasks.value.values()))
+type RootTaskInfo = TaskInfo & { root_id: string }
+
+interface ProgressRootState {
+  rootId: string
+  rootLabel: string
+  scanTarget: string | null
+  phaseLabel: string
+  phaseDetail: string | null
+  progressPercent: number
+  progressLabel: string | null
+  isDeterminate: boolean
+  toneClass: string
+}
+
+const activeTasks = computed<RootTaskInfo[]>(() => Array.from(tasks.value.values()))
 
 // Poll for active roots and connect WS to them
-const rootStatuses = ref<Map<string, { name: string; path: string; status: string }>>(new Map())
+const rootStatuses = ref<
+  Map<string, { name: string; path: string; status: string; snapshotLoaded: boolean }>
+>(new Map())
 
 function getRootName(rootId: string | null | undefined): string | null {
   if (!rootId) return null
   return rootStatuses.value.get(rootId)?.name || null
 }
 
+function normalizePosixPath(value: string): string {
+  return value.replace(/\\/g, "/")
+}
+
+function extractScanPath(detail: string): string | null {
+  if (!detail.startsWith("Scanning:")) return null
+  let value = detail.replace(/^Scanning:\s*/i, "").trim()
+  value = value.replace(/\s*\(\d+\s+found\)\s*$/i, "").trim()
+  return value || null
+}
+
+function buildScanTarget(rootId: string, rootPath: string | null, detail: string): string | null {
+  const rawPath = extractScanPath(detail)
+  if (!rawPath) return null
+
+  const posixRaw = normalizePosixPath(rawPath)
+  const posixRoot = rootPath ? normalizePosixPath(rootPath) : null
+
+  let relative = posixRaw
+  if (posixRoot) {
+    const lowRaw = posixRaw.toLowerCase()
+    const lowRoot = posixRoot.toLowerCase()
+    if (lowRaw === lowRoot) {
+      relative = ""
+    } else if (lowRaw.startsWith(`${lowRoot}/`)) {
+      relative = posixRaw.slice(posixRoot.length).replace(/^\/+/, "")
+    }
+  }
+
+  if (!relative) return rootId
+  if (relative.toLowerCase().startsWith(`${rootId.toLowerCase()}/`)) return relative
+  return `${rootId}/${relative}`
+}
+
+function describeRootProgress(
+  rootId: string,
+  rootPath: string | null,
+  tasksForRoot: RootTaskInfo[],
+  isInitialScanMode: boolean,
+): ProgressRootState | null {
+  const running = tasksForRoot.filter((task) => task.status === "running")
+  const latestError = [...tasksForRoot].reverse().find((task) => task.status === "error") || null
+
+  if (running.length === 0 && !latestError) return null
+
+  const scanTask = running.find((task) => task.id.startsWith("scan-")) || null
+  const showreelCount = running.filter((task) => task.id.startsWith("showreel-")).length
+  const otherRunningCount = running.length - (scanTask ? 1 : 0) - showreelCount
+
+  let phaseLabel = "Processing media"
+  let phaseDetail: string | null = null
+  let scanTarget: string | null = null
+  let isDeterminate = false
+  let progressPercent = 0
+  let progressLabel: string | null = null
+  let toneClass = ""
+
+  if (scanTask) {
+    const detail = (scanTask.detail || "").trim()
+    scanTarget = buildScanTarget(rootId, rootPath, detail)
+    if (detail.startsWith("Scanning:")) {
+      phaseLabel = isInitialScanMode ? "Scanning folders" : "Checking for updates"
+      phaseDetail = isInitialScanMode ? "Looking for new files" : "Running background scan"
+    } else if (/^Processing\s+\d+\s+(items|movies|series)/i.test(detail)) {
+      phaseLabel = "Preparing titles"
+      phaseDetail = "Matching files and grouping releases"
+    } else {
+      phaseLabel = "Fetching metadata"
+      phaseDetail = detail ? `Current title: ${detail}` : "Updating titles and artwork"
+    }
+    if (scanTask.progress > 0 && scanTask.progress <= 1) {
+      isDeterminate = true
+      progressPercent = Math.max(1, Math.round(scanTask.progress * 100))
+      progressLabel = `${progressPercent}%`
+    }
+  } else if (showreelCount > 0) {
+    phaseLabel = "Generating previews"
+    phaseDetail = showreelCount === 1 ? "Building 1 preview reel" : `Building ${showreelCount} preview reels`
+  } else if (otherRunningCount > 0) {
+    phaseLabel = "Finalizing updates"
+    phaseDetail = "Applying library changes"
+  } else if (latestError) {
+    phaseLabel = "Needs attention"
+    phaseDetail = latestError.detail || "A background task failed"
+    toneClass = "activity-root-error"
+  }
+
+  if (showreelCount > 0 && scanTask) {
+    phaseDetail = phaseDetail
+      ? `${phaseDetail}. Preview generation is running in parallel.`
+      : "Preview generation is running in parallel"
+  }
+
+  return {
+    rootId,
+    rootLabel: rootId,
+    scanTarget,
+    phaseLabel,
+    phaseDetail,
+    progressPercent,
+    progressLabel,
+    isDeterminate,
+    toneClass,
+  }
+}
+
+const progressRoots = computed<ProgressRootState[]>(() => {
+  const byRoot = new Map<string, RootTaskInfo[]>()
+  for (const task of activeTasks.value) {
+    const list = byRoot.get(task.root_id) || []
+    list.push(task)
+    byRoot.set(task.root_id, list)
+  }
+
+  const rows: ProgressRootState[] = []
+  const initial = isInitialScanMode.value
+  for (const [rootId, rootTasks] of byRoot) {
+    const rootPath = rootStatuses.value.get(rootId)?.path || null
+    const row = describeRootProgress(rootId, rootPath, rootTasks, initial)
+    if (row) rows.push(row)
+  }
+  return rows.sort((a, b) => a.rootLabel.localeCompare(b.rootLabel))
+})
+
+const isSettingsView = computed(() => route.path === "/settings")
+const hasLibraryItems = computed(() => {
+  if (!mediaIndex.value) return false
+  return mediaIndex.value.movies.length > 0 || mediaIndex.value.series.length > 0
+})
+const hasAnySnapshotLoaded = computed(() =>
+  Array.from(rootStatuses.value.values()).some((root) => root.snapshotLoaded),
+)
+const isInitialScanMode = computed(() => !hasLibraryItems.value && !hasAnySnapshotLoaded.value)
+
+const showProgressPanel = computed(() => {
+  if (isInitialScanMode.value) {
+    return !wsConnected.value || progressRoots.value.length > 0
+  }
+  if (!isSettingsView.value) return false
+  return !wsConnected.value || progressRoots.value.length > 0
+})
+
+const libraryUpdateMessage = ref<string | null>(null)
+let libraryUpdateToastTimer: number | null = null
+let seenTaskStates = new Map<string, string>()
+
+function showLibraryUpdateToast(message: string) {
+  libraryUpdateMessage.value = message
+  if (libraryUpdateToastTimer !== null) {
+    window.clearTimeout(libraryUpdateToastTimer)
+  }
+  libraryUpdateToastTimer = window.setTimeout(() => {
+    libraryUpdateMessage.value = null
+    libraryUpdateToastTimer = null
+  }, 5500)
+}
+
+watch(
+  activeTasks,
+  (tasksNow) => {
+    const nextSeen = new Map<string, string>()
+    for (const task of tasksNow) {
+      const key = `${task.root_id}:${task.id}`
+      nextSeen.set(key, task.status)
+      const previousStatus = seenTaskStates.get(key)
+      if (task.id.startsWith("scan-") && task.status === "completed" && previousStatus !== "completed") {
+        const detail = (task.detail || "").trim()
+        const doneMatch = detail.match(/^Done\s+[\u2014-]\s+(\d+)\s+movies,\s+(\d+)\s+series$/i)
+        if (doneMatch) {
+          const movies = Number(doneMatch[1] || "0")
+          const series = Number(doneMatch[2] || "0")
+          if (movies > 0 || series > 0) {
+            const rootName = getRootName(task.root_id) || task.root_id
+            showLibraryUpdateToast(`Library updated in ${rootName}: ${movies} movies, ${series} series`)
+          }
+        }
+      }
+    }
+    seenTaskStates = nextSeen
+  },
+  { deep: false },
+)
+
 async function refreshRoots() {
   try {
     const roots = await fetchRoots()
-    const newMap = new Map<string, { name: string; path: string; status: string }>()
+    const newMap = new Map<
+      string,
+      { name: string; path: string; status: string; snapshotLoaded: boolean }
+    >()
     const activeIds: string[] = []
     for (const r of roots) {
       newMap.set(r.root_id, {
         name: r.root_id,
         path: r.path,
         status: r.status,
+        snapshotLoaded: Boolean(r.snapshot_loaded),
       })
       if (r.status === "ready" || r.status === "scanning") {
         activeIds.push(r.root_id)
@@ -318,6 +525,10 @@ onMounted(() => {
 
 onUnmounted(() => {
   stopRootsPolling()
+  if (libraryUpdateToastTimer !== null) {
+    window.clearTimeout(libraryUpdateToastTimer)
+    libraryUpdateToastTimer = null
+  }
 })
 
 const settings = useSettings()
@@ -1361,72 +1572,138 @@ async function handleOpenFolder(folderPath: string, explicitRootId?: string | nu
   overflow: hidden;
 }
 
-/* Scanning progress debug overlay */
-.scan-debug-overlay {
+/* Unified library activity panel */
+.activity-overlay {
   position: fixed;
   bottom: 12px;
   right: 12px;
   z-index: 9999;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
-  font-size: 11px;
-  max-width: 380px;
   pointer-events: none;
 }
 
-.scan-debug-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 5px 10px;
-  background: rgba(0, 0, 0, 0.82);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 6px;
-  color: rgba(255, 255, 255, 0.7);
-  backdrop-filter: blur(8px);
-  white-space: nowrap;
-  overflow: hidden;
-}
-
-.scan-debug-disconnected {
-  color: #f59e0b;
-  border-color: rgba(245, 158, 11, 0.3);
-}
-
-.scan-debug-done {
-  color: #34d399;
-  border-color: rgba(52, 211, 153, 0.3);
-}
-
-.scan-debug-error {
-  color: #f87171;
-  border-color: rgba(248, 113, 113, 0.3);
-}
-
-.scan-debug-label {
-  color: rgba(255, 255, 255, 0.5);
-  flex-shrink: 0;
-}
-
-.scan-debug-progress {
-  color: #60a5fa;
+.library-update-toast {
+  position: fixed;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10000;
+  max-width: min(680px, calc(100vw - 24px));
+  padding: 9px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(52, 211, 153, 0.45);
+  background: rgba(6, 95, 70, 0.92);
+  color: rgba(255, 255, 255, 0.95);
+  font-size: 12px;
   font-weight: 600;
-  flex-shrink: 0;
+  text-align: center;
+  pointer-events: none;
+  backdrop-filter: blur(8px);
 }
 
-.scan-debug-detail {
-  color: rgba(255, 255, 255, 0.55);
+.activity-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(440px, calc(100vw - 24px));
+  padding: 12px;
+  background: rgba(0, 0, 0, 0.86);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 10px;
+  backdrop-filter: blur(10px);
+}
+
+.activity-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.activity-connection {
+  color: #f59e0b;
+  font-weight: 600;
+}
+
+.activity-root {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+}
+
+.activity-root-error {
+  border-color: rgba(248, 113, 113, 0.45);
+}
+
+.activity-root-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.95);
+}
+
+.activity-root-target {
+  font-size: 12px;
+  color: rgba(147, 197, 253, 0.95);
   overflow: hidden;
   text-overflow: ellipsis;
-  min-width: 0;
+  white-space: nowrap;
 }
 
-.scan-debug-status {
-  color: rgba(255, 255, 255, 0.35);
-  flex-shrink: 0;
-  margin-left: auto;
+.activity-phase-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.activity-phase {
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.activity-progress-label {
+  color: #60a5fa;
+  font-weight: 600;
+}
+
+.activity-bar {
+  position: relative;
+  height: 6px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.14);
+  overflow: hidden;
+}
+
+.activity-bar-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 100%;
+  background: linear-gradient(90deg, #3b82f6, #22d3ee);
+  border-radius: inherit;
+}
+
+.activity-bar-indeterminate .activity-bar-fill {
+  width: 45%;
+  animation: activity-indeterminate 1.3s ease-in-out infinite;
+}
+
+.activity-detail {
+  color: rgba(255, 255, 255, 0.58);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+@keyframes activity-indeterminate {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(250%);
+  }
 }
 
 .empty-hero {

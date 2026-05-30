@@ -14,6 +14,7 @@ export interface RootStatus {
   path: string
   status: string
   error: string | null
+  snapshot_loaded: boolean
   movies: number
   series: number
 }

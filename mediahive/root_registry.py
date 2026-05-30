@@ -201,6 +201,7 @@ class Supervisor:
                 "path": ctx.root_path.as_posix(),
                 "status": ctx.status,
                 "error": ctx.error,
+                "snapshot_loaded": ctx.store.snapshot_loaded,
                 "movies": len(ctx.store.movies),
                 "series": len(ctx.store.series),
             }

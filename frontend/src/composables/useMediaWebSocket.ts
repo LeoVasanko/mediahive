@@ -40,11 +40,13 @@ const MERGED_KEY_DELIMITER = "::"
  *  - "task"   → background task progress
  */
 export function useMediaWebSocket() {
+  type RootTaskInfo = TaskInfo & { root_id: string }
+
   const mediaIndex = shallowRef<MediaIndex | null>(null)
   const loading = shallowRef(true)
   const error = shallowRef<string | null>(null)
   const connected = shallowRef(false)
-  const tasks = shallowRef<Map<string, TaskInfo>>(new Map())
+  const tasks = shallowRef<Map<string, RootTaskInfo>>(new Map())
 
   const roots = shallowRef<Map<string, RootState>>(new Map())
   let disposed = false
@@ -501,10 +503,11 @@ export function useMediaWebSocket() {
       }
       case "task": {
         const info = msg.data
-        tasks.value.set(info.id, info)
+        const taskKey = `${state.rootId}:${info.id}`
+        tasks.value.set(taskKey, { ...info, root_id: state.rootId })
         tasks.value = new Map(tasks.value)
         if (info.status === "completed" || info.status === "cancelled" || info.status === "error") {
-          completedTaskIds.add(info.id)
+          completedTaskIds.add(taskKey)
           startTaskSweep()
         }
         break

@@ -53,6 +53,7 @@ class IndexStore:
         snapshot_path: Path,
     ) -> None:
         self.snapshot_path = snapshot_path
+        self.snapshot_loaded = False
 
         # The index: keyed by item id
         self.movies: dict[str, Movie] = {}
@@ -85,6 +86,7 @@ class IndexStore:
     async def load_snapshot(self) -> None:
         """Load index from disk snapshot (recovery on startup)."""
         ap = AsyncPath(self.snapshot_path)
+        self.snapshot_loaded = False
         if not await ap.exists():
             logger.info("No snapshot found at %s, starting fresh", self.snapshot_path)
             self._schedule_snapshot_cache_refresh()
@@ -101,6 +103,7 @@ class IndexStore:
                 loaded_people,
             )
             self._rebuild_tmdb_indexes()
+            self.snapshot_loaded = True
 
             self._schedule_snapshot_cache_refresh()
         except Exception:
