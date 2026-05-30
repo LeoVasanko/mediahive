@@ -85,7 +85,7 @@
             @click="handlePlay(episode)"
             @focusin="handleEpisodeFocus(sIndex)"
             @keydown.enter.prevent="handleEpisodeEnter($event, episode)"
-            @mouseenter="handleEpisodeHover(`${sIndex}-${eIndex}`, true)"
+            @mouseenter="handleEpisodeHover($event, `${sIndex}-${eIndex}`, true)"
             @mouseleave="handleEpisodeHover(`${sIndex}-${eIndex}`, false)"
             @contextmenu="handleContextMenu($event, episode)"
           >
@@ -810,7 +810,7 @@ function pauseEpisodeVideo(video: HTMLVideoElement) {
   video.volume = 0
 }
 
-function syncSeasonVideoPlayback() {
+function syncSeasonVideoPlayback(priorityKey?: string) {
   seasonStartupToken += 1
   const token = seasonStartupToken
   clearSeasonStartupTimers()
@@ -841,10 +841,17 @@ function syncSeasonVideoPlayback() {
     })
   }
 
-  activeSeasonVideos.sort((a, b) => a.episodeIndex - b.episodeIndex)
+  activeSeasonVideos.sort((a, b) => {
+    if (priorityKey) {
+      if (a.key === priorityKey) return -1
+      if (b.key === priorityKey) return 1
+    }
+    return a.episodeIndex - b.episodeIndex
+  })
 
   for (let i = 0; i < activeSeasonVideos.length; i += 1) {
     const { key, video } = activeSeasonVideos[i]
+    const delayMs = priorityKey ? (i === 0 ? 0 : i * SEASON_VIDEO_STARTUP_STEP_MS) : i * SEASON_VIDEO_STARTUP_STEP_MS
     const timeoutId = setTimeout(() => {
       if (token !== seasonStartupToken || activeSeasonIndex.value < 0) return
       if (safariAutoplay && video.readyState >= 1) {
@@ -852,7 +859,7 @@ function syncSeasonVideoPlayback() {
       }
       video.play().catch(() => {})
       seasonStartupTimers.delete(key)
-    }, i * SEASON_VIDEO_STARTUP_STEP_MS)
+    }, delayMs)
     seasonStartupTimers.set(key, timeoutId)
   }
 }
@@ -878,6 +885,14 @@ function cleanupVideo(video: HTMLVideoElement | null | undefined) {
 // Track mounted videos and sync playback with active season.
 function setVideoRef(el: HTMLVideoElement | null, key: string) {
   if (el) {
+    const existing = videoRefs.value.get(key)
+    if (existing === el) {
+      return
+    }
+    if (existing && existing !== el) {
+      cleanupVideo(existing)
+    }
+
     videoRefs.value.set(key, el)
     el.addEventListener(
       "loadeddata",
@@ -908,11 +923,27 @@ function setVideoRef(el: HTMLVideoElement | null, key: string) {
 const volumeFadeIntervals = new Map<string, ReturnType<typeof setInterval>>()
 
 // Handle hover-based audio fade in/out for episode videos
-function handleEpisodeHover(key: string, isEntering: boolean) {
+function handleEpisodeHover(eventOrKey: MouseEvent | string, keyOrIsEntering: string | boolean, maybeIsEntering?: boolean) {
+  const event = typeof eventOrKey === "string" ? null : eventOrKey
+  const key = typeof eventOrKey === "string" ? eventOrKey : (keyOrIsEntering as string)
+  const isEntering = typeof eventOrKey === "string" ? Boolean(keyOrIsEntering) : Boolean(maybeIsEntering)
+
+  if (!document.documentElement.classList.contains("mouse-active")) return
+
   const video = videoRefs.value.get(key)
   if (!video) return
   const parsed = parseEpisodeKey(key)
-  if (!parsed || parsed.seasonIndex !== activeSeasonIndex.value) return
+  if (!parsed) return
+
+  if (isEntering) {
+    if (event?.currentTarget instanceof HTMLElement) {
+      event.currentTarget.focus({ preventScroll: true })
+    }
+    setActiveSeason(parsed.seasonIndex)
+    syncSeasonVideoPlayback(key)
+  }
+
+  if (parsed.seasonIndex !== activeSeasonIndex.value) return
 
   // Clear any existing fade for this video
   const existingInterval = volumeFadeIntervals.get(key)
