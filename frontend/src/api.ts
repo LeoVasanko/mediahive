@@ -113,6 +113,16 @@ function toRootAssetPath(path: string): string | null {
   return logical.length > 0 ? logical : null
 }
 
+function splitAssetTypePath(assetPath: string): { assetType: string; relativePath: string } | null {
+  const parts = assetPath.split("/").filter((segment) => segment.length > 0)
+  if (parts.length < 2) return null
+  const [assetType, ...rest] = parts
+  if (!assetType || !["movies", "series", "people"].includes(assetType.toLowerCase())) {
+    return null
+  }
+  return { assetType: assetType.toLowerCase(), relativePath: rest.join("/") }
+}
+
 /**
  * Fetch active roots and their statuses
  */
@@ -134,12 +144,10 @@ export async function fetchResumePositions(): Promise<Record<string, number>> {
     const merged: Record<string, number> = {}
     await Promise.all(
       roots.map(async (root) => {
-        const response = await fetch(
-          `/api/roots/${encodeURIComponent(root.root_id)}/playback/resume-positions`,
-        )
+        const response = await fetch(`/api/meta/${encodeURIComponent(root.root_id)}/playback-state`)
         if (!response.ok) return
         const data = await response.json().catch(() => ({}))
-        const positions = data?.resume_positions
+        const positions = data?.data?.resume_positions
         if (positions && typeof positions === "object") {
           Object.assign(merged, positions)
         }
@@ -195,7 +203,7 @@ export async function playMedia(
   if (playerId) body.player_id = playerId
   if (playerCustomCmd) body.player_custom_cmd = playerCustomCmd
   try {
-    const response = await fetch(`/api/roots/${encodeURIComponent(rootId)}/play`, {
+    const response = await fetch(`/api/play/${encodeURIComponent(rootId)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -216,7 +224,7 @@ export async function playMedia(
 export async function openFolder(rootId: string, folderPath: string): Promise<void> {
   const normalizedPath = normalizeMediaPath(folderPath)
   try {
-    const response = await fetch(`/api/roots/${encodeURIComponent(rootId)}/open-folder`, {
+    const response = await fetch(`/api/open-folder/${encodeURIComponent(rootId)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ folder_path: normalizedPath }),
@@ -279,7 +287,10 @@ export function getCoverUrl(coverPath: string | null, rootId?: string | null): s
   const rid = rootId || "unknown"
   const assetPath = toRootAssetPath(coverPath)
   if (assetPath) {
-    return `/api/roots/${encodeURIComponent(rid)}/assets/${encodePathSegments(assetPath)}`
+    const split = splitAssetTypePath(assetPath)
+    if (split) {
+      return `/api/assets/${encodeURIComponent(rid)}/${encodeURIComponent(split.assetType)}/${encodePathSegments(split.relativePath)}`
+    }
   }
 
   const mediaPath = normalizeCoverPath(coverPath)

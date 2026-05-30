@@ -34,9 +34,7 @@ Examples:
 Exclude paths by creating .mediahive/scanignore (gitignore syntax).
 
 The server exposes per-root endpoints:
-  WS   /api/roots/{root_id}/ws  Live index updates & task progress
-  POST /api/roots/{root_id}/scan    Trigger a new scan
-  GET  /api/roots/{root_id}/status  Current root status
+    WS   /api/ws/{root_id}  Live index updates & task progress
         """,
     )
     parser.add_argument(

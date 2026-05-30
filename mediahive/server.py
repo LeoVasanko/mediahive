@@ -58,6 +58,7 @@ supervisor = Supervisor()
 _attach_scanners_lock = asyncio.Lock()
 
 _RANGE_RE = re.compile(r"bytes=(\d*)-(\d*)$")
+_ROOT_ASSET_TYPES = {"movies", "series", "people"}
 
 if sys.platform == "win32":
     from ctypes import wintypes
@@ -75,22 +76,31 @@ def _get_context(root_id: str):
     return ctx
 
 
-def _load_resume_positions(root_path: Path) -> dict[str, int]:
-    playback_state_path = root_path / ".mediahive" / "playback-state.json"
+def _load_root_metadata(root_path: Path, meta_key: str):
+    """Load allowed per-root metadata values from .mediahive."""
+    key = meta_key.strip().lower().strip("/")
+    allowed: dict[str, tuple[str, str]] = {
+        "playback-state": ("playback-state.json", "json"),
+        "scanignore": ("scanignore", "text"),
+    }
+
+    mapped = allowed.get(key)
+    if mapped is None:
+        raise HTTPException(status_code=404, detail=f"Unknown metadata key: {meta_key}")
+
+    rel_path, mode = mapped
+    full_path = _resolve_root_scoped_path(root_path / ".mediahive", rel_path)
+    if not full_path.exists() or not full_path.is_file():
+        raise HTTPException(status_code=404, detail=f"Metadata not found: {meta_key}")
+
     try:
-        raw = json.loads(playback_state_path.read_text(encoding="utf-8"))
+        if mode == "json":
+            return json.loads(full_path.read_text(encoding="utf-8"))
+        return full_path.read_text(encoding="utf-8")
     except OSError, TypeError, json.JSONDecodeError:
-        return {}
-
-    resume_positions = raw.get("resume_positions") if isinstance(raw, dict) else None
-    if not isinstance(resume_positions, dict):
-        return {}
-
-    cleaned: dict[str, int] = {}
-    for key, value in resume_positions.items():
-        if isinstance(key, str) and isinstance(value, (int, float)):
-            cleaned[key] = max(0, int(value))
-    return cleaned
+        raise HTTPException(
+            status_code=500, detail=f"Failed to load metadata: {meta_key}"
+        )
 
 
 def _open_with_default_app(path: Path) -> None:
@@ -445,37 +455,10 @@ async def put_roots(request: Request):
     }
 
 
-@app.get("/api/roots/{root_id}/status")
-async def get_root_status(root_id: str):
-    """Return status for a single root."""
-    ctx = _get_context(root_id)
-    scanning = ctx.scanner is not None and ctx.scanner.is_scanning()
-    return {
-        "root_id": ctx.root_id,
-        "path": ctx.root_path.as_posix(),
-        "status": ctx.status,
-        "error": ctx.error,
-        "scanning": scanning,
-        "movies": len(ctx.store.movies),
-        "series": len(ctx.store.series),
-        "showreel_queue": ctx.scanner.showreel_queue_size() if ctx.scanner else 0,
-    }
-
-
-@app.post("/api/roots/{root_id}/scan")
-async def trigger_root_scan(root_id: str):
-    """Trigger a scan for a single root."""
-    ctx = _get_context(root_id)
-    if ctx.scanner is None:
-        raise HTTPException(status_code=503, detail="Scanner not active")
-    started = ctx.scanner.trigger_scan()
-    return {"status": "started" if started else "already_running"}
-
-
 # --- Per-root WebSocket ---
 
 
-@app.websocket("/api/roots/{root_id}/ws")
+@app.websocket("/api/ws/{root_id}")
 async def ws_endpoint(ws: WebSocket, root_id: str) -> None:
     """Live index updates and task progress for a single root."""
     ctx = supervisor.get(root_id)
@@ -503,7 +486,7 @@ async def list_players():
     return {"players": [msgspec.structs.asdict(p) for p in players]}
 
 
-@app.post("/api/roots/{root_id}/play")
+@app.post("/api/play/{root_id}")
 async def play_media(root_id: str, request: Request):
     """Open a media file with the selected player."""
     ctx = _get_context(root_id)
@@ -537,7 +520,7 @@ async def play_media(root_id: str, request: Request):
         raise HTTPException(status_code=500, detail=f"Failed to play media: {e}")
 
 
-@app.post("/api/roots/{root_id}/open-folder")
+@app.post("/api/open-folder/{root_id}")
 async def open_folder(root_id: str, request: Request):
     """Open a folder in the system file explorer."""
     ctx = _get_context(root_id)
@@ -572,11 +555,11 @@ async def open_folder(root_id: str, request: Request):
         raise HTTPException(status_code=500, detail=f"Failed to open folder: {e}")
 
 
-@app.get("/api/roots/{root_id}/playback/resume-positions")
-async def root_playback_resume_positions(root_id: str):
-    """Return saved per-file resume positions under a specific root."""
+@app.get("/api/meta/{root_id}/{meta_key}")
+async def root_metadata(root_id: str, meta_key: str):
+    """Return a root metadata value from .mediahive for allowed keys."""
     ctx = _get_context(root_id)
-    return {"resume_positions": _load_resume_positions(ctx.root_path)}
+    return {"key": meta_key, "data": _load_root_metadata(ctx.root_path, meta_key)}
 
 
 # --- MPC-BE / Player status ---
@@ -704,13 +687,23 @@ async def serve_media_file(root_id: str, file_path: str, request: Request):
     return _serve_file_response(full_path, file_path, request)
 
 
-@app.get("/api/roots/{root_id}/assets/{asset_path:path}")
-async def serve_root_asset_file(root_id: str, asset_path: str, request: Request):
-    """Serve files from a root's .mediahive cache using logical asset paths."""
+@app.get("/api/assets/{root_id}/{asset_type}/{asset_path:path}")
+async def serve_root_asset_file(
+    root_id: str,
+    asset_type: str,
+    asset_path: str,
+    request: Request,
+):
+    """Serve typed files from a root's .mediahive cache using logical asset paths."""
+    asset_type_key = asset_type.lower()
+    if asset_type_key not in _ROOT_ASSET_TYPES:
+        raise HTTPException(status_code=404, detail=f"Unknown asset type: {asset_type}")
+
     ctx = _get_context(root_id)
     base = ctx.root_path / ".mediahive"
-    full_path = _resolve_root_scoped_path(base, asset_path)
-    return _serve_file_response(full_path, asset_path, request)
+    logical_path = f"{asset_type_key}/{asset_path}"
+    full_path = _resolve_root_scoped_path(base, logical_path)
+    return _serve_file_response(full_path, logical_path, request)
 
 
 # Serve the Vue frontend (needs to be last if SPA catch-all is used)

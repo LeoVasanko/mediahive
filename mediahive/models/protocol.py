@@ -53,7 +53,7 @@ __all__ = [
 
 
 class PlayMediaRequest(msgspec.Struct):
-    """POST /api/roots/{root_id}/play body."""
+    """POST /api/play/{root_id} body."""
 
     file_path: str = ""
     player_id: str | None = None
@@ -61,7 +61,7 @@ class PlayMediaRequest(msgspec.Struct):
 
 
 class OpenFolderRequest(msgspec.Struct):
-    """POST /api/roots/{root_id}/open-folder body."""
+    """POST /api/open-folder/{root_id} body."""
 
     folder_path: str = ""
 

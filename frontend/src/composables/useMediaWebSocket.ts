@@ -464,7 +464,7 @@ export function useMediaWebSocket() {
     }
 
     const proto = location.protocol === "https:" ? "wss:" : "ws:"
-    const url = `${proto}//${location.host}/api/roots/${encodeURIComponent(rootId)}/ws`
+    const url = `${proto}//${location.host}/api/ws/${encodeURIComponent(rootId)}`
 
     const state: RootState = {
       rootId,

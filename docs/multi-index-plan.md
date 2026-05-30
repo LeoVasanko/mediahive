@@ -47,14 +47,12 @@ Each active root gets an isolated `RootContext` managed by the `Supervisor`:
 |----------|-------------|
 | `GET /api/roots` | List all roots (name, path, root_id, status) |
 | `PUT /api/roots` | Atomically replace full root map `{name: path}` |
-| `GET /api/roots/{root_id}/status` | Per-root scanning/loading/error state |
-| `POST /api/roots/{root_id}/scan` | Trigger scan for one root |
-| `WS /api/roots/{root_id}/ws` | Per-root WebSocket (init/upsert/remove/task) |
+| `WS /api/ws/{root_id}` | Per-root WebSocket (init/upsert/remove/task + status/task events) |
 | `GET /api/media/{root_id}/{path:path}` | Serve media file scoped to root |
-| `GET /api/roots/{root_id}/assets/{asset_path:path}` | Serve `.mediahive` assets via logical paths |
-| `POST /api/roots/{root_id}/play` | Play file within root |
-| `POST /api/roots/{root_id}/open-folder` | Open folder within root |
-| `GET /api/roots/{root_id}/playback/resume-positions` | Per-root resume positions |
+| `GET /api/assets/{root_id}/{asset_type}/{asset_path:path}` | Serve `.mediahive/{asset_type}` assets (`movies`, `series`, `people`) |
+| `POST /api/play/{root_id}` | Play file within root |
+| `POST /api/open-folder/{root_id}` | Open folder within root |
+| `GET /api/meta/{root_id}/{meta_key}` | Per-root metadata (for example `playback-state`) |
 | `POST /api/ui/pick-folder` | Native OS folder picker (returns path) |
 
 > **Removed legacy endpoints**: `/api/change-folder`, `/api/index`, `/api/scan`, `/api/status`, `/api/playback/resume-positions`. No backwards compatibility is maintained.
@@ -93,4 +91,4 @@ All stored and transmitted paths use forward slashes exclusively:
 - `App.vue` merges per-root `movieMap`/`seriesMap` into a single `mediaIndex`.
 - `Header.vue` provides add/remove root UI via `PUT /api/roots`.
 - Playback URLs are root-qualified (`/api/media/{root_id}/...`).
-- Metadata cache assets use logical root paths (`/api/roots/{root_id}/assets/...`) rather than exposing `.mediahive` in URLs.
+- Metadata cache assets use typed root paths (`/api/assets/{root_id}/{asset_type}/...`) rather than exposing `.mediahive` in URLs.
