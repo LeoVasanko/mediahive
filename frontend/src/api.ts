@@ -89,6 +89,30 @@ export function getVideoSourceAttributes(path: string | null | undefined): Video
   return { type: "video/mp4", codecs: "hvc1" }
 }
 
+function encodePathSegments(path: string): string {
+  return path
+    .split("/")
+    .filter((segment) => segment.length > 0)
+    .map((segment) => encodeURIComponent(segment))
+    .join("/")
+}
+
+function normalizeCoverPath(path: string): string {
+  return path
+    .replace(/\\/g, "/")
+    .replace(/^[A-Za-z]:\//, "")
+    .replace(/^\/+/, "")
+}
+
+function toRootAssetPath(path: string): string | null {
+  const normalized = normalizeCoverPath(path)
+  const marker = ".mediahive/"
+  const idx = normalized.toLowerCase().indexOf(marker)
+  if (idx < 0) return null
+  const logical = normalized.slice(idx + marker.length)
+  return logical.length > 0 ? logical : null
+}
+
 /**
  * Fetch active roots and their statuses
  */
@@ -252,29 +276,14 @@ export function getCoverUrl(coverPath: string | null, rootId?: string | null): s
     return ""
   }
 
-  // Convert relative path to URL path for FastAPI server
-  // .mediahive/covers/Movies/... -> /api/media/{root_id}/.mediahive/covers/Movies/...
-  let urlPath = coverPath
-
-  // Remove drive letter (Z:) and convert backslashes to forward slashes
-  if (urlPath.match(/^[A-Za-z]:/)) {
-    urlPath = urlPath.substring(2)
-  }
-  urlPath = urlPath.replace(/\\/g, "/")
-
-  // Ensure path starts with /
-  if (!urlPath.startsWith("/")) {
-    urlPath = "/" + urlPath
-  }
-
-  // Encode URI components but preserve slashes
-  const encodedPath = urlPath
-    .split("/")
-    .map((segment) => encodeURIComponent(segment))
-    .join("/")
-
   const rid = rootId || "unknown"
-  return `/api/media/${encodeURIComponent(rid)}${encodedPath}`
+  const assetPath = toRootAssetPath(coverPath)
+  if (assetPath) {
+    return `/api/roots/${encodeURIComponent(rid)}/assets/${encodePathSegments(assetPath)}`
+  }
+
+  const mediaPath = normalizeCoverPath(coverPath)
+  return `/api/media/${encodeURIComponent(rid)}/${encodePathSegments(mediaPath)}`
 }
 
 /**

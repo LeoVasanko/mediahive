@@ -51,6 +51,7 @@ Each active root gets an isolated `RootContext` managed by the `Supervisor`:
 | `POST /api/roots/{root_id}/scan` | Trigger scan for one root |
 | `WS /api/roots/{root_id}/ws` | Per-root WebSocket (init/upsert/remove/task) |
 | `GET /api/media/{root_id}/{path:path}` | Serve media file scoped to root |
+| `GET /api/roots/{root_id}/assets/{asset_path:path}` | Serve `.mediahive` assets via logical paths |
 | `POST /api/roots/{root_id}/play` | Play file within root |
 | `POST /api/roots/{root_id}/open-folder` | Open folder within root |
 | `GET /api/roots/{root_id}/playback/resume-positions` | Per-root resume positions |
@@ -91,4 +92,5 @@ All stored and transmitted paths use forward slashes exclusively:
 - `useMediaWebSocket.ts` manages one WebSocket per active root.
 - `App.vue` merges per-root `movieMap`/`seriesMap` into a single `mediaIndex`.
 - `Header.vue` provides add/remove root UI via `PUT /api/roots`.
-- All media URLs are root-qualified (`/api/media/{root_id}/...`).
+- Playback URLs are root-qualified (`/api/media/{root_id}/...`).
+- Metadata cache assets use logical root paths (`/api/roots/{root_id}/assets/...`) rather than exposing `.mediahive` in URLs.

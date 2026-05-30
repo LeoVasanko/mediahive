@@ -19,6 +19,7 @@ All media paths are scoped to a **root**, identified by a stable `root_id`.
 | `GET` | `/api/player/status` | Returns whether remote player control is currently available. |
 | `GET` | `/api/mpcbe/status` | Reports whether MPC-BE's local web interface is reachable. |
 | `GET` | `/api/media/{root_id}/{file_path:path}` | Serves files from the specified root. |
+| `GET` | `/api/roots/{root_id}/assets/{asset_path:path}` | Serves files from `<root>/.mediahive` via logical asset paths. |
 | `WS` | `/api/roots/{root_id}/ws` | Streams live index updates and task progress for one root. |
 
 ## Notes
@@ -26,5 +27,6 @@ All media paths are scoped to a **root**, identified by a stable `root_id`.
 - `PUT /api/roots` accepts `{ "roots": { "name": "/absolute/path", ... } }`, validates paths, and atomically swaps the active set.
 - `POST /api/roots/{root_id}/play` and `POST /api/roots/{root_id}/open-folder` expect JSON request bodies with `file_path` / `folder_path` relative to the root.
 - `GET /api/media/{root_id}/{file_path:path}` is constrained to the specified root; path traversal outside the root is rejected.
+- `GET /api/roots/{root_id}/assets/{asset_path:path}` is constrained to `<root>/.mediahive`; metadata image URLs should use this endpoint.
 - `GET /api/player/status` returns `{ "remote": true|false }`.
 - `GET /api/mpcbe/status` returns `false` on non-Windows platforms.

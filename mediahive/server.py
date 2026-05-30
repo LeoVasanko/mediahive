@@ -616,18 +616,18 @@ def _mpcbe_request(path: str, timeout: float = 0.75, port: int | None = None) ->
 # --- Media file serving ---
 
 
-@app.get("/api/media/{root_id}/{file_path:path}")
-async def serve_media_file(root_id: str, file_path: str, request: Request):
-    """Serve a media file asynchronously, scoped to a root."""
-    ctx = _get_context(root_id)
-    full_path = ctx.root_path / file_path.lstrip("/")
-
-    # Security: ensure path doesn't escape base
+def _resolve_root_scoped_path(base: Path, raw_path: str) -> Path:
+    """Resolve a user path under a fixed base directory and block traversal."""
+    candidate = base / raw_path.lstrip("/")
     try:
-        full_path.resolve().relative_to(ctx.root_path.resolve())
+        candidate.resolve().relative_to(base.resolve())
     except ValueError:
         raise HTTPException(status_code=403, detail="Access denied")
+    return candidate
 
+
+def _serve_file_response(full_path: Path, file_path: str, request: Request):
+    """Serve a file with range + cache support."""
     if not full_path.exists():
         raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
 
@@ -694,6 +694,23 @@ async def serve_media_file(root_id: str, file_path: str, request: Request):
         media_type=content_type,
         headers=headers,
     )
+
+
+@app.get("/api/media/{root_id}/{file_path:path}")
+async def serve_media_file(root_id: str, file_path: str, request: Request):
+    """Serve a media file asynchronously, scoped to a root."""
+    ctx = _get_context(root_id)
+    full_path = _resolve_root_scoped_path(ctx.root_path, file_path)
+    return _serve_file_response(full_path, file_path, request)
+
+
+@app.get("/api/roots/{root_id}/assets/{asset_path:path}")
+async def serve_root_asset_file(root_id: str, asset_path: str, request: Request):
+    """Serve files from a root's .mediahive cache using logical asset paths."""
+    ctx = _get_context(root_id)
+    base = ctx.root_path / ".mediahive"
+    full_path = _resolve_root_scoped_path(base, asset_path)
+    return _serve_file_response(full_path, asset_path, request)
 
 
 # Serve the Vue frontend (needs to be last if SPA catch-all is used)
