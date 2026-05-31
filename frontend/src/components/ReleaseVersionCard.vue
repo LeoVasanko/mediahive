@@ -19,7 +19,6 @@
       <div class="version-badges">
         <span v-if="torrent.resolution" class="v-badge res">{{ torrent.resolution }}</span>
         <span v-if="showHdrBadge" class="v-badge hdr">HDR</span>
-        <span v-if="showHdr10PlusBadge" class="v-badge hdr10plus">HDR10+</span>
         <span v-if="displayCodecBadge" class="v-badge codec">{{ displayCodecBadge }}</span>
         <span v-if="displayQualityBadge" class="v-badge qual">{{ displayQualityBadge }}</span>
         <span v-if="displayAudioBadge" class="v-badge audio">{{ displayAudioBadge }}</span>
@@ -57,6 +56,12 @@
         :src="streamingServiceLogo.src"
         :alt="streamingServiceLogo.alt"
         :title="streamingServiceLogo.alt"
+      />
+      <img
+        v-if="showHdr10PlusLogo"
+        class="version-hdr10plus-logo"
+        :src="hdr10plusLogoUrl"
+        alt="HDR10+"
       />
       <DolbyBadges
         class="version-dolby"
@@ -101,6 +106,7 @@ import hboMaxLogoUrl from "../assets/service-hbo-max.webp"
 import huluLogoUrl from "../assets/service-hulu.webp"
 import disneyLogoUrl from "../assets/service-disney.svg"
 import itunesLogoUrl from "../assets/service-itunes.png"
+import hdr10plusLogoUrl from "../assets/hdr10plus-logo.png"
 
 defineOptions({
   inheritAttrs: false,
@@ -328,7 +334,7 @@ const hasHdr10Plus = computed(() => {
   return hdr10PlusPattern.test(text)
 })
 
-const showHdr10PlusBadge = computed(() => hasHdr10Plus.value && !hasDolbyVision.value)
+const showHdr10PlusLogo = computed(() => hasHdr10Plus.value && !hasDolbyVision.value)
 
 const isSelectable = computed(() => {
   if (props.selectable !== undefined) return props.selectable
@@ -513,6 +519,15 @@ html.mouse-active .version-row.version-best:hover {
   object-fit: contain;
 }
 
+.version-hdr10plus-logo {
+  align-self: stretch;
+  display: block;
+  width: auto;
+  height: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
 .v-badge.res {
   background: #111111;
   color: #f8fafc;
@@ -536,11 +551,6 @@ html.mouse-active .version-row.version-best:hover {
 .v-badge.hdr {
   background: #d4a017;
   color: #1c1917;
-}
-
-.v-badge.hdr10plus {
-  background: #b8860b;
-  color: #fff8e1;
 }
 
 .v-badge.group {
