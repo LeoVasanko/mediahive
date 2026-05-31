@@ -18,7 +18,6 @@ from mediahive.models.tmdb import (
     Info,
     Person,
     SeasonInfo,
-    SimilarMedia,
 )
 
 # TMDb API configuration
@@ -148,19 +147,19 @@ async def tmdb_api_request(
 
 
 async def fetch_movie_details(movie_id: int) -> dict | None:
-    """Fetch movie info including credits, similar, keywords, and alt titles."""
+    """Fetch movie info including credits, keywords, alt titles, and collection."""
     # Use append_to_response to get multiple data in one request
     return await tmdb_api_request(
         f"/movie/{movie_id}",
-        {"append_to_response": "credits,similar,keywords,alternative_titles"},
+        {"append_to_response": "credits,keywords,alternative_titles"},
     )
 
 
 async def fetch_series_details(series_id: int) -> dict | None:
-    """Fetch detailed TV series info including credits, similar, and keywords."""
+    """Fetch detailed TV series info including credits and keywords."""
     # Use append_to_response to get multiple data in one request
     return await tmdb_api_request(
-        f"/tv/{series_id}", {"append_to_response": "credits,similar,keywords"}
+        f"/tv/{series_id}", {"append_to_response": "credits,keywords"}
     )
 
 
@@ -385,7 +384,7 @@ async def fetch_movie_info(
     result = data["results"][0]
     movie_id = result["id"]
 
-    # Fetch full details with credits, similar movies, and keywords
+    # Fetch full details with credits, keywords, alt titles, and collection
     details = await fetch_movie_details(movie_id)
     if not details:
         # Fall back to basic info from search
@@ -394,6 +393,7 @@ async def fetch_movie_info(
                 tmdb_id=movie_id,
                 title=result.get("title"),
                 original_title=result.get("original_title"),
+                original_language=result.get("original_language"),
                 rating=result.get("vote_average"),
                 vote_count=result.get("vote_count"),
                 overview=result.get("overview"),
@@ -450,15 +450,19 @@ async def fetch_movie_info(
     directors = [c["name"] for c in crew if c.get("job") == "Director"]
     director = directors[0] if directors else None
 
-    # Extract similar movies (limit to 10)
-    similar_data = details.get("similar", {}).get("results", [])[:10]
-    similar = [SimilarMedia(id=s["id"], title=s["title"]) for s in similar_data]
+    collection_data = details.get("belongs_to_collection")
+    collection = None
+    if isinstance(collection_data, dict):
+        collection_name = collection_data.get("name")
+        if isinstance(collection_name, str):
+            collection = collection_name or None
 
     return (
         Info(
             tmdb_id=movie_id,
             title=details.get("title"),
             original_title=details.get("original_title"),
+            original_language=details.get("original_language"),
             alternative_titles=alternative_titles,
             rating=details.get("vote_average"),
             vote_count=details.get("vote_count"),
@@ -466,9 +470,9 @@ async def fetch_movie_info(
             genres=genres or None,
             release_date=details.get("release_date"),
             runtime=details.get("runtime"),
+            collection=collection,
             status=details.get("status"),
             tagline=details.get("tagline"),
-            similar=similar or None,
             keywords=keywords or None,
             cast=cast or None,
             director=director,
@@ -513,7 +517,7 @@ async def fetch_series_info(
     result = data["results"][0]
     series_id = result["id"]
 
-    # Fetch full details with credits, similar shows, and keywords
+    # Fetch full details with credits and keywords
     details = await fetch_series_details(series_id)
     if not details:
         # Fall back to basic info from search
@@ -522,6 +526,7 @@ async def fetch_series_info(
                 tmdb_id=series_id,
                 title=result.get("name"),
                 original_title=result.get("original_name"),
+                original_language=result.get("original_language"),
                 rating=result.get("vote_average"),
                 vote_count=result.get("vote_count"),
                 overview=result.get("overview"),
@@ -564,10 +569,6 @@ async def fetch_series_info(
     # Extract networks
     networks = [n["name"] for n in details.get("networks", [])]
 
-    # Extract similar series (limit to 10)
-    similar_data = details.get("similar", {}).get("results", [])[:10]
-    similar = [SimilarMedia(id=s["id"], title=s["name"]) for s in similar_data]
-
     # Get first air date
     first_air_date = details.get("first_air_date")
 
@@ -576,6 +577,7 @@ async def fetch_series_info(
             tmdb_id=series_id,
             title=details.get("name"),
             original_title=details.get("original_name"),
+            original_language=details.get("original_language"),
             rating=details.get("vote_average"),
             vote_count=details.get("vote_count"),
             overview=details.get("overview"),
@@ -583,7 +585,6 @@ async def fetch_series_info(
             release_date=first_air_date,
             status=details.get("status"),
             tagline=details.get("tagline"),
-            similar=similar or None,
             keywords=keywords or None,
             cast=cast or None,
             creators=creators or None,

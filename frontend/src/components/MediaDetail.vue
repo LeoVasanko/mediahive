@@ -180,31 +180,29 @@
             </div>
           </div>
 
-          <section v-if="item.type === 'movies' && similarMovies.length > 0" class="similar-movies-section">
-            <h2 class="similar-movies-title">Similar In Library</h2>
+          <section
+            v-if="item.type === 'movies' && collectionMovies.length > 0"
+            class="similar-movies-section"
+          >
             <div class="similar-movies-grid" data-sync-scroll-row="true" data-sync-scroll-group="similar">
-              <button
-                v-for="(movie, similarIndex) in similarMovies"
-                :key="movie.tmdbId"
-                type="button"
-                class="similar-movie-card cast-card media-card"
-                v-bind="navAttrs(similarNavRow, similarIndex)"
-                @click="handleSelectMovie(movie.localId)"
+              <a
+                v-for="(movie, collectionIndex) in collectionMovies"
+                :key="movie.localId"
+                href="#"
+                class="similar-movie-card media-card"
+                :class="{ 'similar-movie-card--current': movie.isCurrent }"
+                :aria-current="movie.isCurrent ? 'true' : undefined"
+                v-bind="navAttrs(collectionNavRow, collectionIndex)"
+                @click.prevent="handleSelectCollectionMovie(movie.localId, movie.isCurrent)"
               >
                 <img
                   v-if="movie.coverPath"
                   :src="getCoverUrl(movie.coverPath, movie.rootId)"
                   :alt="movie.title || 'Movie'"
-                  class="similar-movie-poster cast-photo"
+                  class="similar-movie-poster"
                 />
-                <div v-else class="similar-movie-poster cast-photo similar-movie-poster-fallback"></div>
-                <div class="similar-movie-meta cast-copy">
-                  <span class="similar-movie-name cast-name">{{ movie.title }}</span>
-                  <span class="similar-movie-sub cast-character">
-                    {{ movie.year || "Unknown Year" }}
-                  </span>
-                </div>
-              </button>
+                <div v-else class="similar-movie-poster similar-movie-poster-fallback"></div>
+              </a>
             </div>
           </section>
         </div>
@@ -656,72 +654,101 @@ const movieKeywords = computed(() => {
 
 const viewportWidth = ref(typeof window !== "undefined" ? window.innerWidth : 1920)
 
-const similarNavRow = computed(() => 3 + movieVersions.value.length)
+const collectionNavRow = computed(() => 3 + movieVersions.value.length)
 
 const castNavRow = computed(() => {
   const hasDesktopSimilarShortcut =
-    viewportWidth.value > DESKTOP_NAV_SHORTCUT_MIN_WIDTH && similarMovies.value.length > 0
+    viewportWidth.value > DESKTOP_NAV_SHORTCUT_MIN_WIDTH && collectionMovies.value.length > 0
   // Desktop with similar row: keep visual cast placement but move it below similar in nav rows.
   // Narrow layout (or no similar): preserve existing cast row directly after releases.
   return hasDesktopSimilarShortcut ? 4 + movieVersions.value.length : 2 + movieVersions.value.length
 })
 
-const similarMovies = computed((): Array<{
-  tmdbId: number
+const collectionMovies = computed((): Array<{
   title: string
   localId: string
   coverPath: string | null
   rootId: string | null
   year: string | null
+  hyphenLang: string | null
+  isCurrent: boolean
 }> => {
   if (props.item.type !== "movies") return []
 
   const movie = props.item.data as Movie
-  const similar = movie.info?.similar || []
-  if (similar.length === 0) return []
-
-  const byTmdbId = new Map<number, MovieUi>()
-  for (const libraryMovie of props.allMovies || []) {
-    const tmdbId = libraryMovie.info?.tmdb_id
-    if (libraryMovie.id === props.item.id) continue
-
-    if (typeof tmdbId === "number" && !byTmdbId.has(tmdbId)) {
-      byTmdbId.set(tmdbId, libraryMovie)
-    }
-  }
+  const collectionName = movie.info?.collection?.trim()
+  if (!collectionName) return []
+  const normalizedCollectionName = collectionName.toLowerCase()
 
   const matches: Array<{
-    tmdbId: number
     title: string
     localId: string
     coverPath: string | null
     rootId: string | null
     year: string | null
+    hyphenLang: string | null
+    isCurrent: boolean
   }> = []
 
-  const seenTmdbIds = new Set<number>()
-  for (const similarEntry of similar) {
-    if (seenTmdbIds.has(similarEntry.id)) continue
-    seenTmdbIds.add(similarEntry.id)
+  let hasCurrentInMatches = false
 
-    const matched = byTmdbId.get(similarEntry.id)
-    if (!matched) continue
+  for (const libraryMovie of props.allMovies || []) {
+    const otherCollectionName = libraryMovie.info?.collection?.trim().toLowerCase()
+    if (otherCollectionName !== normalizedCollectionName) continue
 
-    const title = matched.title || matched.info?.title || similarEntry.title
+    const title = libraryMovie.title || libraryMovie.info?.title
     if (!title) continue
 
+    const isCurrent = libraryMovie.id === props.item.id
+    if (isCurrent) hasCurrentInMatches = true
+
     matches.push({
-      tmdbId: similarEntry.id,
       title,
-      localId: matched.id,
-      coverPath: matched.cover_path || null,
-      rootId: matched.root_id || null,
-      year: matched.year ? String(matched.year) : matched.info?.release_date?.slice(0, 4) || null,
+      localId: libraryMovie.id,
+      coverPath: libraryMovie.cover_path || null,
+      rootId: libraryMovie.root_id || null,
+      year: libraryMovie.year
+        ? String(libraryMovie.year)
+        : libraryMovie.info?.release_date?.slice(0, 4) || null,
+      hyphenLang: normalizeHyphenationLang(libraryMovie.info?.original_language),
+      isCurrent,
     })
   }
 
-  return matches.slice(0, 24)
+  if (!hasCurrentInMatches) {
+    matches.push({
+      title: props.item.title || (props.item.data as Movie).info?.title || "Current movie",
+      localId: props.item.id,
+      coverPath: props.item.cover_path || null,
+      rootId: props.item.root_id || null,
+      year: props.item.year
+        ? String(props.item.year)
+        : (props.item.data as Movie).info?.release_date?.slice(0, 4) || null,
+      hyphenLang: normalizeHyphenationLang((props.item.data as Movie).info?.original_language),
+      isCurrent: true,
+    })
+  }
+
+  return matches
+    .sort((a, b) => {
+      const yearA = parseInt(a.year || "", 10)
+      const yearB = parseInt(b.year || "", 10)
+      const hasYearA = Number.isFinite(yearA)
+      const hasYearB = Number.isFinite(yearB)
+
+      if (hasYearA && hasYearB && yearA !== yearB) return yearA - yearB
+      if (hasYearA !== hasYearB) return hasYearA ? -1 : 1
+      return a.title.localeCompare(b.title)
+    })
+    .slice(0, 24)
 })
+
+function normalizeHyphenationLang(language: string | null | undefined): string | null {
+  if (!language) return null
+  const normalized = language.trim()
+  if (!/^[A-Za-z]{2,3}(?:-[A-Za-z]{2,4})?$/.test(normalized)) return null
+  return normalized.toLowerCase()
+}
 
 function formatKeywordLabel(keyword: string): string {
   // Keep multi-word keywords together while visually narrowing internal spacing.
@@ -899,6 +926,11 @@ function handleSelectMovie(movieId: string) {
   emit("selectMovie", movieId)
 }
 
+function handleSelectCollectionMovie(movieId: string, isCurrent: boolean) {
+  if (isCurrent) return
+  handleSelectMovie(movieId)
+}
+
 function handleResize() {
   viewportWidth.value = window.innerWidth
 }
@@ -939,6 +971,9 @@ onUnmounted(() => {
 
 .similar-movies-section {
   margin-top: 20px;
+  position: relative;
+  left: calc(-50vw + 50%);
+  width: 100vw;
 }
 
 .similar-movies-title {
@@ -949,7 +984,12 @@ onUnmounted(() => {
 
 .similar-movies-grid {
   --sync-row-tail: 0px;
-  --sync-row-right-deadzone: 32px;
+  --similar-safe-start: 32px;
+  --similar-safe-end: 32px;
+  --sync-row-left-deadzone: var(--similar-safe-start);
+  --sync-row-right-deadzone: var(--similar-safe-end);
+  margin: 0;
+  padding: 0 calc(var(--similar-safe-end) + var(--sync-row-tail)) 0 var(--similar-safe-start);
   display: flex;
   flex-wrap: nowrap;
   gap: 6px;
@@ -969,31 +1009,50 @@ onUnmounted(() => {
   color: inherit;
   text-align: left;
   cursor: pointer;
+  position: relative;
+  border-radius: 0;
+  /* Keep poster clipping local to the poster element. */
+  overflow: visible;
+}
+
+.similar-movie-card--current {
+  cursor: default;
+}
+
+.similar-movie-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 0 solid rgba(255, 255, 255, 0.95);
+  pointer-events: none;
+  transition: border-width 120ms ease;
+}
+
+.similar-movie-card:focus-visible,
+html:not(.mouse-active) .similar-movie-card.nav-focused {
+  outline: none;
+}
+
+.similar-movie-card:focus-visible::after,
+html:not(.mouse-active) .similar-movie-card.nav-focused::after {
+  border-width: 2px;
 }
 
 .similar-movie-poster {
   width: 100%;
   height: 100%;
+  overflow: hidden;
+  border-radius: 0;
+  box-shadow: 0 0 0.4rem black;
+  transition: filter 140ms ease;
+}
+
+.similar-movie-card--current .similar-movie-poster {
+  filter: sepia(0.85);
 }
 
 .similar-movie-poster-fallback {
   background: linear-gradient(135deg, #282d3a, #171b24);
-}
-
-.similar-movie-meta {
-  inset: auto 0 0 0;
-}
-
-.similar-movie-name {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.similar-movie-sub {
-  white-space: nowrap;
 }
 
 .movie-menu-backdrop {
@@ -1116,6 +1175,7 @@ onUnmounted(() => {
   -webkit-backdrop-filter: blur(12px);
   border-radius: 12px;
   overflow: hidden;
+  box-shadow: 0 0 0.4rem black;
 }
 
 .synopsis-poster {
@@ -1458,6 +1518,13 @@ html:not(.mouse-active) .cast-card.nav-focused::after {
     width: calc(100% + 64px);
     margin-left: 0;
     margin-top: 0;
+  }
+
+  .similar-movies-grid {
+    --similar-safe-start: 32px;
+    --similar-safe-end: 32px;
+    --sync-row-left-deadzone: 32px;
+    --sync-row-right-deadzone: 32px;
   }
 }
 

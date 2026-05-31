@@ -19,15 +19,11 @@ export interface Person {
   gender?: CastGender | null
 }
 
-export interface SimilarMedia {
-  id: number
-  title: string
-}
-
 export interface Info {
   tmdb_id: number
   title: string | null
   original_title: string | null
+  original_language: string | null
   alternative_titles: string[] | null
   rating: number | null
   vote_count: number | null
@@ -35,9 +31,9 @@ export interface Info {
   genres: string[] | null
   release_date: string | null
   runtime: number | null
+  collection: string | null
   status: string | null
   tagline: string | null
-  similar: SimilarMedia[] | null
   keywords: string[] | null
   cast: CastMember[] | null
   director: string | null

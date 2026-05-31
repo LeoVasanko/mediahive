@@ -27,13 +27,6 @@ class Person(msgspec.Struct, array_like=True):
     gender: str | None = None
 
 
-class SimilarMedia(msgspec.Struct, array_like=True):
-    """Pointer to a similar movie/series on TMDb."""
-
-    id: int
-    title: str
-
-
 # ---------------------------------------------------------------------------
 # TMDb result types
 # ---------------------------------------------------------------------------
@@ -72,6 +65,7 @@ class Info(msgspec.Struct):
     tmdb_id: int
     title: str | None = None
     original_title: str | None = None
+    original_language: str | None = None
     alternative_titles: list[str] | None = None
     rating: float | None = None
     vote_count: int | None = None
@@ -79,9 +73,9 @@ class Info(msgspec.Struct):
     genres: list[str] | None = None
     release_date: str | None = None
     runtime: int | None = None
+    collection: str | None = None
     status: str | None = None
     tagline: str | None = None
-    similar: list[SimilarMedia] | None = None
     keywords: list[str] | None = None
     cast: list[CastCredit] | None = None
     director: str | None = None

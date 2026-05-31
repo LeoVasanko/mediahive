@@ -190,16 +190,6 @@ export function useMediaWebSocket() {
     }
   }
 
-  function normalizeSimilarMember(member: unknown): { id: number; title: string } {
-    if (!Array.isArray(member)) {
-      return { id: 0, title: "" }
-    }
-    return {
-      id: typeof member[0] === "number" ? member[0] : 0,
-      title: typeof member[1] === "string" ? member[1] : "",
-    }
-  }
-
   function normalizePerson(member: unknown): Person | null {
     if (!Array.isArray(member)) return null
     const gender = normalizeCastGender(member[2])
@@ -223,7 +213,7 @@ export function useMediaWebSocket() {
     }
   }
 
-  function normalizeInfo<T extends { cast?: unknown; similar?: unknown }>(
+  function normalizeInfo<T extends { cast?: unknown }>(
     info: T | null,
     people: Map<number, Person>,
   ): T | null {
@@ -234,10 +224,6 @@ export function useMediaWebSocket() {
         .map((member) => normalizeCastMember(member, people))
         .filter((member) => member.name.length > 0)
       next = { ...next, cast } as T
-    }
-    if (Array.isArray((info as { similar?: unknown }).similar)) {
-      const similar = ((info as { similar?: unknown[] }).similar || []).map(normalizeSimilarMember)
-      next = { ...next, similar } as T
     }
     return next
   }

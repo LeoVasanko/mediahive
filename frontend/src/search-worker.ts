@@ -621,7 +621,7 @@ async function performSearch(
         movie.info?.keywords?.join(" "),
         movie.info?.overview,
         movie.info?.tagline,
-        movie.info?.similar?.map((s) => s.title).join(" "),
+        movie.info?.collection,
       ),
       getMoviePathScore(movie, query),
     )
@@ -719,7 +719,6 @@ async function performSearch(
           seriesItem.info?.keywords?.join(" "),
           seriesItem.info?.overview,
           seriesItem.info?.tagline,
-          seriesItem.info?.similar?.map((s) => s.title).join(" "),
           seriesItem.info?.networks?.join(" "),
         ),
         getSeriesPathScore(seriesItem, query),
