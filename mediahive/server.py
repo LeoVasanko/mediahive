@@ -20,6 +20,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from collections import deque
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -296,7 +297,55 @@ class PlaybackStateCache:
         return merged
 
 
+class EventLoopLagMonitor:
+    """Tracks event-loop scheduling lag over a sliding window."""
+
+    def __init__(self, sample_interval: float = 0.05, window_seconds: float = 10.0) -> None:
+        self._sample_interval = sample_interval
+        self._window_seconds = window_seconds
+        self._task: asyncio.Task | None = None
+        self._last_lag_ms = 0.0
+        self._samples: deque[tuple[float, float]] = deque()
+
+    def start(self) -> None:
+        if self._task is not None and not self._task.done():
+            return
+        self._task = asyncio.create_task(self._run(), name="mediahive-event-loop-lag")
+
+    async def stop(self) -> None:
+        if self._task is None:
+            return
+        self._task.cancel()
+        with suppress(asyncio.CancelledError):
+            await self._task
+        self._task = None
+
+    def snapshot(self) -> tuple[float, float]:
+        now = time.perf_counter()
+        self._prune(now)
+        max_window_ms = max((lag for _, lag in self._samples), default=0.0)
+        return self._last_lag_ms, max_window_ms
+
+    async def _run(self) -> None:
+        interval = self._sample_interval
+        next_tick = time.perf_counter() + interval
+        while True:
+            await asyncio.sleep(interval)
+            now = time.perf_counter()
+            lag_ms = max(0.0, (now - next_tick) * 1000.0)
+            self._last_lag_ms = lag_ms
+            self._samples.append((now, lag_ms))
+            self._prune(now)
+            next_tick = now + interval
+
+    def _prune(self, now: float) -> None:
+        cutoff = now - self._window_seconds
+        while self._samples and self._samples[0][0] < cutoff:
+            self._samples.popleft()
+
+
 playback_state_cache = PlaybackStateCache()
+event_loop_lag_monitor = EventLoopLagMonitor()
 
 
 # ---------------------------------------------------------------------------
@@ -685,6 +734,7 @@ async def _activate_all_roots() -> None:
 async def lifespan(_app: FastAPI):
     await frontend.load()
     playback_state_cache.start()
+    event_loop_lag_monitor.start()
 
     # Defer root activation to a background task so the server starts
     # immediately and macOS permission dialogs do not block startup.
@@ -697,6 +747,7 @@ async def lifespan(_app: FastAPI):
         yield
     finally:
         playback_state_cache.stop()
+        await event_loop_lag_monitor.stop()
 
         activation_task.cancel()
         with suppress(asyncio.CancelledError):
@@ -896,45 +947,102 @@ async def list_players():
 
 
 @app.post("/api/play/{root_id}")
-async def play_media(root_id: str, request: Request):
+async def play_media(root_id: str, request: Request, response: Response):
     """Open a media file with the selected player."""
+    req_start = time.perf_counter()
+    trace_id = request.headers.get("x-mediahive-trace-id", "")
+    client_sent_ms_hdr = request.headers.get("x-mediahive-client-sent-ms")
+    client_to_server_ms: float | None = None
+    if client_sent_ms_hdr:
+        with suppress(ValueError):
+            client_to_server_ms = max(0.0, (time.time() * 1000.0) - float(client_sent_ms_hdr))
+
     ctx = _get_context(root_id)
+    body_t0 = time.perf_counter()
     req = msgspec.json.decode(await request.body(), type=PlayMediaRequest)
+    decode_ms = (time.perf_counter() - body_t0) * 1000.0
+
+    resolve_t0 = time.perf_counter()
     file_path = _resolve_root_scoped_path(ctx.root_path, req.file_path)
+    resolve_ms = (time.perf_counter() - resolve_t0) * 1000.0
 
     if not file_path.exists():
         raise HTTPException(status_code=404, detail=f"File not found: {req.file_path}")
 
     # Resolve player path if a specific detected player was chosen
     player_path: str | None = None
+    detect_ms = 0.0
     if req.player_id and req.player_id not in ("default", "custom"):
+        detect_t0 = time.perf_counter()
         for p in detect_players():
             if p.id == req.player_id:
                 player_path = p.path
                 break
+        detect_ms = (time.perf_counter() - detect_t0) * 1000.0
         if not player_path:
             raise HTTPException(
                 status_code=400, detail=f"Player not found: {req.player_id}"
             )
 
     try:
+        launch_t0 = time.perf_counter()
         launch_player(
             req.player_id or "default",
             file_path,
             player_path=player_path,
             custom_cmd=req.player_custom_cmd,
         )
+
+        launch_ms = (time.perf_counter() - launch_t0) * 1000.0
+        total_ms = (time.perf_counter() - req_start) * 1000.0
+        loop_lag_ms, loop_lag_max_ms = event_loop_lag_monitor.snapshot()
+
+        if trace_id:
+            response.headers["X-MediaHive-Trace-Id"] = trace_id
+        response.headers["Server-Timing"] = (
+            f"app;dur={total_ms:.1f},"
+            f"decode;dur={decode_ms:.1f},"
+            f"resolve;dur={resolve_ms:.1f},"
+            f"detect;dur={detect_ms:.1f},"
+            f"launch;dur={launch_ms:.1f},"
+            f"looplag;dur={loop_lag_ms:.1f},"
+            f"looplagmax;dur={loop_lag_max_ms:.1f}"
+        )
+        request.state.log_extra = (
+            f"trace={trace_id or '-'} "
+            f"phase[decode={decode_ms:.1f}ms resolve={resolve_ms:.1f}ms "
+            f"detect={detect_ms:.1f}ms launch={launch_ms:.1f}ms] "
+            f"loopLag={loop_lag_ms:.1f}/{loop_lag_max_ms:.1f}ms"
+        )
+        if client_to_server_ms is not None:
+            request.state.log_extra = (
+                f"{request.state.log_extra} clientToServer={client_to_server_ms:.1f}ms"
+            )
+
         return {"status": "ok"}
     except (OSError, subprocess.SubprocessError, RuntimeError, ValueError) as e:
         raise HTTPException(status_code=500, detail=f"Failed to play media: {e}")
 
 
 @app.post("/api/open-folder/{root_id}")
-async def open_folder(root_id: str, request: Request):
+async def open_folder(root_id: str, request: Request, response: Response):
     """Open a folder in the system file explorer."""
+    req_start = time.perf_counter()
+    trace_id = request.headers.get("x-mediahive-trace-id", "")
+    client_sent_ms_hdr = request.headers.get("x-mediahive-client-sent-ms")
+    client_to_server_ms: float | None = None
+    if client_sent_ms_hdr:
+        with suppress(ValueError):
+            client_to_server_ms = max(0.0, (time.time() * 1000.0) - float(client_sent_ms_hdr))
+
     ctx = _get_context(root_id)
+    body_t0 = time.perf_counter()
     req = msgspec.json.decode(await request.body(), type=OpenFolderRequest)
+    decode_ms = (time.perf_counter() - body_t0) * 1000.0
+
+    resolve_t0 = time.perf_counter()
     target_path = _resolve_root_scoped_path(ctx.root_path, req.folder_path)
+    resolve_ms = (time.perf_counter() - resolve_t0) * 1000.0
 
     if not target_path.exists():
         raise HTTPException(
@@ -942,6 +1050,7 @@ async def open_folder(root_id: str, request: Request):
         )
 
     try:
+        open_t0 = time.perf_counter()
         if sys.platform == "win32":
             native_path = str(target_path).replace("/", "\\")
             if target_path.is_file():
@@ -958,6 +1067,30 @@ async def open_folder(root_id: str, request: Request):
         else:
             folder = target_path.parent if target_path.is_file() else target_path
             subprocess.Popen(["xdg-open", str(folder)])
+
+        open_ms = (time.perf_counter() - open_t0) * 1000.0
+        total_ms = (time.perf_counter() - req_start) * 1000.0
+        loop_lag_ms, loop_lag_max_ms = event_loop_lag_monitor.snapshot()
+
+        if trace_id:
+            response.headers["X-MediaHive-Trace-Id"] = trace_id
+        response.headers["Server-Timing"] = (
+            f"app;dur={total_ms:.1f},"
+            f"decode;dur={decode_ms:.1f},"
+            f"resolve;dur={resolve_ms:.1f},"
+            f"open;dur={open_ms:.1f},"
+            f"looplag;dur={loop_lag_ms:.1f},"
+            f"looplagmax;dur={loop_lag_max_ms:.1f}"
+        )
+        request.state.log_extra = (
+            f"trace={trace_id or '-'} "
+            f"phase[decode={decode_ms:.1f}ms resolve={resolve_ms:.1f}ms open={open_ms:.1f}ms] "
+            f"loopLag={loop_lag_ms:.1f}/{loop_lag_max_ms:.1f}ms"
+        )
+        if client_to_server_ms is not None:
+            request.state.log_extra = (
+                f"{request.state.log_extra} clientToServer={client_to_server_ms:.1f}ms"
+            )
 
         return {"status": "ok"}
     except (OSError, subprocess.SubprocessError, RuntimeError, ValueError) as e:
@@ -1058,7 +1191,7 @@ def _serve_file_response(full_path: Path, file_path: str, request: Request):
     file_stat = full_path.stat()
     file_size = file_stat.st_size
     etag = _build_file_etag(file_size, file_stat.st_mtime_ns)
-    cache_control = "public, max-age=600"
+    cache_control = "public, max-age=604800, immutable"
 
     range_header = request.headers.get("range")
     if not range_header and _etag_matches_if_none_match(
