@@ -181,7 +181,7 @@
           </div>
 
           <section
-            v-if="item.type === 'movies' && collectionMovies.length > 0"
+            v-if="item.type === 'movies' && collectionMovies.length > 1"
             class="similar-movies-section"
           >
             <div class="similar-movies-grid" data-sync-scroll-row="true" data-sync-scroll-group="similar">
@@ -658,7 +658,7 @@ const collectionNavRow = computed(() => 3 + movieVersions.value.length)
 
 const castNavRow = computed(() => {
   const hasDesktopSimilarShortcut =
-    viewportWidth.value > DESKTOP_NAV_SHORTCUT_MIN_WIDTH && collectionMovies.value.length > 0
+    viewportWidth.value > DESKTOP_NAV_SHORTCUT_MIN_WIDTH && collectionMovies.value.length > 1
   // Desktop with similar row: keep visual cast placement but move it below similar in nav rows.
   // Narrow layout (or no similar): preserve existing cast row directly after releases.
   return hasDesktopSimilarShortcut ? 4 + movieVersions.value.length : 2 + movieVersions.value.length
