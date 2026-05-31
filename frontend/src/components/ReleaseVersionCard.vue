@@ -19,6 +19,7 @@
       <div class="version-badges">
         <span v-if="torrent.resolution" class="v-badge res">{{ torrent.resolution }}</span>
         <span v-if="showHdrBadge" class="v-badge hdr">HDR</span>
+        <span v-if="showHdr10PlusBadge" class="v-badge hdr10plus">HDR10+</span>
         <span v-if="displayCodecBadge" class="v-badge codec">{{ displayCodecBadge }}</span>
         <span v-if="displayQualityBadge" class="v-badge qual">{{ displayQualityBadge }}</span>
         <span v-if="displayAudioBadge" class="v-badge audio">{{ displayAudioBadge }}</span>
@@ -317,6 +318,18 @@ const showHdrBadge = computed(() => {
   )
 })
 
+const hdr10PlusPattern = /hdr10\+|hdr10plus/i
+
+const hasHdr10Plus = computed(() => {
+  if (props.torrent.hdr10plus) return true
+  const text = [props.torrent.title, props.torrent.quality, props.torrent.codec, props.torrent.audio]
+    .filter(Boolean)
+    .join(" ")
+  return hdr10PlusPattern.test(text)
+})
+
+const showHdr10PlusBadge = computed(() => hasHdr10Plus.value && !hasDolbyVision.value)
+
 const isSelectable = computed(() => {
   if (props.selectable !== undefined) return props.selectable
   return Boolean(props.torrent.playable_file)
@@ -523,6 +536,11 @@ html.mouse-active .version-row.version-best:hover {
 .v-badge.hdr {
   background: #d4a017;
   color: #1c1917;
+}
+
+.v-badge.hdr10plus {
+  background: #b8860b;
+  color: #fff8e1;
 }
 
 .v-badge.group {

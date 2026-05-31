@@ -432,6 +432,8 @@ _dovi_profile_re = re.compile(
 )
 _audio_stream_re = re.compile(r"Stream #\d+:\d+(?:\(([^)]+)\))?:\s+Audio:")
 _subtitle_stream_re = re.compile(r"Stream #\d+:\d+(?:\(([^)]+)\))?:\s+Subtitle:")
+# showinfo emits e.g. "side data - HDR Dynamic Metadata SMPTE2094-40 (HDR10+)"
+_showinfo_hdr10plus_re = re.compile(r"SMPTE2094-40|HDR Dynamic Metadata", re.IGNORECASE)
 
 
 def _lang_code(raw: str | None) -> str | None:
@@ -491,6 +493,35 @@ async def probe_media_info(video_path: str) -> MediaProbeInfo:
         or "smpte-st-2094" in lower_text
         or "dynamic hdr" in lower_text
     )
+
+    # `ffmpeg -i` only reads container headers, not frame-level side data.
+    # Run a tiny showinfo decode (5 frames) to detect HDR10+ dynamic metadata
+    # (SMPTE ST 2094-40) when the header scan didn't already confirm it.
+    if info.hdr and not info.hdr10plus and not info.dovi:
+        showinfo_cmd = [
+            "ffmpeg",
+            "-hide_banner",
+            "-ss",
+            "0",
+            "-i",
+            video_path,
+            "-vf",
+            "showinfo",
+            "-frames:v",
+            "5",
+            "-an",
+            "-f",
+            "null",
+            "-",
+        ]
+        showinfo_result = await _run_ffmpeg(
+            showinfo_cmd, timeout_seconds=15, allow_nonzero_exit=True
+        )
+        if showinfo_result is not None:
+            si_stdout, si_stderr = showinfo_result
+            si_text = (si_stderr + si_stdout).decode("utf-8", errors="replace")
+            if _showinfo_hdr10plus_re.search(si_text):
+                info.hdr10plus = True
 
     dovi_match = _dovi_profile_re.search(text)
     if dovi_match:
