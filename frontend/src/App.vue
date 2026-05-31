@@ -207,7 +207,6 @@ import {
   openFolder,
   isMpcBeReachable,
   fetchResumePositions,
-  normalizeMediaPath,
   getPlayerStatus,
 } from "./api"
 import { useSettings } from "./composables/useSettings"
@@ -547,10 +546,9 @@ async function refreshPlayerStatus() {
   }
 }
 
-function hasResumePosition(filePath: string | null) {
-  if (!filePath) return false
-  const normalizedPath = normalizeMediaPath(filePath)
-  return Number(resumePositions.value[normalizedPath] || 0) > 0
+function hasResumePosition(mediaId: string | null) {
+  if (!mediaId) return false
+  return Number(resumePositions.value[mediaId] || 0) > 0
 }
 
 function startMpcBePolling() {

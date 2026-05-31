@@ -117,6 +117,14 @@ class RootsRequest(msgspec.Struct):
     roots: dict[str, str]
 
 
+class PlaybackStateUpdateRequest(msgspec.Struct):
+    """POST /api/meta/playback-state body."""
+
+    root_id: str
+    file_path: str
+    pos: int | None = None
+
+
 class RootEntryResponse(msgspec.Struct):
     """Single root entry in responses."""
 

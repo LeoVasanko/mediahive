@@ -16,10 +16,13 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
 from contextlib import asynccontextmanager, suppress
+from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 import aiofiles
@@ -43,6 +46,7 @@ from mediahive.hivescan.tmdb_client import close_http_client
 from mediahive.models.events import Remove, Task, Upsert
 from mediahive.models.protocol import (
     OpenFolderRequest,
+    PlaybackStateUpdateRequest,
     PlayMediaRequest,
     RootsRequest,
     WsInit,
@@ -83,6 +87,218 @@ if sys.platform == "win32":
     from ctypes import wintypes
 
 
+@dataclass
+class _PlaybackEntry:
+    """Single resume position entry with timestamp."""
+
+    pos: int
+    ts: datetime
+
+    def to_dict(self) -> dict:
+        return {
+            "pos": self.pos,
+            "ts": self.ts,
+        }
+
+    @staticmethod
+    def from_dict(data: dict) -> _PlaybackEntry | None:
+        if not isinstance(data, dict):
+            return None
+        pos = data.get("pos")
+        ts = data.get("ts")
+        if not isinstance(pos, int) or pos < 0:
+            return None
+        if isinstance(ts, str):
+            try:
+                ts = datetime.fromisoformat(ts)
+            except ValueError, TypeError:
+                return None
+        elif isinstance(ts, datetime):
+            pass
+        else:
+            return None
+        return _PlaybackEntry(pos=pos, ts=ts)
+
+
+@dataclass
+class _PlaybackRootSnapshot:
+    file_path: Path
+    signature: tuple[bool, int, int] | None = None
+    entries: dict[str, _PlaybackEntry] = field(default_factory=dict)
+
+
+class PlaybackStateCache:
+    """Background cache for merged playback-state across all active roots.
+
+    Stores resume positions by movie slug with timestamps. When merging
+    across roots, picks the most recent entry for each slug.
+    """
+
+    def __init__(self, poll_interval: float = 60.0) -> None:
+        self._poll_interval = poll_interval
+        self._roots: dict[str, _PlaybackRootSnapshot] = {}
+        self._merged_entries: dict[str, _PlaybackEntry] = {}
+        self._lock = threading.RLock()
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        if self._thread is not None and self._thread.is_alive():
+            return
+        self._stop.clear()
+        self._thread = threading.Thread(
+            target=self._run,
+            name="mediahive-playback-state-cache",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=max(2.0, self._poll_interval + 1.0))
+        self._thread = None
+
+    def get_merged_entries(self) -> dict[str, _PlaybackEntry]:
+        """Return merged resume entries keyed by slug (most recent wins)."""
+        with self._lock:
+            return {
+                slug: _PlaybackEntry(e.pos, e.ts)
+                for slug, e in self._merged_entries.items()
+            }
+
+    def update_resume_position(
+        self,
+        root_id: str,
+        root_path: Path,
+        slug: str,
+        pos: int | None,
+    ) -> None:
+        """Read-modify-write one root file and refresh the in-memory cache immediately."""
+        file_path = root_path / ".mediahive" / "playback-state.json"
+        entries = self._read_resume_entries(file_path)
+
+        if pos is None:
+            entries.pop(slug, None)
+        else:
+            entries[slug] = _PlaybackEntry(pos=pos, ts=datetime.now())
+
+        self._write_resume_entries(file_path, entries)
+
+        snapshot = _PlaybackRootSnapshot(
+            file_path=file_path,
+            signature=self._signature(file_path),
+            entries=entries,
+        )
+        with self._lock:
+            self._roots[root_id] = snapshot
+            self._merged_entries = self._build_merged_entries(self._roots)
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            try:
+                self._refresh_once()
+            except Exception:
+                logger.exception("Playback-state cache refresh failed")
+            if self._stop.wait(self._poll_interval):
+                break
+
+    def _refresh_once(self) -> None:
+        contexts = supervisor.all_contexts()
+
+        with self._lock:
+            previous = self._roots
+
+        next_roots: dict[str, _PlaybackRootSnapshot] = {}
+        merged: dict[str, _PlaybackEntry] = {}
+
+        for root_id, ctx in contexts.items():
+            file_path = ctx.root_path / ".mediahive" / "playback-state.json"
+            snapshot = previous.get(root_id)
+            if snapshot is None or snapshot.file_path != file_path:
+                snapshot = _PlaybackRootSnapshot(file_path=file_path)
+
+            signature = self._signature(file_path)
+            if signature != snapshot.signature:
+                snapshot.signature = signature
+                snapshot.entries = self._read_resume_entries(file_path)
+
+            next_roots[root_id] = snapshot
+
+            # Merge: for each slug, keep the entry with the most recent timestamp
+            for slug, entry in snapshot.entries.items():
+                existing = merged.get(slug)
+                if existing is None or entry.ts > existing.ts:
+                    merged[slug] = entry
+
+        with self._lock:
+            self._roots = next_roots
+            self._merged_entries = merged
+
+    @staticmethod
+    def _signature(path: Path) -> tuple[bool, int, int]:
+        try:
+            stat = path.stat()
+            return (True, stat.st_mtime_ns, stat.st_size)
+        except OSError:
+            return (False, 0, 0)
+
+    @staticmethod
+    def _read_resume_entries(path: Path) -> dict[str, _PlaybackEntry]:
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except OSError, json.JSONDecodeError:
+            return {}
+
+        if not isinstance(raw, dict):
+            return {}
+
+        positions = raw.get("resume_positions")
+        if not isinstance(positions, dict):
+            return {}
+
+        entries: dict[str, _PlaybackEntry] = {}
+        for slug, data in positions.items():
+            entry = _PlaybackEntry.from_dict(data)
+            if entry is not None:
+                entries[str(slug)] = entry
+
+        return entries
+
+    @staticmethod
+    def _write_resume_entries(path: Path, entries: dict[str, _PlaybackEntry]) -> None:
+        data = {
+            "resume_positions": {
+                slug: entry.to_dict() for slug, entry in sorted(entries.items())
+            }
+        }
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = path.with_suffix(f"{path.suffix}.tmp")
+            tmp_path.write_text(
+                json.dumps(data, indent=2, sort_keys=True, default=str),
+                encoding="utf-8",
+            )
+            tmp_path.replace(path)
+        except OSError:
+            logger.exception("Failed to write playback-state: %s", path)
+
+    @staticmethod
+    def _build_merged_entries(
+        roots: dict[str, _PlaybackRootSnapshot],
+    ) -> dict[str, _PlaybackEntry]:
+        merged: dict[str, _PlaybackEntry] = {}
+        for snapshot in roots.values():
+            for slug, entry in snapshot.entries.items():
+                existing = merged.get(slug)
+                if existing is None or entry.ts > existing.ts:
+                    merged[slug] = entry
+        return merged
+
+
+playback_state_cache = PlaybackStateCache()
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -93,6 +309,37 @@ def _get_context(root_id: str):
     if ctx is None:
         raise HTTPException(status_code=404, detail=f"Root not found: {root_id}")
     return ctx
+
+
+def _normalize_media_path_value(path: str) -> str:
+    return path.replace("\\", "/").lstrip("/")
+
+
+def _expand_torrent_playable_path(file_key: str, playable_file: str | None) -> str:
+    if not playable_file:
+        return file_key
+    if playable_file.startswith("concat:") or "://" in playable_file:
+        return playable_file
+    if playable_file.startswith(f"{file_key}/"):
+        return playable_file
+    if playable_file.startswith("/"):
+        return playable_file.lstrip("/")
+    return f"{file_key}/{playable_file}"
+
+
+def _resolve_movie_slug_for_file_path(ctx, file_path: str) -> str | None:
+    target = _normalize_media_path_value(file_path)
+    for movie_id, movie in ctx.store.movies.items():
+        for file_key, torrent in movie.files.items():
+            normalized_key = _normalize_media_path_value(file_key)
+            if normalized_key == target:
+                return movie_id
+            playable_path = _expand_torrent_playable_path(
+                file_key, torrent.playable_file
+            )
+            if _normalize_media_path_value(playable_path) == target:
+                return movie_id
+    return None
 
 
 def _load_root_metadata(root_path: Path, meta_key: str):
@@ -437,6 +684,7 @@ async def _activate_all_roots() -> None:
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     await frontend.load()
+    playback_state_cache.start()
 
     # Defer root activation to a background task so the server starts
     # immediately and macOS permission dialogs do not block startup.
@@ -448,6 +696,8 @@ async def lifespan(_app: FastAPI):
     try:
         yield
     finally:
+        playback_state_cache.stop()
+
         activation_task.cancel()
         with suppress(asyncio.CancelledError):
             await activation_task
@@ -723,26 +973,31 @@ async def root_metadata(root_id: str, meta_key: str):
 
 @app.get("/api/meta/playback-state")
 async def merged_playback_state():
-    """Return merged playback-state resume positions from all active roots."""
-    merged: dict[str, float] = {}
-    for ctx in supervisor.all_contexts().values():
-        try:
-            data = _load_root_metadata(ctx.root_path, "playback-state")
-        except HTTPException as exc:
-            if exc.status_code == 404:
-                continue
-            raise
+    """Return merged playback-state resume positions from in-memory cache.
 
-        if not isinstance(data, dict):
-            continue
-        positions = data.get("resume_positions")
-        if not isinstance(positions, dict):
-            continue
-        for key, value in positions.items():
-            if isinstance(value, int | float):
-                merged[str(key)] = float(value)
+    Merges across all roots, preferring the most recent timestamp for each slug.
+    Format: {"key": "playback-state", "data": {"resume_positions": {slug: {pos, ts}}}}
+    """
+    entries = playback_state_cache.get_merged_entries()
+    positions = {slug: entry.to_dict() for slug, entry in entries.items()}
+    return {"key": "playback-state", "data": {"resume_positions": positions}}
 
-    return {"key": "playback-state", "data": {"resume_positions": merged}}
+
+@app.post("/api/meta/playback-state")
+async def write_playback_state(request: Request):
+    """Update one playback-state entry via backend-managed read-modify-write."""
+    req = msgspec.json.decode(await request.body(), type=PlaybackStateUpdateRequest)
+    ctx = _get_context(req.root_id)
+    slug = _resolve_movie_slug_for_file_path(ctx, req.file_path)
+    if slug is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Movie not found for file path: {req.file_path}",
+        )
+
+    pos = None if req.pos is None or req.pos <= 0 else int(req.pos)
+    playback_state_cache.update_resume_position(req.root_id, ctx.root_path, slug, pos)
+    return {"status": "ok", "slug": slug, "pos": pos}
 
 
 # --- MPC-BE / Player status ---

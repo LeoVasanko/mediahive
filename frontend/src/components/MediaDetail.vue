@@ -256,7 +256,7 @@ const props = defineProps<{
   item: MediaItem
   allMovies: MovieUi[]
   focusEpisode?: { seasonNumber: number; episodeNumber: number } | null
-  hasResumePosition: (filePath: string | null) => boolean
+  hasResumePosition: (mediaId: string | null) => boolean
   getRootName: (rootId: string | null | undefined) => string | null
 }>()
 const emit = defineEmits<{
@@ -828,7 +828,8 @@ function closeVersionActionMenu() {
 }
 
 function getPlayLabel(filePath: string | null): string {
-  return props.hasResumePosition(filePath) ? "Continue" : "Play"
+  if (!filePath || props.item.type !== "movies") return "Play"
+  return props.hasResumePosition(props.item.id) ? "Continue" : "Play"
 }
 
 function handlePlayVersion(filePath: string | null) {

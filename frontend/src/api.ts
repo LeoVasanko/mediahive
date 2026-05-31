@@ -126,7 +126,15 @@ export async function fetchResumePositions(): Promise<Record<string, number>> {
     if (!positions || typeof positions !== "object") {
       return {}
     }
-    return positions as Record<string, number>
+    const normalized: Record<string, number> = {}
+    for (const [slug, value] of Object.entries(positions as Record<string, unknown>)) {
+      if (!value || typeof value !== "object") continue
+      const pos = (value as { pos?: unknown }).pos
+      if (typeof pos === "number" && Number.isFinite(pos) && pos > 0) {
+        normalized[slug] = pos
+      }
+    }
+    return normalized
   } catch {
     return {}
   }

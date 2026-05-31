@@ -120,59 +120,127 @@ _DURATION_RE = re.compile(r'<p id="duration">(\d+)</p>')
 def _default_playback_state() -> dict[str, object]:
     return {
         "current": None,
-        "resume_positions": {},
     }
 
 
-def _load_playback_state(path: Path) -> dict[str, object]:
+def _normalize_media_path(path: str) -> str:
+    return path.replace("\\", "/").lstrip("/")
+
+
+def _expand_playable_file(file_key: str, playable_file: str | None) -> str:
+    if not playable_file:
+        return file_key
+    if playable_file.startswith("concat:") or "://" in playable_file:
+        return playable_file
+    if playable_file.startswith(f"{file_key}/"):
+        return playable_file
+    if playable_file.startswith("/"):
+        return playable_file.lstrip("/")
+    return f"{file_key}/{playable_file}"
+
+
+def _fetch_resume_positions(backend_url: str) -> dict[str, int]:
+    req = urllib.request.Request(
+        url=f"{backend_url}/api/meta/playback-state",
+        method="GET",
+    )
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        with urllib.request.urlopen(req, timeout=2) as resp:
+            raw = json.loads(resp.read().decode("utf-8"))
+    except OSError, TimeoutError, urllib.error.URLError, json.JSONDecodeError:
+        return {}
+
+    data = raw.get("data") if isinstance(raw, dict) else None
+    positions = data.get("resume_positions") if isinstance(data, dict) else None
+    if not isinstance(positions, dict):
+        return {}
+
+    cleaned: dict[str, int] = {}
+    for slug, value in positions.items():
+        if not isinstance(slug, str) or not isinstance(value, dict):
+            continue
+        pos = value.get("pos")
+        if isinstance(pos, int) and pos > 0:
+            cleaned[slug] = pos * 1000
+    return cleaned
+
+
+def _post_resume_position(
+    backend_url: str,
+    root_id: str,
+    file_path: str,
+    pos: int | None,
+) -> bool:
+    body = json.dumps({
+        "root_id": root_id,
+        "file_path": file_path,
+        "pos": pos,
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        url=f"{backend_url}/api/meta/playback-state",
+        data=body,
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=2):
+            return True
+    except OSError, TimeoutError, urllib.error.URLError:
+        logger.warning("Failed to post playback-state update for %s", file_path)
+        return False
+
+
+def _load_movie_slug_map(index_path: Path) -> dict[str, str]:
+    try:
+        raw = json.loads(index_path.read_text(encoding="utf-8"))
     except OSError, TypeError, json.JSONDecodeError:
-        return _default_playback_state()
+        return {}
 
-    if not isinstance(raw, dict):
-        return _default_playback_state()
+    movies = raw.get("movies") if isinstance(raw, dict) else None
+    if not isinstance(movies, dict):
+        return {}
 
-    current = raw.get("current")
-    resume_positions = raw.get("resume_positions")
-    normalized: dict[str, object] = {
-        "current": current if isinstance(current, dict) else None,
-        "resume_positions": {},
-    }
-
-    if isinstance(resume_positions, dict):
-        cleaned_positions: dict[str, int] = {}
-        for key, value in resume_positions.items():
-            if isinstance(key, str) and isinstance(value, (int, float)):
-                cleaned_positions[key] = max(0, int(value))
-        normalized["resume_positions"] = cleaned_positions
-
-    return normalized
-
-
-def _save_playback_state(path: Path, state: dict[str, object]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_suffix(f"{path.suffix}.tmp")
-    tmp_path.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
-    tmp_path.replace(path)
+    mapping: dict[str, str] = {}
+    for movie_id, movie in movies.items():
+        if not isinstance(movie_id, str) or not isinstance(movie, dict):
+            continue
+        files = movie.get("files")
+        if not isinstance(files, dict):
+            continue
+        for file_key, torrent in files.items():
+            if not isinstance(file_key, str):
+                continue
+            normalized_key = _normalize_media_path(file_key)
+            mapping[normalized_key] = movie_id
+            playable_file = (
+                torrent.get("playable_file") if isinstance(torrent, dict) else None
+            )
+            expanded = _expand_playable_file(
+                file_key, playable_file if isinstance(playable_file, str) else None
+            )
+            mapping[_normalize_media_path(expanded)] = movie_id
+    return mapping
 
 
 def _media_key_for_filepath(
-    filepath: str, roots: list[Path]
-) -> tuple[str, Path] | None:
-    """Resolve a filepath to a (relative_key, matched_root) tuple."""
-    for root in roots:
+    filepath: str, roots: dict[str, Path]
+) -> tuple[str | None, str, str] | None:
+    """Resolve a filepath to a (movie_slug, root_id, relative_key) tuple."""
+    for root_id, root in roots.items():
         try:
             relative = Path(filepath).resolve().relative_to(root.resolve())
-            return relative.as_posix(), root
+            relative_key = relative.as_posix()
+            index_path = root / ".mediahive" / "index.json"
+            movie_slug = _load_movie_slug_map(index_path).get(
+                _normalize_media_path(relative_key)
+            )
+            return movie_slug, root_id, relative_key
         except OSError, RuntimeError, ValueError:
             continue
     return None
 
 
 def _should_clear_resume(position_ms: int, duration_ms: int) -> bool:
-    if position_ms <= MPC_BE_RESUME_CLEAR_MARGIN_MS:
-        return True
     if duration_ms <= 0:
         return False
     return duration_ms - position_ms <= MPC_BE_RESUME_CLEAR_MARGIN_MS
@@ -248,7 +316,7 @@ def _mpcbe_fetch_status() -> tuple[str, int, int, int] | None:
 
 
 def _start_gamepad_remote(
-    stop_event: threading.Event, roots: list[Path]
+    stop_event: threading.Event, roots: dict[str, Path], backend_url: str
 ) -> threading.Thread:
     """Start background XInput polling and send mapped commands to MPC-BE."""
     get_state = _load_xinput_get_state()
@@ -278,18 +346,11 @@ def _start_gamepad_remote(
     status_updated_at = 0.0
     status_miss_count = 0
 
-    # Use the first root's playback state path as primary
-    primary_root = roots[0] if roots else Path.cwd()
-    playback_state_path = primary_root / ".mediahive" / "playback-state.json"
-    playback_state = _load_playback_state(playback_state_path)
-    resume_positions = playback_state["resume_positions"]
-    if not isinstance(resume_positions, dict):
-        resume_positions = {}
-        playback_state["resume_positions"] = resume_positions
-    if playback_state.get("current") is not None:
-        playback_state["current"] = None
-        _save_playback_state(playback_state_path, playback_state)
+    playback_state = _default_playback_state()
+    resume_positions = _fetch_resume_positions(backend_url)
     tracked_media_key: str | None = None
+    tracked_root_id: str | None = None
+    tracked_relative_path = ""
     tracked_filepath = ""
     resume_applied_for_key: str | None = None
     last_playback_state_flush_at = 0.0
@@ -302,12 +363,11 @@ def _start_gamepad_remote(
             request_pool.submit(_seek_mpcbe_to_position, position_ms)
         )
 
-    def flush_playback_state() -> None:
-        _save_playback_state(playback_state_path, playback_state)
-
     def clear_tracked_current(*, clear_resume_applied: bool) -> None:
         nonlocal \
             tracked_media_key, \
+            tracked_root_id, \
+            tracked_relative_path, \
             tracked_filepath, \
             last_playback_state_flush_at, \
             resume_applied_for_key
@@ -316,38 +376,56 @@ def _start_gamepad_remote(
                 resume_applied_for_key = None
             return
         tracked_media_key = None
+        tracked_root_id = None
+        tracked_relative_path = ""
         tracked_filepath = ""
         playback_state["current"] = None
         last_playback_state_flush_at = 0.0
         if clear_resume_applied:
             resume_applied_for_key = None
-        flush_playback_state()
 
     def finalize_tracked_current() -> None:
         nonlocal \
             tracked_media_key, \
+            tracked_root_id, \
+            tracked_relative_path, \
             tracked_filepath, \
             resume_applied_for_key, \
             last_playback_state_flush_at
         if tracked_media_key is None:
             if playback_state.get("current") is not None:
                 playback_state["current"] = None
-                flush_playback_state()
             return
 
         position_ms = player_position_ms or 0
         duration_ms = player_duration_ms or 0
         if _should_clear_resume(position_ms, duration_ms):
             resume_positions.pop(tracked_media_key, None)
+            if tracked_root_id and tracked_relative_path:
+                _post_resume_position(
+                    backend_url, tracked_root_id, tracked_relative_path, None
+                )
+        elif position_ms <= MPC_BE_RESUME_CLEAR_MARGIN_MS:
+            # Ignore brief starts; keep the previous saved resume position.
+            pass
         else:
+            position_seconds = max(0, position_ms // 1000)
             resume_positions[tracked_media_key] = position_ms
+            if tracked_root_id and tracked_relative_path:
+                _post_resume_position(
+                    backend_url,
+                    tracked_root_id,
+                    tracked_relative_path,
+                    position_seconds,
+                )
 
         tracked_media_key = None
+        tracked_root_id = None
+        tracked_relative_path = ""
         tracked_filepath = ""
         playback_state["current"] = None
         resume_applied_for_key = None
         last_playback_state_flush_at = 0.0
-        flush_playback_state()
 
     def persist_tracked_current(now: float, *, force: bool = False) -> None:
         nonlocal last_playback_state_flush_at
@@ -367,7 +445,6 @@ def _start_gamepad_remote(
             "updated_at": int(time.time()),
         }
         last_playback_state_flush_at = now
-        flush_playback_state()
 
     def maybe_apply_resume(now: float) -> None:
         nonlocal player_position_ms, resume_applied_for_key
@@ -388,7 +465,6 @@ def _start_gamepad_remote(
         if _should_clear_resume(saved_position, player_duration_ms):
             resume_positions.pop(tracked_media_key, None)
             resume_applied_for_key = tracked_media_key
-            flush_playback_state()
             return
         if len(pending_requests) >= MPC_BE_MAX_INFLIGHT_REQUESTS:
             return
@@ -409,6 +485,8 @@ def _start_gamepad_remote(
             status_updated_at, \
             status_miss_count, \
             tracked_media_key, \
+            tracked_root_id, \
+            tracked_relative_path, \
             tracked_filepath, \
             resume_applied_for_key
         if status_future is None or not status_future.done():
@@ -437,6 +515,8 @@ def _start_gamepad_remote(
         filepath, position_ms, duration_ms, state = status
         resolved = _media_key_for_filepath(filepath, roots) if filepath else None
         media_key = resolved[0] if resolved else None
+        root_id = resolved[1] if resolved else None
+        relative_path = resolved[2] if resolved else ""
 
         if tracked_media_key is not None and media_key != tracked_media_key:
             finalize_tracked_current()
@@ -445,6 +525,8 @@ def _start_gamepad_remote(
             clear_tracked_current(clear_resume_applied=True)
         elif tracked_media_key != media_key:
             tracked_media_key = media_key
+            tracked_root_id = root_id
+            tracked_relative_path = relative_path
             tracked_filepath = filepath
             resume_applied_for_key = None
 
@@ -900,7 +982,7 @@ def winmain() -> None:
     poll_thread: threading.Thread | None = None
 
     # Resolve all root paths for gamepad remote
-    gamepad_roots = [Path(p) for p in initial_roots.values()]
+    gamepad_roots = {root_id: Path(p) for root_id, p in initial_roots.items()}
 
     def on_shown() -> None:
         api._window = window
@@ -913,7 +995,7 @@ def winmain() -> None:
 
         nonlocal poll_thread
         if poll_thread is None and _supports_gamepad_remote():
-            poll_thread = _start_gamepad_remote(poll_stop, gamepad_roots)
+            poll_thread = _start_gamepad_remote(poll_stop, gamepad_roots, backend_url)
 
         threading.Thread(
             target=_activate_initial_roots,
