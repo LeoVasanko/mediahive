@@ -9,18 +9,9 @@ export interface PlayerInfo {
   path: string | null
 }
 
-export interface RootStatus {
+export interface RootEntry {
   root_id: string
   path: string
-  status: string
-  error: string | null
-  snapshot_loaded: boolean
-  movies: number
-  series: number
-}
-
-export interface RootsResponse {
-  roots: RootStatus[]
 }
 
 export function normalizeMediaPath(input: string): string {
@@ -124,36 +115,18 @@ function splitAssetTypePath(assetPath: string): { assetType: string; relativePat
 }
 
 /**
- * Fetch active roots and their statuses
- */
-export async function fetchRoots(): Promise<RootStatus[]> {
-  const response = await fetch("/api/roots")
-  if (!response.ok) {
-    throw new Error(`Failed to load roots: ${response.statusText}`)
-  }
-  const data = await response.json()
-  return data.roots || []
-}
-
-/**
  * Fetch merged resume positions from all roots.
  */
 export async function fetchResumePositions(): Promise<Record<string, number>> {
   try {
-    const roots = await fetchRoots()
-    const merged: Record<string, number> = {}
-    await Promise.all(
-      roots.map(async (root) => {
-        const response = await fetch(`/api/meta/${encodeURIComponent(root.root_id)}/playback-state`)
-        if (!response.ok) return
-        const data = await response.json().catch(() => ({}))
-        const positions = data?.data?.resume_positions
-        if (positions && typeof positions === "object") {
-          Object.assign(merged, positions)
-        }
-      }),
-    )
-    return merged
+    const response = await fetch("/api/meta/playback-state")
+    if (!response.ok) return {}
+    const data = await response.json().catch(() => ({}))
+    const positions = data?.data?.resume_positions
+    if (!positions || typeof positions !== "object") {
+      return {}
+    }
+    return positions as Record<string, number>
   } catch {
     return {}
   }
@@ -164,8 +137,8 @@ export async function fetchResumePositions(): Promise<Record<string, number>> {
  */
 export async function replaceRoots(
   roots: Record<string, string>,
-): Promise<{ accepted: RootStatus[]; failed: unknown[] }> {
-  const response = await fetch("/api/roots", {
+): Promise<{ accepted: RootEntry[]; failed: unknown[] }> {
+  const response = await fetch("/api/config/roots", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ roots }),

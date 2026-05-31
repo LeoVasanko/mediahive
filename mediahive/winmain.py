@@ -872,7 +872,7 @@ def winmain() -> None:
     def _activate_initial_roots() -> None:
         body = json.dumps({"roots": initial_roots}).encode("utf-8")
         req = urllib.request.Request(
-            url=f"{backend_url}/api/roots",
+            url=f"{backend_url}/api/config/roots",
             data=body,
             method="PUT",
             headers={"Content-Type": "application/json"},

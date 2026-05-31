@@ -13,31 +13,24 @@ import type {
   MediaIndex,
   TaskInfo,
   WsMessage,
+  WsRootStatus,
 } from "../types"
 
 interface RootState {
-  rootId: string
-  ws: WebSocket | null
   movieMap: Map<string, MovieUi>
   seriesMap: Map<string, SeriesUi>
   peopleMap: Map<number, Person>
-  connected: boolean
   initialized: boolean
   pendingMessages: WsMessage[]
-  reconnectTimer: ReturnType<typeof setTimeout> | null
 }
+
+export interface RootStatusEntry extends WsRootStatus {}
 
 const MERGED_KEY_DELIMITER = "::"
 
 /**
- * Composable that connects to per-root MediaHive WebSockets and keeps
+ * Composable that connects to one all-roots MediaHive WebSocket and keeps
  * a merged media index updated in real time.
- *
- * The server sends per-root:
- *  - "init"   → full index (movies + series) on connect
- *  - "upsert" → single item inserted or updated
- *  - "remove" → single item removed
- *  - "task"   → background task progress
  */
 export function useMediaWebSocket() {
   type RootTaskInfo = TaskInfo & { root_id: string }
@@ -47,8 +40,11 @@ export function useMediaWebSocket() {
   const error = shallowRef<string | null>(null)
   const connected = shallowRef(false)
   const tasks = shallowRef<Map<string, RootTaskInfo>>(new Map())
+  const roots = shallowRef<Map<string, RootStatusEntry>>(new Map())
 
-  const roots = shallowRef<Map<string, RootState>>(new Map())
+  const rootStates = shallowRef<Map<string, RootState>>(new Map())
+  const wsRef = shallowRef<WebSocket | null>(null)
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null
   let disposed = false
 
   // Single periodic sweep for completed tasks instead of one timeout per task
@@ -373,10 +369,41 @@ export function useMediaWebSocket() {
     return merged
   }
 
+  function ensureRootState(rootId: string): RootState {
+    const existing = rootStates.value.get(rootId)
+    if (existing) {
+      return existing
+    }
+    const created: RootState = {
+      movieMap: new Map(),
+      seriesMap: new Map(),
+      peopleMap: new Map(),
+      initialized: false,
+      pendingMessages: [],
+    }
+    rootStates.value.set(rootId, created)
+    return created
+  }
+
+  function pruneMissingRoots(nextRoots: Map<string, RootStatusEntry>) {
+    for (const rootId of rootStates.value.keys()) {
+      if (!nextRoots.has(rootId)) {
+        rootStates.value.delete(rootId)
+      }
+    }
+
+    for (const [taskKey, task] of tasks.value.entries()) {
+      if (!nextRoots.has(task.root_id)) {
+        tasks.value.delete(taskKey)
+      }
+    }
+    tasks.value = new Map(tasks.value)
+  }
+
   function buildIndex(): MediaIndex {
     const movies: MovieUi[] = []
     const series: SeriesUi[] = []
-    for (const state of roots.value.values()) {
+    for (const state of rootStates.value.values()) {
       movies.push(...state.movieMap.values())
       series.push(...state.seriesMap.values())
     }
@@ -392,68 +419,84 @@ export function useMediaWebSocket() {
 
   function updateMergedState() {
     mediaIndex.value = buildIndex()
-    // Consider a root "connected" only after init is received.
+
     let anyInitialized = false
-    for (const state of roots.value.values()) {
-      if (state.connected && state.initialized) {
+    for (const state of rootStates.value.values()) {
+      if (state.initialized) {
         anyInitialized = true
         break
       }
     }
-    if (anyInitialized) {
+
+    if (anyInitialized || roots.value.size === 0) {
       loading.value = false
       error.value = null
     }
-    connected.value = anyInitialized
+
+    connected.value = wsRef.value?.readyState === WebSocket.OPEN
   }
 
-  function processJson(state: RootState, text: string) {
-    const msg = JSON.parse(text) as WsMessage
+  function applyRootInit(rootId: string, rootData: { movies: Record<string, Movie>; series: Record<string, Series>; people?: Record<string, unknown> }) {
+    const state = ensureRootState(rootId)
 
-    // Prevent out-of-order corruption: buffer delta messages until we receive
-    // the initial full-state payload.
-    if (msg.type !== "init" && !state.initialized) {
-      state.pendingMessages.push(msg)
-      return
+    state.peopleMap.clear()
+    for (const [id, person] of Object.entries(rootData.people || {})) {
+      const parsed = Number(id)
+      const normalized = normalizePerson(person)
+      if (Number.isFinite(parsed)) {
+        state.peopleMap.set(parsed, normalized || { name: "", profile_path: null, gender: null })
+      }
     }
 
-    switch (msg.type) {
-      case "init": {
-        state.peopleMap.clear()
-        for (const [id, person] of Object.entries(msg.data.people || {})) {
-          const parsed = Number(id)
-          const normalized = normalizePerson(person)
-          if (Number.isFinite(parsed)) {
-            state.peopleMap.set(parsed, normalized || { name: "", profile_path: null, gender: null })
-          }
-        }
+    state.movieMap.clear()
+    state.seriesMap.clear()
+    for (const [id, m] of Object.entries(rootData.movies || {})) {
+      state.movieMap.set(id, withMovieIdentity(id, m, rootId, state.peopleMap))
+    }
+    for (const [id, s] of Object.entries(rootData.series || {})) {
+      state.seriesMap.set(id, withSeriesIdentity(id, s, rootId, state.peopleMap))
+    }
 
-        state.movieMap.clear()
-        state.seriesMap.clear()
-        for (const [id, m] of Object.entries(msg.data.movies || {})) {
-          state.movieMap.set(id, withMovieIdentity(id, m, state.rootId, state.peopleMap))
-        }
-        for (const [id, s] of Object.entries(msg.data.series || {})) {
-          state.seriesMap.set(id, withSeriesIdentity(id, s, state.rootId, state.peopleMap))
-        }
-        state.initialized = true
+    state.initialized = true
 
-        // Replay any deltas that arrived before init completed.
-        if (state.pendingMessages.length > 0) {
-          const queued = state.pendingMessages
-          state.pendingMessages = []
-          for (const queuedMsg of queued) {
-            processJson(state, JSON.stringify(queuedMsg))
-          }
-        }
-
-        updateMergedState()
-        console.log(
-          `[WS ${state.rootId}] init: ${state.movieMap.size} movies, ${state.seriesMap.size} series`,
-        )
-        break
+    if (state.pendingMessages.length > 0) {
+      const queued = state.pendingMessages
+      state.pendingMessages = []
+      for (const queuedMsg of queued) {
+        processMessage(queuedMsg)
       }
+    }
+  }
+
+  function processMessage(msg: WsMessage) {
+    switch (msg.type) {
+      case "roots": {
+        const next = new Map<string, RootStatusEntry>()
+        for (const root of msg.roots || []) {
+          next.set(root.root_id, { ...root })
+          ensureRootState(root.root_id)
+        }
+        roots.value = next
+        pruneMissingRoots(next)
+        updateMergedState()
+        return
+      }
+
+      case "init": {
+        for (const [rootId, rootData] of Object.entries(msg.roots || {})) {
+          applyRootInit(rootId, rootData)
+        }
+        updateMergedState()
+        return
+      }
+
       case "upsert": {
+        const state = ensureRootState(msg.root_id)
+        if (!state.initialized) {
+          state.pendingMessages.push(msg)
+          return
+        }
+
         if (msg.people) {
           for (const [id, person] of Object.entries(msg.people)) {
             const parsed = Number(id)
@@ -467,160 +510,109 @@ export function useMediaWebSocket() {
         if (msg.kind === "movie") {
           state.movieMap.set(
             msg.id,
-            withMovieIdentity(msg.id, msg.item as Movie, state.rootId, state.peopleMap),
+            withMovieIdentity(msg.id, msg.item as Movie, msg.root_id, state.peopleMap),
           )
         } else {
           state.seriesMap.set(
             msg.id,
-            withSeriesIdentity(msg.id, msg.item as Series, state.rootId, state.peopleMap),
+            withSeriesIdentity(msg.id, msg.item as Series, msg.root_id, state.peopleMap),
           )
         }
         updateMergedState()
-        break
+        return
       }
+
       case "remove": {
+        const state = ensureRootState(msg.root_id)
+        if (!state.initialized) {
+          state.pendingMessages.push(msg)
+          return
+        }
+
         if (msg.kind === "movie") {
           state.movieMap.delete(msg.id)
         } else {
           state.seriesMap.delete(msg.id)
         }
         updateMergedState()
-        break
+        return
       }
+
       case "task": {
         const info = msg.data
-        const taskKey = `${state.rootId}:${info.id}`
-        tasks.value.set(taskKey, { ...info, root_id: state.rootId })
+        const taskKey = `${msg.root_id}:${info.id}`
+        tasks.value.set(taskKey, { ...info, root_id: msg.root_id })
         tasks.value = new Map(tasks.value)
         if (info.status === "completed" || info.status === "cancelled" || info.status === "error") {
           completedTaskIds.add(taskKey)
           startTaskSweep()
         }
-        break
-      }
-    }
-  }
-
-  function handleMessage(state: RootState, event: MessageEvent) {
-    try {
-      let text: string
-      if (event.data instanceof Blob) {
-        event.data.text().then((t) => processJson(state, t))
         return
-      } else if (event.data instanceof ArrayBuffer) {
-        text = new TextDecoder().decode(event.data)
-      } else {
-        text = event.data as string
       }
-      processJson(state, text)
-    } catch (e) {
-      console.error(`[WS ${state.rootId}] Failed to handle message:`, e)
     }
   }
 
-  function connectRoot(rootId: string) {
-    if (disposed) return
-    const existing = roots.value.get(rootId)
-    if (existing?.ws) {
-      // Already connecting or connected
+  function handleRawMessage(event: MessageEvent) {
+    const processText = (text: string) => {
+      try {
+        processMessage(JSON.parse(text) as WsMessage)
+      } catch (e) {
+        console.error("[WS] Failed to handle message:", e)
+      }
+    }
+
+    if (event.data instanceof Blob) {
+      void event.data.text().then(processText)
       return
     }
+    if (event.data instanceof ArrayBuffer) {
+      processText(new TextDecoder().decode(event.data))
+      return
+    }
+    processText(event.data as string)
+  }
+
+  function scheduleReconnect() {
+    if (disposed) return
+    if (reconnectTimer) clearTimeout(reconnectTimer)
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null
+      connect()
+    }, 2000)
+  }
+
+  function connect() {
+    if (disposed) return
+    if (wsRef.value && wsRef.value.readyState <= WebSocket.OPEN) return
 
     const proto = location.protocol === "https:" ? "wss:" : "ws:"
-    const url = `${proto}//${location.host}/api/ws/${encodeURIComponent(rootId)}`
+    const url = `${proto}//${location.host}/api/ws`
 
-    const state: RootState = {
-      rootId,
-      ws: null,
-      movieMap: new Map(),
-      seriesMap: new Map(),
-      peopleMap: new Map(),
-      connected: false,
-      initialized: false,
-      pendingMessages: [],
-      reconnectTimer: null,
+    console.log(`[WS] Connecting to ${url}...`)
+    const ws = new WebSocket(url)
+    wsRef.value = ws
+
+    ws.onopen = () => {
+      connected.value = true
+      error.value = null
+      console.log("[WS] Connected")
     }
-    roots.value.set(rootId, state)
 
-    function doConnect() {
-      if (disposed) return
-      console.log(`[WS ${rootId}] Connecting to ${url}...`)
-      const ws = new WebSocket(url)
-      state.ws = ws
+    ws.onmessage = (ev) => handleRawMessage(ev)
 
-      ws.onopen = () => {
-        state.connected = true
-        state.initialized = false
-        state.pendingMessages = []
-        updateMergedState()
-        console.log(`[WS ${rootId}] Connected`)
+    ws.onclose = (ev) => {
+      if (wsRef.value === ws) {
+        wsRef.value = null
       }
-
-      ws.onmessage = (ev) => handleMessage(state, ev)
-
-      ws.onclose = (ev) => {
-        state.connected = false
-        state.initialized = false
-        state.pendingMessages = []
-        state.ws = null
-        updateMergedState()
-        console.log(`[WS ${rootId}] Closed (code=${ev.code})`)
-        scheduleReconnect()
-      }
-
-      ws.onerror = (ev) => {
-        console.error(`[WS ${rootId}] Error:`, ev)
-        if (!mediaIndex.value) {
-          error.value = "WebSocket connection failed"
-        }
-      }
+      connected.value = false
+      console.log(`[WS] Closed (code=${ev.code})`)
+      scheduleReconnect()
     }
 
-    function scheduleReconnect() {
-      if (disposed) return
-      if (state.reconnectTimer) clearTimeout(state.reconnectTimer)
-      state.reconnectTimer = setTimeout(() => {
-        console.log(`[WS ${rootId}] Reconnecting...`)
-        doConnect()
-      }, 2000)
-    }
-
-    doConnect()
-  }
-
-  function disconnectRoot(rootId: string) {
-    const state = roots.value.get(rootId)
-    if (!state) return
-    if (state.reconnectTimer) {
-      clearTimeout(state.reconnectTimer)
-      state.reconnectTimer = null
-    }
-    if (state.ws) {
-      state.ws.onclose = null
-      state.ws.close()
-      state.ws = null
-    }
-    state.connected = false
-    roots.value.delete(rootId)
-    updateMergedState()
-  }
-
-  function setActiveRoots(rootIds: string[]) {
-    if (disposed) return
-    const desired = new Set(rootIds)
-    const current = new Set(roots.value.keys())
-
-    // Add new roots
-    for (const rid of desired) {
-      if (!current.has(rid)) {
-        connectRoot(rid)
-      }
-    }
-
-    // Remove old roots
-    for (const rid of current) {
-      if (!desired.has(rid)) {
-        disconnectRoot(rid)
+    ws.onerror = (ev) => {
+      console.error("[WS] Error:", ev)
+      if (!mediaIndex.value) {
+        error.value = "WebSocket connection failed"
       }
     }
   }
@@ -628,18 +620,24 @@ export function useMediaWebSocket() {
   function disconnect() {
     disposed = true
     stopTaskSweep()
-    for (const state of roots.value.values()) {
-      if (state.reconnectTimer) {
-        clearTimeout(state.reconnectTimer)
-      }
-      if (state.ws) {
-        state.ws.onclose = null
-        state.ws.close()
-      }
+
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer)
+      reconnectTimer = null
     }
+
+    if (wsRef.value) {
+      wsRef.value.onclose = null
+      wsRef.value.close()
+      wsRef.value = null
+    }
+
+    connected.value = false
     roots.value.clear()
+    rootStates.value.clear()
   }
 
+  connect()
   onUnmounted(disconnect)
 
   return {
@@ -648,7 +646,7 @@ export function useMediaWebSocket() {
     error: readonly(error),
     connected: readonly(connected),
     tasks: readonly(tasks),
-    setActiveRoots,
+    roots: readonly(roots),
     disconnect,
   }
 }

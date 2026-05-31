@@ -189,17 +189,35 @@ export interface TaskInfo {
 }
 
 // WebSocket message types (matching server msgspec tagged structs)
+export interface WsRootStatus {
+  root_id: string
+  path: string
+  status: string
+  error: string | null
+  snapshot_loaded: boolean
+  movies: number
+  series: number
+}
+
+export interface WsRootInitData {
+  movies: Record<string, Movie>
+  series: Record<string, Series>
+  people?: Record<string, PersonWire>
+}
+
+export interface WsRootsMessage {
+  type: "roots"
+  roots: WsRootStatus[]
+}
+
 export interface WsInitMessage {
   type: "init"
-  data: {
-    movies: Record<string, Movie>
-    series: Record<string, Series>
-    people?: Record<string, PersonWire>
-  }
+  roots: Record<string, WsRootInitData>
 }
 
 export interface WsUpsertMessage {
   type: "upsert"
+  root_id: string
   kind: "movie" | "series"
   id: string
   item: Movie | Series
@@ -208,13 +226,20 @@ export interface WsUpsertMessage {
 
 export interface WsRemoveMessage {
   type: "remove"
+  root_id: string
   kind: "movie" | "series"
   id: string
 }
 
 export interface WsTaskMessage {
   type: "task"
+  root_id: string
   data: TaskInfo
 }
 
-export type WsMessage = WsInitMessage | WsUpsertMessage | WsRemoveMessage | WsTaskMessage
+export type WsMessage =
+  | WsRootsMessage
+  | WsInitMessage
+  | WsUpsertMessage
+  | WsRemoveMessage
+  | WsTaskMessage

@@ -306,7 +306,7 @@ import { ref, watch, computed, onMounted, onUnmounted } from "vue"
 import { useRouter, useRoute } from "vue-router"
 import { navAttrs } from "../composables/useKeyboardNavigation"
 import logoUrl from "../assets/mediahive.webp"
-import { fetchRoots, replaceRoots, pickFolderAndAddRoot, fetchPlayers } from "../api"
+import { replaceRoots, pickFolderAndAddRoot, fetchPlayers } from "../api"
 import type { PlayerInfo } from "../api"
 import HexKeyboard from "./HexKeyboard.vue"
 import {
@@ -334,6 +334,7 @@ interface RootEntry {
 const props = defineProps<{
   currentView: "movies" | "series" | "search"
   searchQuery: string
+  roots: RootEntry[]
   mpcBeConnected: boolean
   navRow: number
   position: "top" | "after-hero" | "after-movie-header" | "after-series-hero"
@@ -357,7 +358,7 @@ window.addEventListener("pywebviewready", _onPywebviewReady, { once: true })
 onUnmounted(() => window.removeEventListener("pywebviewready", _onPywebviewReady))
 
 const showSettings = computed(() => route.path === "/settings")
-const roots = ref<RootEntry[]>([])
+const roots = computed(() => props.roots)
 
 function openSettings() {
   if (showSettings.value) return
@@ -408,25 +409,11 @@ async function refreshPlayers() {
   }
 }
 
-async function refreshRoots() {
-  try {
-    const data = await fetchRoots()
-    roots.value = data.map((r) => ({
-      root_id: r.root_id,
-      path: r.path,
-      status: r.status,
-    }))
-  } catch (e) {
-    console.error("Failed to fetch roots:", e)
-  }
-}
-
 async function removeRoot(rootId: string) {
   const filtered = roots.value.filter((r) => r.root_id !== rootId)
   const newRoots = Object.fromEntries(filtered.map((r) => [r.root_id, r.path]))
   try {
     await replaceRoots(newRoots)
-    await refreshRoots()
   } catch (e) {
     console.error("Failed to remove root:", e)
     alert("Failed to remove root")
@@ -441,7 +428,6 @@ async function addRoot() {
   newRoots[suggestedId] = folder
   try {
     await replaceRoots(newRoots)
-    await refreshRoots()
     closeSettings()
   } catch (e) {
     console.error("Failed to add root:", e)
@@ -451,7 +437,6 @@ async function addRoot() {
 
 watch(showSettings, (visible) => {
   if (visible) {
-    void refreshRoots()
     void refreshPlayers()
   }
 })

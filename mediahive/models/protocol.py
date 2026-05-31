@@ -8,8 +8,8 @@ from __future__ import annotations
 import msgspec
 from fastapi.responses import Response
 
-from .data import Movie, Series
-from .events import Remove, ScanEvent, Task, Upsert
+from .data import Movie, Series, TaskInfo
+from .events import ScanEvent
 from .tmdb import Person
 
 # ---------------------------------------------------------------------------
@@ -17,33 +17,78 @@ from .tmdb import Person
 # ---------------------------------------------------------------------------
 
 
-class WsInitData(msgspec.Struct):
-    """Payload of the init message."""
+class WsRootStatus(msgspec.Struct):
+    """Current status for one configured root."""
+
+    root_id: str
+    path: str
+    status: str
+    error: str | None = None
+    snapshot_loaded: bool = False
+    movies: int = 0
+    series: int = 0
+
+
+class WsRootInitData(msgspec.Struct):
+    """Initial full index payload for one root."""
 
     movies: dict[str, Movie]
     series: dict[str, Series]
     people: dict[int, Person]
 
 
-class WsInit(msgspec.Struct, tag="init"):
-    """Full index sent on WS connect."""
+class WsRoots(msgspec.Struct, tag="roots"):
+    """Root list and status update."""
 
-    data: WsInitData
+    roots: list[WsRootStatus]
+
+
+class WsInit(msgspec.Struct, tag="init"):
+    """Full index payload keyed by root_id."""
+
+    roots: dict[str, WsRootInitData]
+
+
+class WsUpsert(msgspec.Struct, tag="upsert"):
+    """Single item inserted or updated for one root."""
+
+    root_id: str
+    kind: str  # "movie" or "series"
+    id: str
+    item: Movie | Series
+    people: dict[int, Person] | None = None
+
+
+class WsRemove(msgspec.Struct, tag="remove"):
+    """Single item removed for one root."""
+
+    root_id: str
+    kind: str
+    id: str
+
+
+class WsTask(msgspec.Struct, tag="task"):
+    """Task progress update for one root."""
+
+    root_id: str
+    data: TaskInfo
 
 
 # Union of all outbound WS messages (for documentation / future decoding)
-WsMessage = WsInit | Upsert | Remove | Task
+WsMessage = WsRoots | WsInit | WsUpsert | WsRemove | WsTask
 
 
 # Re-export unified types for backward compatibility
 __all__ = [
-    "Remove",
     "ScanEvent",
-    "Task",
-    "Upsert",
     "WsInit",
-    "WsInitData",
     "WsMessage",
+    "WsRemove",
+    "WsRootInitData",
+    "WsRootStatus",
+    "WsRoots",
+    "WsTask",
+    "WsUpsert",
 ]
 
 
@@ -67,7 +112,7 @@ class OpenFolderRequest(msgspec.Struct):
 
 
 class RootsRequest(msgspec.Struct):
-    """PUT /api/roots body."""
+    """PUT /api/config/roots body."""
 
     roots: dict[str, str]
 
@@ -80,7 +125,7 @@ class RootEntryResponse(msgspec.Struct):
 
 
 class RootStatusResponse(msgspec.Struct):
-    """Per-root status in GET /api/roots."""
+    """Legacy per-root status shape kept for non-WS callers."""
 
     root_id: str
     path: str

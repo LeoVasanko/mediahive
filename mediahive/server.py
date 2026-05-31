@@ -40,10 +40,18 @@ from mediahive.config import load_config
 from mediahive.hivescan.images import close_image_client
 from mediahive.hivescan.scanner import RootScanner
 from mediahive.hivescan.tmdb_client import close_http_client
+from mediahive.models.events import Remove, Task, Upsert
 from mediahive.models.protocol import (
     OpenFolderRequest,
     PlayMediaRequest,
     RootsRequest,
+    WsInit,
+    WsRemove,
+    WsRootInitData,
+    WsRoots,
+    WsRootStatus,
+    WsTask,
+    WsUpsert,
 )
 from mediahive.players import detect_players, launch_player
 from mediahive.root_registry import Supervisor
@@ -112,6 +120,53 @@ def _load_root_metadata(root_path: Path, meta_key: str):
         raise HTTPException(
             status_code=500, detail=f"Failed to load metadata: {meta_key}"
         )
+
+
+def _all_root_statuses() -> list[WsRootStatus]:
+    """Return root statuses in WebSocket wire format."""
+    return [
+        WsRootStatus(
+            root_id=s["root_id"],
+            path=s["path"],
+            status=s["status"],
+            error=s.get("error"),
+            snapshot_loaded=bool(s.get("snapshot_loaded")),
+            movies=int(s.get("movies", 0)),
+            series=int(s.get("series", 0)),
+        )
+        for s in supervisor.all_statuses()
+    ]
+
+
+def _full_ws_init(root_ids: set[str] | None = None) -> WsInit:
+    """Build an init payload for all roots or only selected root_ids."""
+    roots: dict[str, WsRootInitData] = {}
+    for rid, ctx in supervisor.all_contexts().items():
+        if root_ids is not None and rid not in root_ids:
+            continue
+        roots[rid] = WsRootInitData(
+            movies=dict(ctx.store.movies),
+            series=dict(ctx.store.series),
+            people=dict(ctx.store.people),
+        )
+    return WsInit(roots=roots)
+
+
+def _translate_store_event(root_id: str, event: object):
+    """Convert per-root store events into unified websocket messages."""
+    if isinstance(event, Upsert):
+        return WsUpsert(
+            root_id=root_id,
+            kind=event.kind,
+            id=event.id,
+            item=event.item,
+            people=event.people,
+        )
+    if isinstance(event, Remove):
+        return WsRemove(root_id=root_id, kind=event.kind, id=event.id)
+    if isinstance(event, Task):
+        return WsTask(root_id=root_id, data=event.data)
+    return None
 
 
 def _open_with_default_app(path: Path) -> None:
@@ -352,7 +407,7 @@ async def _activate_all_roots() -> None:
         desired.update(cfg.roots)
 
     if not desired:
-        logger.info("No roots configured; waiting for PUT /api/roots")
+        logger.info("No roots configured; waiting for PUT /api/config/roots")
         return
 
     # Validate paths in a thread pool (macOS permission-dialog safe)
@@ -445,13 +500,7 @@ async def get_config():
 # --- Root management ---
 
 
-@app.get("/api/roots")
-async def get_roots():
-    """List all active roots with their status."""
-    return {"roots": supervisor.all_statuses()}
-
-
-@app.put("/api/roots")
+@app.put("/api/config/roots")
 async def put_roots(request: Request):
     """Atomically replace the full root set."""
     body = msgspec.json.decode(await request.body(), type=RootsRequest)
@@ -467,22 +516,102 @@ async def put_roots(request: Request):
     }
 
 
-# --- Per-root WebSocket ---
+# --- Unified WebSocket ---
 
 
-@app.websocket("/api/ws/{root_id}")
-async def ws_endpoint(ws: WebSocket, root_id: str) -> None:
-    """Live index updates and task progress for a single root."""
-    ctx = supervisor.get(root_id)
-    if ctx is None:
-        await ws.close(code=1008, reason="Unknown root")
-        return
+@app.websocket("/api/ws")
+async def ws_endpoint(ws: WebSocket) -> None:
+    """Live updates stream for all roots and all connected clients."""
+    listeners: dict[str, object] = {}
+    attached_contexts = supervisor.all_contexts()
+    outbound: asyncio.Queue[bytes] = asyncio.Queue()
 
     start = time.perf_counter()
     ws_id = log_ws_open(ws)
     close_code: int | None = None
+    prev_root_ids: set[str] = set()
+    prev_meta: dict[str, tuple[str, str, str | None, bool]] = {}
 
-    await ctx.store.connect(ws)
+    def _sync_listeners() -> tuple[
+        set[str], dict[str, tuple[str, str, str | None, bool]]
+    ]:
+        nonlocal attached_contexts
+        current_contexts = supervisor.all_contexts()
+        current_ids = set(current_contexts.keys())
+
+        for rid in list(listeners.keys()):
+            if rid in current_ids:
+                continue
+            old_ctx = attached_contexts.get(rid)
+            listener = listeners.pop(rid)
+            if old_ctx is not None:
+                old_ctx.store.remove_listener(listener)
+
+        for rid, ctx in current_contexts.items():
+            if rid in listeners:
+                continue
+
+            def _listener(event: object, *, _rid=rid) -> None:
+                translated = _translate_store_event(_rid, event)
+                if translated is None:
+                    return
+                outbound.put_nowait(msgspec.json.encode(translated))
+
+            listeners[rid] = _listener
+            ctx.store.add_listener(_listener)
+
+        attached_contexts = current_contexts
+        meta = {
+            s.root_id: (s.path, s.status, s.error, s.snapshot_loaded)
+            for s in _all_root_statuses()
+        }
+        return current_ids, meta
+
+    async def _send_outbound() -> None:
+        while True:
+            payload = await outbound.get()
+            await ws.send_bytes(payload)
+
+    async def _watch_roots() -> None:
+        nonlocal prev_root_ids, prev_meta
+        while True:
+            current_ids, current_meta = _sync_listeners()
+            root_set_changed = current_ids != prev_root_ids
+            meta_changed = current_meta != prev_meta
+
+            if root_set_changed or meta_changed:
+                outbound.put_nowait(
+                    msgspec.json.encode(WsRoots(roots=_all_root_statuses()))
+                )
+
+            if root_set_changed:
+                outbound.put_nowait(msgspec.json.encode(_full_ws_init()))
+            else:
+                became_loaded = {
+                    rid
+                    for rid, meta in current_meta.items()
+                    if rid in prev_meta and not prev_meta[rid][3] and meta[3]
+                }
+                if became_loaded:
+                    outbound.put_nowait(
+                        msgspec.json.encode(_full_ws_init(became_loaded))
+                    )
+
+            prev_root_ids = current_ids
+            prev_meta = current_meta
+            await asyncio.sleep(1.0)
+
+    await ws.accept()
+
+    current_ids, current_meta = _sync_listeners()
+    prev_root_ids = current_ids
+    prev_meta = current_meta
+    await ws.send_bytes(msgspec.json.encode(WsRoots(roots=_all_root_statuses())))
+    await ws.send_bytes(msgspec.json.encode(_full_ws_init()))
+
+    sender_task = asyncio.create_task(_send_outbound())
+    watcher_task = asyncio.create_task(_watch_roots())
+
     try:
         while True:
             await ws.receive_text()
@@ -491,7 +620,18 @@ async def ws_endpoint(ws: WebSocket, root_id: str) -> None:
     except OSError, RuntimeError:
         pass
     finally:
-        ctx.store.disconnect(ws)
+        sender_task.cancel()
+        watcher_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await sender_task
+        with suppress(asyncio.CancelledError):
+            await watcher_task
+
+        for rid, listener in list(listeners.items()):
+            ctx = attached_contexts.get(rid)
+            if ctx is not None:
+                ctx.store.remove_listener(listener)
+
         log_ws_close(ws_id, close_code, time.perf_counter() - start)
 
 
@@ -579,6 +719,30 @@ async def root_metadata(root_id: str, meta_key: str):
     """Return a root metadata value from .mediahive for allowed keys."""
     ctx = _get_context(root_id)
     return {"key": meta_key, "data": _load_root_metadata(ctx.root_path, meta_key)}
+
+
+@app.get("/api/meta/playback-state")
+async def merged_playback_state():
+    """Return merged playback-state resume positions from all active roots."""
+    merged: dict[str, float] = {}
+    for ctx in supervisor.all_contexts().values():
+        try:
+            data = _load_root_metadata(ctx.root_path, "playback-state")
+        except HTTPException as exc:
+            if exc.status_code == 404:
+                continue
+            raise
+
+        if not isinstance(data, dict):
+            continue
+        positions = data.get("resume_positions")
+        if not isinstance(positions, dict):
+            continue
+        for key, value in positions.items():
+            if isinstance(value, int | float):
+                merged[str(key)] = float(value)
+
+    return {"key": "playback-state", "data": {"resume_positions": merged}}
 
 
 # --- MPC-BE / Player status ---

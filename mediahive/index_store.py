@@ -9,6 +9,7 @@ debounced background task.
 import asyncio
 import contextlib
 import logging
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
@@ -23,10 +24,6 @@ from mediahive.models.data import (
     TaskInfo,
 )
 from mediahive.models.events import Remove, Task, Upsert
-from mediahive.models.protocol import (
-    WsInit,
-    WsInitData,
-)
 from mediahive.models.tmdb import Person
 
 logger = logging.getLogger("mediahive.index_store")
@@ -64,6 +61,8 @@ class IndexStore:
 
         # Connected WebSocket clients
         self._clients: set[WebSocket] = set()
+        # Passive listeners for broadcast events (used by server-level WS fan-in)
+        self._listeners: set[Callable[[object], None]] = set()
 
         # Snapshot debounce state
         self._snapshot_dirty = False
@@ -388,19 +387,30 @@ class IndexStore:
     # WebSocket management
     # ------------------------------------------------------------------
 
+    def add_listener(self, listener: Callable[[object], None]) -> None:
+        """Register a listener called for each broadcast message."""
+        self._listeners.add(listener)
+
+    def remove_listener(self, listener: Callable[[object], None]) -> None:
+        """Unregister a previously registered broadcast listener."""
+        self._listeners.discard(listener)
+
     async def connect(self, ws: WebSocket) -> None:
         """Accept a WS client and send the full index as init."""
         await ws.accept()
         self._clients.add(ws)
         logger.info("WS client connected (%d total)", len(self._clients))
         # Send full current state
-        msg = WsInit(
-            data=WsInitData(
-                movies=dict(self.movies),
-                series=dict(self.series),
-                people=dict(self.people),
-            )
-        )
+        msg = {
+            "type": "init",
+            "roots": {
+                "": {
+                    "movies": dict(self.movies),
+                    "series": dict(self.series),
+                    "people": dict(self.people),
+                }
+            },
+        }
         await ws.send_bytes(msgspec.json.encode(msg))
 
     def disconnect(self, ws: WebSocket) -> None:
@@ -410,6 +420,12 @@ class IndexStore:
 
     def _broadcast(self, msg: object) -> None:
         """Broadcast a message to all connected WS clients (non-blocking)."""
+        for listener in tuple(self._listeners):
+            try:
+                listener(msg)
+            except Exception:
+                logger.exception("IndexStore listener failed")
+
         data = msgspec.json.encode(msg)
         dead: list[WebSocket] = []
         for ws in self._clients:

@@ -37,6 +37,7 @@
     <Header
       :current-view="headerCurrentView"
       :search-query="searchQuery"
+      :roots="headerRoots"
       :mpc-be-connected="mpcBeConnected"
       :nav-row="1"
       :position="headerPosition"
@@ -208,7 +209,6 @@ import {
   fetchResumePositions,
   normalizeMediaPath,
   getPlayerStatus,
-  fetchRoots,
 } from "./api"
 import { useSettings } from "./composables/useSettings"
 import { useKeyboardNavigation, setActiveNavigationScope } from "./composables/useKeyboardNavigation"
@@ -268,7 +268,7 @@ const {
   error,
   connected: wsConnected,
   tasks,
-  setActiveRoots,
+  roots: rootStatuses,
 } = useMediaWebSocket()
 
 type RootTaskInfo = TaskInfo & { root_id: string }
@@ -287,14 +287,9 @@ interface ProgressRootState {
 
 const activeTasks = computed<RootTaskInfo[]>(() => Array.from(tasks.value.values()))
 
-// Poll for active roots and connect WS to them
-const rootStatuses = ref<
-  Map<string, { name: string; path: string; status: string; snapshotLoaded: boolean }>
->(new Map())
-
 function getRootName(rootId: string | null | undefined): string | null {
   if (!rootId) return null
-  return rootStatuses.value.get(rootId)?.name || null
+  return rootStatuses.value.get(rootId)?.root_id || null
 }
 
 function normalizePosixPath(value: string): string {
@@ -427,9 +422,13 @@ const hasLibraryItems = computed(() => {
   return mediaIndex.value.movies.length > 0 || mediaIndex.value.series.length > 0
 })
 const hasAnySnapshotLoaded = computed(() =>
-  Array.from(rootStatuses.value.values()).some((root) => root.snapshotLoaded),
+  Array.from(rootStatuses.value.values()).some((root) => root.snapshot_loaded),
 )
 const isInitialScanMode = computed(() => !hasLibraryItems.value && !hasAnySnapshotLoaded.value)
+
+const headerRoots = computed(() =>
+  Array.from(rootStatuses.value.values()).sort((a, b) => a.root_id.localeCompare(b.root_id)),
+)
 
 const showProgressPanel = computed(() => {
   if (isInitialScanMode.value) {
@@ -480,51 +479,7 @@ watch(
   { deep: false },
 )
 
-async function refreshRoots() {
-  try {
-    const roots = await fetchRoots()
-    const newMap = new Map<
-      string,
-      { name: string; path: string; status: string; snapshotLoaded: boolean }
-    >()
-    const activeIds: string[] = []
-    for (const r of roots) {
-      newMap.set(r.root_id, {
-        name: r.root_id,
-        path: r.path,
-        status: r.status,
-        snapshotLoaded: Boolean(r.snapshot_loaded),
-      })
-      if (r.status === "ready" || r.status === "scanning") {
-        activeIds.push(r.root_id)
-      }
-    }
-    rootStatuses.value = newMap
-    setActiveRoots(activeIds)
-  } catch (e) {
-    console.error("Failed to fetch roots:", e)
-  }
-}
-
-let rootsPollTimer: number | null = null
-function startRootsPolling() {
-  if (rootsPollTimer !== null) return
-  void refreshRoots()
-  rootsPollTimer = window.setInterval(refreshRoots, 5000)
-}
-function stopRootsPolling() {
-  if (rootsPollTimer !== null) {
-    window.clearInterval(rootsPollTimer)
-    rootsPollTimer = null
-  }
-}
-
-onMounted(() => {
-  startRootsPolling()
-})
-
 onUnmounted(() => {
-  stopRootsPolling()
   if (libraryUpdateToastTimer !== null) {
     window.clearTimeout(libraryUpdateToastTimer)
     libraryUpdateToastTimer = null

@@ -280,7 +280,7 @@ class Supervisor:
                 base_name = _derive_root_name(configured_path)
                 unique_name = base_name
                 suffix = 2
-                existing_names = {e.name for e in candidates}
+                existing_names = {e.root_id for e in candidates}
                 while unique_name in existing_names:
                     unique_name = f"{base_name}{suffix}"
                     suffix += 1

@@ -33,8 +33,8 @@ Examples:
 
 Exclude paths by creating .mediahive/scanignore (gitignore syntax).
 
-The server exposes per-root endpoints:
-    WS   /api/ws/{root_id}  Live index updates & task progress
+The server exposes a unified endpoint:
+    WS   /api/ws  Live index updates, task progress, and root status changes
         """,
     )
     parser.add_argument(
