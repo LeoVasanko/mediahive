@@ -893,7 +893,7 @@ def winmain() -> None:
         nargs="?",
         help="Path to the media folder (default: saved config or initial setup dialog)",
     )
-    args = parser.parse_args()
+    args, _unknown = parser.parse_known_args()
 
     _prepend_meipass_to_path()
 

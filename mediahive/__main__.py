@@ -54,8 +54,29 @@ def main() -> None:
         action="append",
         help=(f"Endpoint (default: localhost:{DEFAULT_PORT})."),
     )
+    parser.add_argument(
+        "--gui",
+        action="store_true",
+        help="Run with GUI (fails if GUI dependencies are not installed)",
+    )
 
     args = parser.parse_args()
+
+    # --listen implies server-only mode; use --gui to force GUI even with --listen.
+    use_gui = args.gui or not args.listen
+
+    if use_gui:
+        try:
+            from mediahive.winmain import winmain
+        except ImportError as exc:
+            if args.gui:
+                raise RuntimeError(
+                    "GUI dependencies are not installed. "
+                    "Install with: uv pip install mediahive[gui]"
+                ) from exc
+        else:
+            winmain()
+            return
 
     if args.media_folders:
         roots: dict[str, str] = {}
