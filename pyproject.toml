@@ -38,6 +38,13 @@ only-packages = true
 [tool.hatch.build.targets.sdist.hooks.custom]
 path = "scripts/fastapi-vue/build-frontend.py"
 
+[tool.hatch.build.targets.sdist.force-include]
+"scripts/fastapi-vue/build-frontend.py" = "scripts/fastapi-vue/build-frontend.py"
+"scripts/fastapi-vue/buildutil.py" = "scripts/fastapi-vue/buildutil.py"
+
+[tool.hatch.build.targets.wheel.hooks.custom]
+path = "scripts/fastapi-vue/build-frontend.py"
+
 [tool.uv]
 package = true
 
