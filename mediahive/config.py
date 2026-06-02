@@ -14,7 +14,7 @@ import msgspec
 import msgspec.toml
 
 
-class Config(msgspec.Struct):
+class Config(msgspec.Struct, omit_defaults=True):
     media_folder: str | None = None
     roots: dict[str, str] | None = None
 
