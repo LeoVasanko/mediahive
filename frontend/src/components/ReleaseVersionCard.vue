@@ -3,12 +3,13 @@
     class="version-row"
     :class="{
       'version-best': best,
-      'version-selectable': isSelectable,
+      'version-selectable': isSelectable && !inertCard,
       'version-disabled': isDisabled,
       'version-menu': variant === 'menu',
       'version-with-actions': showActions,
+      'version-inert': inertCard,
     }"
-    tabindex="0"
+    :tabindex="inertCard ? undefined : 0"
     :title="resolvedTitle"
     v-bind="$attrs"
     @click="handleActivate"
@@ -76,14 +77,16 @@
         tabindex="0"
         @click.stop="emit('play')"
         :disabled="!torrent.playable_file"
+        :title="playLabel"
       >
-        ▶ {{ playLabel }}
+        ▶
       </button>
       <button
         class="ctx-btn ctx-btn-folder"
         tabindex="0"
         @click.stop="emit('openFolder')"
         :disabled="!torrent.playable_file"
+        title="Open Folder"
       >
         📁
       </button>
@@ -123,6 +126,9 @@ const props = withDefaults(
     playLabel?: string
     title?: string
     variant?: "default" | "menu"
+    /** When true, the card itself is not interactive (no tabindex, no click/keyboard handlers).
+     *  Use with showActions to make only the inline buttons interactive. */
+    inertCard?: boolean
   }>(),
   {
     best: false,
@@ -133,6 +139,7 @@ const props = withDefaults(
     playLabel: "Play",
     title: undefined,
     variant: "default",
+    inertCard: false,
   },
 )
 
@@ -354,7 +361,7 @@ const resolvedTitle = computed(() => {
 })
 
 function handleActivate(event: MouseEvent | KeyboardEvent) {
-  if (!isSelectable.value || isDisabled.value) return
+  if (props.inertCard || !isSelectable.value || isDisabled.value) return
   emit("activate", event)
 }
 </script>
@@ -407,6 +414,15 @@ html.mouse-active .version-row.version-best:hover {
 .version-row.version-selectable:focus-visible {
   outline: 2px solid rgba(255, 255, 255, 0.85);
   outline-offset: 2px;
+}
+
+.version-row.version-inert {
+  cursor: default;
+}
+
+.version-row.version-inert .version-main,
+.version-row.version-inert .version-dolby-cell {
+  pointer-events: none;
 }
 
 .version-row.version-disabled {
@@ -607,31 +623,32 @@ html.mouse-active .version-row.version-best:hover {
 }
 
 .ctx-btn {
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  background: rgba(255, 255, 255, 0.08);
-  color: #fff;
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.65);
   border-radius: 6px;
-  padding: 6px 10px;
-  font-size: 0.78rem;
+  padding: 4px 8px;
+  font-size: 2em;
+  line-height: 1;
   cursor: pointer;
+  transition: color 0.15s ease;
 }
 
 html.mouse-active .ctx-btn:hover:not(:disabled),
 html:not(.mouse-active) .ctx-btn.nav-focused:not(:disabled),
 .ctx-btn:focus-visible:not(:disabled) {
-  background: rgba(255, 255, 255, 0.16);
-  border-color: rgba(255, 255, 255, 0.35);
+  color: #fff;
   outline: none;
 }
 
 .ctx-btn:disabled {
-  opacity: 0.5;
+  opacity: 0.35;
   cursor: not-allowed;
 }
 
 .ctx-btn-folder {
-  width: 34px;
+  width: auto;
   text-align: center;
-  padding: 6px 0;
+  padding: 4px 8px;
 }
 </style>

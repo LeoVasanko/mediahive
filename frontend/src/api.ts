@@ -14,6 +14,40 @@ export interface RootEntry {
   path: string
 }
 
+interface ActionTimingContext {
+  actionStartedAt?: number
+  source?: string
+}
+
+function nowMs(): number {
+  if (typeof performance !== "undefined" && typeof performance.now === "function") {
+    return performance.now()
+  }
+  return Date.now()
+}
+
+function makeTraceId(action: string): string {
+  const suffix = Math.random().toString(16).slice(2, 8)
+  return `${action}-${Date.now().toString(36)}-${suffix}`
+}
+
+function logActionTiming(
+  action: string,
+  traceId: string,
+  status: number,
+  actionToFetchMs: number,
+  fetchMs: number,
+  totalMs: number,
+  serverTiming: string | null,
+  source?: string,
+) {
+  const sourceTag = source ? ` source=${source}` : ""
+  const serverTag = serverTiming ? ` serverTiming=${serverTiming}` : ""
+  console.info(
+    `[timing:${action}] trace=${traceId}${sourceTag} status=${status} actionToFetch=${actionToFetchMs.toFixed(1)}ms fetch=${fetchMs.toFixed(1)}ms total=${totalMs.toFixed(1)}ms${serverTag}`,
+  )
+}
+
 export function normalizeMediaPath(input: string): string {
   return input
     .replace(/\\/g, "/")
@@ -178,23 +212,50 @@ export async function playMedia(
   filePath: string,
   playerId?: string | null,
   playerCustomCmd?: string | null,
+  timing?: ActionTimingContext,
 ): Promise<void> {
   const normalizedPath = normalizeMediaPath(filePath)
   const body: Record<string, unknown> = { file_path: normalizedPath }
   if (playerId) body.player_id = playerId
   if (playerCustomCmd) body.player_custom_cmd = playerCustomCmd
+  const actionStart = timing?.actionStartedAt ?? nowMs()
+  const traceId = makeTraceId("play")
   try {
+    const fetchStart = nowMs()
+    const actionToFetchMs = Math.max(0, fetchStart - actionStart)
+    const clientSentMs = Date.now()
+    const actionStartEpochMs = clientSentMs - actionToFetchMs
     const response = await fetch(`/api/play/${encodeURIComponent(rootId)}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "X-MediaHive-Trace-Id": traceId,
+        "X-MediaHive-Client-Sent-Ms": clientSentMs.toFixed(3),
+        "X-MediaHive-Client-Action-Start-Ms": actionStartEpochMs.toFixed(3),
+      },
       body: JSON.stringify(body),
     })
+    const fetchMs = Math.max(0, nowMs() - fetchStart)
+    const totalMs = Math.max(0, nowMs() - actionStart)
+    const serverTiming = response.headers.get("server-timing")
+    const responseTraceId = response.headers.get("x-mediahive-trace-id") || traceId
+    logActionTiming(
+      "play",
+      responseTraceId,
+      response.status,
+      actionToFetchMs,
+      fetchMs,
+      totalMs,
+      serverTiming,
+      timing?.source,
+    )
     if (!response.ok) {
       const error = await response.json()
       throw new Error(error.detail || response.statusText)
     }
   } catch (e) {
-    console.error("Play media error:", e)
+    const totalMs = Math.max(0, nowMs() - actionStart)
+    console.error(`Play media error after ${totalMs.toFixed(1)}ms (trace=${traceId}):`, e)
     alert(`Failed to play media.\n\n${e}`)
   }
 }
@@ -202,20 +263,50 @@ export async function playMedia(
 /**
  * Open a folder in the system file manager
  */
-export async function openFolder(rootId: string, folderPath: string): Promise<void> {
+export async function openFolder(
+  rootId: string,
+  folderPath: string,
+  timing?: ActionTimingContext,
+): Promise<void> {
   const normalizedPath = normalizeMediaPath(folderPath)
+  const actionStart = timing?.actionStartedAt ?? nowMs()
+  const traceId = makeTraceId("open-folder")
   try {
+    const fetchStart = nowMs()
+    const actionToFetchMs = Math.max(0, fetchStart - actionStart)
+    const clientSentMs = Date.now()
+    const actionStartEpochMs = clientSentMs - actionToFetchMs
     const response = await fetch(`/api/open-folder/${encodeURIComponent(rootId)}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "X-MediaHive-Trace-Id": traceId,
+        "X-MediaHive-Client-Sent-Ms": clientSentMs.toFixed(3),
+        "X-MediaHive-Client-Action-Start-Ms": actionStartEpochMs.toFixed(3),
+      },
       body: JSON.stringify({ folder_path: normalizedPath }),
     })
+    const fetchMs = Math.max(0, nowMs() - fetchStart)
+    const totalMs = Math.max(0, nowMs() - actionStart)
+    const serverTiming = response.headers.get("server-timing")
+    const responseTraceId = response.headers.get("x-mediahive-trace-id") || traceId
+    logActionTiming(
+      "open-folder",
+      responseTraceId,
+      response.status,
+      actionToFetchMs,
+      fetchMs,
+      totalMs,
+      serverTiming,
+      timing?.source,
+    )
     if (!response.ok) {
       const error = await response.json()
       throw new Error(error.detail || response.statusText)
     }
   } catch (e) {
-    console.error("Open folder error:", e)
+    const totalMs = Math.max(0, nowMs() - actionStart)
+    console.error(`Open folder error after ${totalMs.toFixed(1)}ms (trace=${traceId}):`, e)
     alert(`Failed to open folder.\n\n${e}`)
   }
 }

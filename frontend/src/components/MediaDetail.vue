@@ -225,6 +225,7 @@
         :play-label="getPlayLabel(versionActionMenu.filePath)"
         @play="handlePlayVersion(versionActionMenu.filePath)"
         @open-folder="handleOpenFolder(versionActionMenu.filePath || '', versionActionMenu.rootId)"
+        @close="closeVersionActionMenu"
       />
     </Teleport>
   </div>
@@ -250,6 +251,7 @@ import {
   navAttrs,
   registerOutOfBoundsNavigationHandler,
   FOCUSABLE_ATTR,
+  setModalOpen,
 } from "../composables/useKeyboardNavigation"
 
 const props = defineProps<{
@@ -821,10 +823,14 @@ const versionActionMenu = ref<{
 })
 
 function closeVersionActionMenu() {
+  const wasVisible = versionActionMenu.value.visible
   versionActionMenu.value.visible = false
   versionActionMenu.value.filePath = null
   versionActionMenu.value.rootName = null
   versionActionMenu.value.rootId = null
+  if (wasVisible) {
+    setModalOpen(false)
+  }
 }
 
 function getPlayLabel(filePath: string | null): string {
@@ -842,6 +848,7 @@ function handlePlayVersion(filePath: string | null) {
 function handleVersionContextMenu(event: MouseEvent, version: Torrent) {
   event.preventDefault()
   event.stopPropagation()
+  setModalOpen(true)
   const rootId = version.root_id || ((props.item.data as MovieUi).root_id ?? props.item.root_id)
   versionActionMenu.value = {
     visible: true,
@@ -936,16 +943,52 @@ function handleResize() {
   viewportWidth.value = window.innerWidth
 }
 
+function handleGamepadAction(event: Event) {
+  const actionEvent = event as CustomEvent<{ action?: string }>
+  if (actionEvent.detail?.action !== "menu") return
+
+  const active = document.activeElement as HTMLElement | null
+  if (!active || !active.hasAttribute("data-nav-release-item")) return
+
+  const row = parseInt(active.getAttribute("data-nav-row") || "-1", 10)
+  if (row < 0) return
+
+  const index = row - 2 // releases start at nav row 2
+  const version = movieVersions.value[index]
+  if (!version) return
+
+  actionEvent.preventDefault()
+  setModalOpen(true)
+  const rect = active.getBoundingClientRect()
+  const rootId = version.root_id || ((props.item.data as MovieUi).root_id ?? props.item.root_id)
+  versionActionMenu.value = {
+    visible: true,
+    x: rect.left + rect.width / 2,
+    y: rect.top + rect.height / 2,
+    filePath: version.playable_file || null,
+    rootName: props.getRootName(rootId) || null,
+    rootId,
+  }
+  nextTick(() => {
+    const firstAction = document.querySelector(
+      ".version-action-menu .version-action-item:not(:disabled)",
+    ) as HTMLElement | null
+    firstAction?.focus()
+  })
+}
+
 onMounted(() => {
   document.addEventListener("keydown", handleMovieMenuKeydown, true)
   window.addEventListener("resize", handleResize)
   window.addEventListener("mousemove", handleHoverAudioMouseMove, { passive: true })
+  window.addEventListener("mediahive:gamepad-action", handleGamepadAction as EventListener)
 })
 
 onUnmounted(() => {
   document.removeEventListener("keydown", handleMovieMenuKeydown, true)
   window.removeEventListener("resize", handleResize)
   window.removeEventListener("mousemove", handleHoverAudioMouseMove)
+  window.removeEventListener("mediahive:gamepad-action", handleGamepadAction as EventListener)
   clearHoverAudioIdleTimer()
   disposeOutOfBoundsHandler?.()
   disposeOutOfBoundsHandler = null

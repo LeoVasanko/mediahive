@@ -28,6 +28,8 @@ const activeNavigationScope = ref<string | null>(null)
 const desiredCol = ref<number | null>(null)
 // Track if global handlers are installed
 let handlersInstalled = false
+// Track open modal count — when > 0, global keyboard navigation is suspended
+let modalOpenCount = 0
 
 // Data attribute names
 const FOCUSABLE_ATTR = "data-nav-focusable"
@@ -760,6 +762,8 @@ function shouldAllowNavigationFromInput(target: HTMLElement, direction: string):
 }
 
 function handleKeyDown(event: KeyboardEvent) {
+  if (modalOpenCount > 0) return
+
   const target = event.target as HTMLElement
 
   const direction = {
@@ -809,6 +813,8 @@ function handleKeyDown(event: KeyboardEvent) {
 }
 
 function handleEnterKey(event: KeyboardEvent) {
+  if (modalOpenCount > 0) return
+
   if (event.key !== "Enter") return
   if (event.defaultPrevented) return
   if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
@@ -833,6 +839,14 @@ export function setActiveNavigationScope(scope: string | null) {
   if (focusedElement.value && !isElementInActiveScope(focusedElement.value)) {
     clearFocusedElement()
   }
+}
+
+/**
+ * Suspend global keyboard navigation while a modal/popup is open.
+ * Call with `true` when opening, `false` when closing. Supports nesting.
+ */
+export function setModalOpen(open: boolean) {
+  modalOpenCount = Math.max(0, modalOpenCount + (open ? 1 : -1))
 }
 
 export function installKeyboardNavigation() {

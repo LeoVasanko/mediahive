@@ -1594,6 +1594,7 @@ function findRootIdForPath(filePath: string): string | null {
 }
 
 async function handlePlay(filePath: string) {
+  const actionStart = performance.now()
   const rootId = findRootIdForPath(filePath)
   if (!rootId) {
     console.error("Cannot play: unknown root for path", filePath)
@@ -1603,7 +1604,10 @@ async function handlePlay(filePath: string) {
     mpcBeOpeningUntil.value = Date.now() + MPC_BE_OPENING_GRACE_MS
   }
   try {
-    await playMedia(rootId, filePath, settings.playerId, settings.playerCustomCmd)
+    await playMedia(rootId, filePath, settings.playerId, settings.playerCustomCmd, {
+      actionStartedAt: actionStart,
+      source: "App.handlePlay",
+    })
     if (isMpcFamilySelected()) {
       const connected = await tryConnectMpcBe()
       if (connected) {
@@ -1617,13 +1621,17 @@ async function handlePlay(filePath: string) {
 }
 
 async function handleOpenFolder(folderPath: string, explicitRootId?: string | null) {
+  const actionStart = performance.now()
   const rootId = explicitRootId || findRootIdForPath(folderPath)
   if (!rootId) {
     console.error("Cannot open folder: unknown root for path", folderPath)
     return
   }
   try {
-    await openFolder(rootId, folderPath)
+    await openFolder(rootId, folderPath, {
+      actionStartedAt: actionStart,
+      source: "App.handleOpenFolder",
+    })
   } catch (e) {
     console.error("Failed to open folder:", e)
   }

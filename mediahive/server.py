@@ -300,7 +300,9 @@ class PlaybackStateCache:
 class EventLoopLagMonitor:
     """Tracks event-loop scheduling lag over a sliding window."""
 
-    def __init__(self, sample_interval: float = 0.05, window_seconds: float = 10.0) -> None:
+    def __init__(
+        self, sample_interval: float = 0.05, window_seconds: float = 10.0
+    ) -> None:
         self._sample_interval = sample_interval
         self._window_seconds = window_seconds
         self._task: asyncio.Task | None = None
@@ -955,7 +957,9 @@ async def play_media(root_id: str, request: Request, response: Response):
     client_to_server_ms: float | None = None
     if client_sent_ms_hdr:
         with suppress(ValueError):
-            client_to_server_ms = max(0.0, (time.time() * 1000.0) - float(client_sent_ms_hdr))
+            client_to_server_ms = max(
+                0.0, (time.time() * 1000.0) - float(client_sent_ms_hdr)
+            )
 
     ctx = _get_context(root_id)
     body_t0 = time.perf_counter()
@@ -1033,7 +1037,9 @@ async def open_folder(root_id: str, request: Request, response: Response):
     client_to_server_ms: float | None = None
     if client_sent_ms_hdr:
         with suppress(ValueError):
-            client_to_server_ms = max(0.0, (time.time() * 1000.0) - float(client_sent_ms_hdr))
+            client_to_server_ms = max(
+                0.0, (time.time() * 1000.0) - float(client_sent_ms_hdr)
+            )
 
     ctx = _get_context(root_id)
     body_t0 = time.perf_counter()

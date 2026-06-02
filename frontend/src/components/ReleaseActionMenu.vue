@@ -1,5 +1,12 @@
 <template>
-  <div v-if="visible" ref="menuRef" class="version-action-menu" :style="menuStyle">
+  <div
+    v-if="visible"
+    ref="menuRef"
+    class="version-action-menu"
+    :style="menuStyle"
+    tabindex="-1"
+    @keydown="handleKeydown"
+  >
     <div class="version-action-path" :title="resolvedPath">
       {{ resolvedPath }}
     </div>
@@ -47,6 +54,7 @@ const props = withDefaults(
 const emit = defineEmits<{
   play: []
   openFolder: []
+  close: []
 }>()
 
 const menuRef = ref<HTMLElement | null>(null)
@@ -72,6 +80,44 @@ const menuStyle = computed(() => ({
 }))
 
 const disabled = computed(() => !props.filePath)
+
+function getFocusableElements(): HTMLElement[] {
+  if (!menuRef.value) return []
+  return Array.from(
+    menuRef.value.querySelectorAll<HTMLElement>(".version-action-item:not(:disabled)")
+  )
+}
+
+function focusNext(delta: number) {
+  const elements = getFocusableElements()
+  if (elements.length === 0) return
+  const currentIndex = elements.findIndex((el) => el === document.activeElement)
+  const nextIndex =
+    currentIndex < 0 ? 0 : (currentIndex + delta + elements.length) % elements.length
+  elements[nextIndex].focus()
+}
+
+function handleKeydown(event: KeyboardEvent) {
+  if (event.key === "Tab") {
+    event.preventDefault()
+    focusNext(event.shiftKey ? -1 : 1)
+    return
+  }
+  if (event.key === "ArrowDown" || event.key === "ArrowRight") {
+    event.preventDefault()
+    focusNext(1)
+    return
+  }
+  if (event.key === "ArrowUp" || event.key === "ArrowLeft") {
+    event.preventDefault()
+    focusNext(-1)
+    return
+  }
+  if (event.key === "Escape") {
+    event.preventDefault()
+    emit("close")
+  }
+}
 
 function clampToViewport() {
   const menu = menuRef.value

@@ -167,51 +167,24 @@
       </div>
     </section>
 
-    <!-- Context menu -->
+    <!-- Episode release menu -->
     <Teleport to="body">
       <div
-        v-if="contextMenu.visible"
-        class="context-menu-backdrop"
-        @click="closeContextMenu"
-        @contextmenu.prevent="closeContextMenu"
+        v-if="episodeReleaseMenu.visible"
+        class="episode-release-menu-backdrop"
+        @click="closeEpisodeReleaseMenu"
+        @contextmenu.prevent="closeEpisodeReleaseMenu"
       ></div>
-      <div
-        v-if="contextMenu.visible && contextMenu.episode"
-        class="context-menu"
-        :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }"
-      >
-        <div class="context-menu-header">
-          {{ contextMenu.episode.name || `Episode ${contextMenu.episode.episode_number}` }}
-        </div>
-        <div v-if="Object.values(contextMenu.episode.files || {}).length > 0">
-          <ReleaseVersionCard
-            v-for="(torrent, index) in sortTorrentsByPreference(Object.values(contextMenu.episode.files || {}))"
-            :key="index"
-            class="context-menu-version"
-            :torrent="torrent"
-            variant="menu"
-            compact-flags
-            :title="
-              torrent.playable_file
-                ? 'Click to play/continue. Alt+Click, Alt+Enter, or Cmd/Ctrl+E to open folder. Right-click for actions.'
-                : 'No playable file'
-            "
-            @activate="handleVersionActivate(torrent, $event)"
-            @keydown="handleVersionShortcutKeydown($event, torrent)"
-            @contextmenu="handleVersionContextMenu($event, torrent)"
-          />
-        </div>
-        <div v-else class="context-menu-empty">No versions available</div>
-      </div>
-      <ReleaseActionMenu
-        :visible="versionActionMenu.visible"
-        :x="versionActionMenu.x"
-        :y="versionActionMenu.y"
-        :file-path="versionActionMenu.filePath"
-        :root-name="versionActionMenu.rootName"
-        :play-label="getPlayLabel(versionActionMenu.filePath)"
-        @play="handlePlayVersion(versionActionMenu.filePath)"
-        @open-folder="handleOpenFolder(versionActionMenu.filePath || '', versionActionMenu.rootId)"
+      <EpisodeReleaseMenu
+        :visible="episodeReleaseMenu.visible"
+        :x="episodeReleaseMenu.x"
+        :y="episodeReleaseMenu.y"
+        :episode-name="episodeReleaseMenu.episode?.name || `Episode ${episodeReleaseMenu.episode?.episode_number}`"
+        :releases="episodeReleaseMenuReleases"
+        :has-resume-position="props.hasResumePosition"
+        @play="handlePlayVersion"
+        @open-folder="handleOpenFolderFromMenu"
+        @close="closeEpisodeReleaseMenu"
       />
     </Teleport>
   </div>
@@ -219,11 +192,10 @@
 
 <script setup lang="ts">
 import { computed, ref, nextTick, watch, onMounted, onUnmounted } from "vue"
-import type { Series, Season, Episode, Torrent, MovieUi } from "../types"
+import type { Series, Season, Episode, MovieUi } from "../types"
 import { getCoverUrl, getVideoPreviewUrl, getVideoSourceAttributes, isSafariBrowser } from "../api"
-import { navAttrs } from "../composables/useKeyboardNavigation"
-import ReleaseVersionCard from "./ReleaseVersionCard.vue"
-import ReleaseActionMenu from "./ReleaseActionMenu.vue"
+import { navAttrs, setModalOpen } from "../composables/useKeyboardNavigation"
+import EpisodeReleaseMenu from "./EpisodeReleaseMenu.vue"
 import { sortTorrentsByPreference } from "../composables/useSettings"
 
 const props = defineProps<{
@@ -486,8 +458,8 @@ watch(
   { immediate: true },
 )
 
-// Context menu state
-const contextMenu = ref<{
+// Episode release menu state (single-layer menu for all releases)
+const episodeReleaseMenu = ref<{
   visible: boolean
   x: number
   y: number
@@ -499,23 +471,12 @@ const contextMenu = ref<{
   episode: null,
 })
 
-const versionActionMenu = ref<{
-  visible: boolean
-  x: number
-  y: number
-  filePath: string | null
-  rootName: string | null
-  rootId: string | null
-}>({
-  visible: false,
-  x: 0,
-  y: 0,
-  filePath: null,
-  rootName: null,
-  rootId: null,
-})
-
 const releaseMenuOriginElement = ref<HTMLElement | null>(null)
+
+const episodeReleaseMenuReleases = computed(() => {
+  if (!episodeReleaseMenu.value.episode) return []
+  return sortTorrentsByPreference(Object.values(episodeReleaseMenu.value.episode.files || {}))
+})
 
 function normalizeMatchText(value: string | null | undefined): string {
   return (value || "")
@@ -578,7 +539,7 @@ const matchingSeriesMovies = computed(() => {
     })
 })
 
-// Show context menu on right-click
+// Show episode release menu on right-click (single-layer menu)
 function handleContextMenu(event: MouseEvent, episode: Episode) {
   event.preventDefault()
   releaseMenuOriginElement.value = event.currentTarget as HTMLElement | null
@@ -586,23 +547,16 @@ function handleContextMenu(event: MouseEvent, episode: Episode) {
 }
 
 function openEpisodeReleaseMenu(episode: Episode, x: number, y: number) {
-  closeVersionActionMenu()
-  contextMenu.value = {
+  setModalOpen(true)
+  episodeReleaseMenu.value = {
     visible: true,
     x,
     y,
     episode,
   }
-  // Add Escape key listener (capturing phase to intercept before other handlers)
+  // Add Escape key listener as safety net (capture phase)
   nextTick(() => {
-    document.addEventListener("keydown", handleContextMenuKeydown, true)
-    // Focus first selectable version card.
-    const firstCard = document.querySelector(
-      ".context-menu .version-row.version-selectable",
-    ) as HTMLElement
-    if (firstCard) {
-      firstCard.focus()
-    }
+    document.addEventListener("keydown", handleEpisodeMenuEscape, true)
   })
 }
 
@@ -616,83 +570,25 @@ function openEpisodeReleaseMenuFromElement(episode: Episode, element: HTMLElemen
   openEpisodeReleaseMenu(episode, rect.left + rect.width / 2, rect.top + rect.height / 2)
 }
 
-// Handle Escape and arrow keys in context menu (capturing phase to intercept before global handler)
-function handleContextMenuKeydown(event: KeyboardEvent) {
-  if (!contextMenu.value.visible) return
-
-  const popupFocusable = getPopupFocusableElements()
-
-  if (event.key === "Tab") {
-    if (popupFocusable.length === 0) return
-    event.preventDefault()
-    event.stopPropagation()
-
-    const currentIndex = popupFocusable.findIndex((el) => el === document.activeElement)
-    const delta = event.shiftKey ? -1 : 1
-    const nextIndex =
-      currentIndex < 0 ? 0 : (currentIndex + delta + popupFocusable.length) % popupFocusable.length
-    popupFocusable[nextIndex].focus()
-    return
-  }
-
-  if (
-    event.key === "ArrowDown" ||
-    event.key === "ArrowRight" ||
-    event.key === "ArrowUp" ||
-    event.key === "ArrowLeft"
-  ) {
-    if (popupFocusable.length === 0) return
-    event.preventDefault()
-    event.stopPropagation()
-
-    const currentIndex = popupFocusable.findIndex((el) => el === document.activeElement)
-    const delta = event.key === "ArrowDown" || event.key === "ArrowRight" ? 1 : -1
-    const nextIndex =
-      currentIndex < 0 ? 0 : (currentIndex + delta + popupFocusable.length) % popupFocusable.length
-    popupFocusable[nextIndex].focus()
-    return
-  }
-
+// Capture-phase Escape handler as safety net for episode release menu
+function handleEpisodeMenuEscape(event: KeyboardEvent) {
+  if (!episodeReleaseMenu.value.visible) return
   if (event.key === "Escape") {
     event.preventDefault()
     event.stopPropagation()
-    if (versionActionMenu.value.visible) {
-      closeVersionActionMenu()
-      return
-    }
-    closeContextMenu()
+    closeEpisodeReleaseMenu()
   }
 }
 
-function getPopupFocusableElements(): HTMLElement[] {
-  const releaseItems = Array.from(
-    document.querySelectorAll<HTMLElement>(".context-menu .version-row.version-selectable"),
-  )
-  const actionItems = versionActionMenu.value.visible
-    ? Array.from(
-        document.querySelectorAll<HTMLElement>(
-          ".version-action-menu .version-action-item:not(:disabled)",
-        ),
-      )
-    : []
-  return [...releaseItems, ...actionItems]
-}
-
-// Close context menu
-function closeContextMenu() {
-  closeVersionActionMenu()
-  contextMenu.value.visible = false
-  document.removeEventListener("keydown", handleContextMenuKeydown, true)
+// Close episode release menu
+function closeEpisodeReleaseMenu() {
+  episodeReleaseMenu.value.visible = false
+  episodeReleaseMenu.value.episode = null
+  document.removeEventListener("keydown", handleEpisodeMenuEscape, true)
+  setModalOpen(false)
   nextTick(() => {
     releaseMenuOriginElement.value?.focus()
   })
-}
-
-function closeVersionActionMenu() {
-  versionActionMenu.value.visible = false
-  versionActionMenu.value.filePath = null
-  versionActionMenu.value.rootName = null
-  versionActionMenu.value.rootId = null
 }
 
 function handleGamepadAction(event: Event) {
@@ -700,18 +596,22 @@ function handleGamepadAction(event: Event) {
   if (actionEvent.detail?.action !== "menu") return
 
   const active = document.activeElement as HTMLElement | null
-  if (!active || !active.classList.contains("episode-tile")) return
+  if (!active) return
 
-  const seasonIndex = parseInt(active.getAttribute("data-season-index") || "-1", 10)
-  const episodeIndex = parseInt(active.getAttribute("data-episode-index") || "-1", 10)
-  if (seasonIndex < 0 || episodeIndex < 0) return
+  // Episode tile on series page
+  if (active.classList.contains("episode-tile")) {
+    const seasonIndex = parseInt(active.getAttribute("data-season-index") || "-1", 10)
+    const episodeIndex = parseInt(active.getAttribute("data-episode-index") || "-1", 10)
+    if (seasonIndex < 0 || episodeIndex < 0) return
 
-  const season = props.series.seasons?.[seasonIndex]
-  const episode = season?.episodes?.[episodeIndex]
-  if (!episode) return
+    const season = props.series.seasons?.[seasonIndex]
+    const episode = season?.episodes?.[episodeIndex]
+    if (!episode) return
 
-  actionEvent.preventDefault()
-  openEpisodeReleaseMenuFromElement(episode, active)
+    actionEvent.preventDefault()
+    openEpisodeReleaseMenuFromElement(episode, active)
+    return
+  }
 }
 
 // Play specific version
@@ -719,61 +619,18 @@ function handlePlayVersion(filePath: string | null) {
   if (filePath) {
     emit("play", filePath)
   }
-  closeVersionActionMenu()
-  closeContextMenu()
+  closeEpisodeReleaseMenu()
 }
 
-function getPlayLabel(filePath: string | null): string {
-  return props.hasResumePosition(filePath) ? "Continue" : "Play"
-}
-
-// Open folder for a version
-function handleOpenFolder(folderPath: string, rootId?: string | null) {
-  if (!folderPath) return
-  emit("openFolder", folderPath, rootId)
-  closeVersionActionMenu()
-  closeContextMenu()
-}
-
-function handleVersionActivate(torrent: Torrent, event: MouseEvent | KeyboardEvent) {
-  if (!torrent.playable_file) return
-  const rootId = torrent.root_id ?? props.series.root_id ?? null
-  if (event.altKey) {
-    handleOpenFolder(torrent.playable_file, rootId)
-    return
-  }
-  handlePlayVersion(torrent.playable_file)
-}
-
-function handleVersionShortcutKeydown(event: KeyboardEvent, torrent: Torrent) {
-  if (!torrent.playable_file) return
-  const rootId = torrent.root_id ?? props.series.root_id ?? null
-  const key = event.key.toLowerCase()
-  if (key === "e" && (event.metaKey || event.ctrlKey)) {
-    event.preventDefault()
-    event.stopPropagation()
-    handleOpenFolder(torrent.playable_file, rootId)
-  }
-}
-
-function handleVersionContextMenu(event: MouseEvent, torrent: Torrent) {
-  event.preventDefault()
-  event.stopPropagation()
-  const rootId = torrent.root_id ?? props.series.root_id ?? null
-  versionActionMenu.value = {
-    visible: true,
-    x: event.clientX,
-    y: event.clientY,
-    filePath: torrent.playable_file || null,
-    rootName: props.getRootName(rootId) || null,
-    rootId,
-  }
-  nextTick(() => {
-    const firstAction = document.querySelector(
-      ".version-action-menu .version-action-item:not(:disabled)",
-    ) as HTMLElement | null
-    firstAction?.focus()
-  })
+// Open folder for a version from the episode release menu
+function handleOpenFolderFromMenu(filePath: string) {
+  if (!filePath) return
+  const torrent = episodeReleaseMenu.value.episode?.files
+    ? Object.values(episodeReleaseMenu.value.episode.files).find((t) => t.playable_file === filePath)
+    : undefined
+  const rootId = torrent?.root_id ?? props.series.root_id ?? null
+  emit("openFolder", filePath, rootId)
+  closeEpisodeReleaseMenu()
 }
 
 // Video refs for hover effects
@@ -1712,51 +1569,10 @@ html.mouse-active .episode-tile:hover .tile-play {
   }
 }
 
-/* Context menu styles */
-.context-menu-backdrop {
+/* Episode release menu backdrop */
+.episode-release-menu-backdrop {
   position: fixed;
   inset: 0;
   z-index: 999;
-}
-
-.context-menu {
-  position: fixed;
-  z-index: 1000;
-  background: rgba(20, 20, 30, 0.98);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 8px;
-  min-width: 280px;
-  max-width: 400px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
-  overflow: visible;
-  padding: 8px;
-}
-
-.context-menu-header {
-  padding: 10px 12px;
-  font-weight: 600;
-  font-size: 0.9rem;
-  background: rgba(255, 255, 255, 0.05);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 6px;
-  margin-bottom: 8px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.context-menu-version {
-  margin-bottom: 6px;
-}
-
-.context-menu-version:last-child {
-  margin-bottom: 0;
-}
-
-.context-menu-empty {
-  padding: 12px;
-  text-align: center;
-  color: rgba(255, 255, 255, 0.5);
-  font-size: 0.85rem;
 }
 </style>
