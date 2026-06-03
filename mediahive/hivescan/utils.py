@@ -2,7 +2,6 @@
 
 import os
 import re
-import time
 import unicodedata
 from pathlib import Path
 
@@ -10,9 +9,6 @@ from aiopathlib import AsyncPath
 
 # Default output folder name (created at common root of scanned paths)
 DEFAULT_OUTPUT_FOLDER = ".mediahive"
-
-# Threshold for considering atime "too close" to current time (1 hour)
-_ATIME_FRESHNESS_THRESHOLD = 3600
 
 # Resolution priority for quality sorting (higher = better)
 RESOLUTION_PRIORITY = {
@@ -108,10 +104,9 @@ def normalize_resolution_label(value: str | None) -> str | None:
 async def get_added_timestamp(path: Path) -> int | None:
     """Get the timestamp when a torrent was added to the collection.
 
-    Heuristic:
-    - For directories: use ctime (most accurate for torrent folder creation)
-    - For files: use atime unless it's too close to current time (suggesting
-      the filesystem updates atime on reads), otherwise use max(mtime, ctime)
+        Best-effort rule:
+        - On Windows: use ctime (creation-time semantics)
+        - On other OSes: use mtime (ctime is metadata-change time on Unix)
 
     Returns:
         Unix timestamp as int, or None if path doesn't exist
@@ -122,17 +117,9 @@ async def get_added_timestamp(path: Path) -> int | None:
         stat_info = await ap.stat()
     except OSError, PermissionError:
         return None
-
-    if await ap.is_dir():
+    if os.name == "nt":
         return int(stat_info.st_ctime)
-
-    now = time.time()
-    atime = stat_info.st_atime
-
-    if now - atime < _ATIME_FRESHNESS_THRESHOLD:
-        return int(max(stat_info.st_mtime, stat_info.st_ctime))
-
-    return int(atime)
+    return int(stat_info.st_mtime)
 
 
 def get_directory_size(path: Path) -> int:
