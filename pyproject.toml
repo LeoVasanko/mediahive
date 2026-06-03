@@ -53,8 +53,8 @@ parse-torrent-title = { git = "https://github.com/platelminto/parse-torrent-titl
 
 [project.optional-dependencies]
 gui = [
-    "pywebview>=6.2.1; platform_system != 'Darwin'",
-    "pywebview[qt5]>=6.2.1; platform_system == 'Darwin'",
+    "pywebview[qt]>=6.2.1; platform_system != 'Windows'",
+    "pywebview>=6.2.1; platform_system == 'Windows'",
     "qtpy>=2.4.1; platform_system == 'Darwin'",
     "PyQt5>=5.15.11; platform_system == 'Darwin'",
     "pythonnet>=3.1.0rc0; platform_system == 'Windows' and python_version >= '3.14'",
