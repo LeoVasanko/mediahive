@@ -6,15 +6,19 @@ Netflix style browsing of your local media archive. Supports keyboard, mouse and
 
 **[Windows and Mac portable ZIP downloads](https://git.zi.fi/LeoVasanko/mediahive/releases)**
 
+## Getting Started
+
+- Windows and macOS: Download the portable ZIP from the releases page, extract it anywhere, and run `MediaHive`.
+- Linux and other platforms: Install [UV](https://docs.astral.sh/uv/getting-started/installation/) and run directly with `uvx --from mediahive[gui] mediahive`.
+
 ## What It Does
 
 - Scans your chosen media folder for all movies and series that can be found
 - Produces preview video clips and downloads metadata
-- Search on cast and character names, not just titles
+- Search on names and other metadata, not just titles
 - Hand off playback to your preferred system player
-- Implement gamepad controls for MPC-BE on Windows (where needed)
 
-Extract the ZIP in some place and run MediaHive.exe to start the app. Currently we have no installer, but you can pin to start/taskbar for easier access. On the first startup the app asks for your media folder, that can later be changed by clicking in-app folder icon.
+Windows and macOS builds are currently portable-only (no installer). On first startup, the app asks for your media folder, which you can later change using the in-app folder icon.
 
 Note that `.mediahive` folder is created in your media folder to hold all the metadata and preview clips, avoiding the lengthy processing that you will see on initial startup.
 

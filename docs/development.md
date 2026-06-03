@@ -1,6 +1,6 @@
 # Development
 
-This document covers the developer-facing ways to run MediaHive locally. The main [README.md](../README.md) is aimed at Windows end users.
+This document covers the developer-facing ways to run MediaHive locally. The main [README.md](../README.md) covers end-user startup across platforms (portable ZIPs on Windows/macOS, `uvx --from mediahive[gui] mediahive` on Linux/other).
 
 ## Requirements
 
