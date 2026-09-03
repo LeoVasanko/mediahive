@@ -17,7 +17,7 @@
   <div v-else class="movie-page">
     <div class="movie-page-content">
       <!-- Diagonal collage header -->
-      <div class="collage-header">
+      <div ref="collageHeaderRef" class="collage-header">
         <!-- Background collage of showreel videos -->
         <div class="collage-grid">
           <div
@@ -253,6 +253,7 @@ import {
   FOCUSABLE_ATTR,
   setModalOpen,
 } from "../composables/useKeyboardNavigation"
+import { useIdlePreviewPlayback } from "../composables/useIdlePreviewPlayback"
 
 const props = defineProps<{
   item: MediaItem
@@ -277,6 +278,21 @@ const COLLAGE_SLOT_COUNT = 5
 const safariAutoplay = isSafariBrowser()
 const COLLAGE_START_OFFSETS_SECONDS = [0, 8, 6, 4, 2]
 const DESKTOP_NAV_SHORTCUT_MIN_WIDTH = 900
+
+const collageHeaderRef = ref<HTMLElement | null>(null)
+let collageHeaderVisible = true
+let collageHeaderObserver: IntersectionObserver | null = null
+const staggerTimers = new Set<ReturnType<typeof setTimeout>>()
+let staggerToken = 0
+
+const { stopped: previewPlaybackStopped } = useIdlePreviewPlayback({
+  onStop: stopPreviews,
+  onRestart: () => startStaggeredPlayback(),
+})
+
+function previewsSuppressed(): boolean {
+  return previewPlaybackStopped.value || !collageHeaderVisible || document.hidden
+}
 
 let disposeOutOfBoundsHandler: (() => void) | null = null
 let lastReleaseShortcutRow: number | null = null
@@ -362,15 +378,35 @@ function isVideoReady(index: number): boolean {
   return videoStates.value[index] === "ready"
 }
 
+function cancelStaggeredPlayback() {
+  staggerToken += 1
+  for (const timer of staggerTimers) {
+    clearTimeout(timer)
+  }
+  staggerTimers.clear()
+}
+
+function scheduleStaggeredStart(token: number, start: () => void, delayMs: number) {
+  const timer = setTimeout(() => {
+    staggerTimers.delete(timer)
+    if (token !== staggerToken || previewsSuppressed()) return
+    start()
+  }, delayMs)
+  staggerTimers.add(timer)
+}
+
 // Start staggered video playback
 function startStaggeredPlayback() {
+  cancelStaggeredPlayback()
+  const token = staggerToken
   const videos = videoRefs.value.filter((v) => v !== null) as HTMLVideoElement[]
-  if (videos.length === 0) return
+  if (videos.length === 0 || previewsSuppressed()) return
 
   if (safariAutoplay) {
     videos.forEach((video, index) => {
       const offset = COLLAGE_START_OFFSETS_SECONDS[index] ?? 0
       const startVideo = () => {
+        if (token !== staggerToken || previewsSuppressed()) return
         video.currentTime = offset
         video.play().catch(() => {})
       }
@@ -390,11 +426,29 @@ function startStaggeredPlayback() {
 
   // Set up staggered start for remaining videos
   for (let i = 1; i < videos.length; i++) {
-    setTimeout(() => {
-      const video = videos[i]
-      if (!video) return
-      video.play().catch(() => {})
-    }, i * 2000)
+    scheduleStaggeredStart(
+      token,
+      () => {
+        const video = videos[i]
+        if (!video) return
+        video.play().catch(() => {})
+      },
+      i * 2000,
+    )
+  }
+}
+
+// Stop all collage previews and cancel any pending staggered starts
+function stopPreviews() {
+  cancelStaggeredPlayback()
+  clearHoverAudioIdleTimer()
+  hoveredVideoIndex = null
+  for (const interval of volumeFadeIntervals.values()) {
+    clearInterval(interval)
+  }
+  volumeFadeIntervals.clear()
+  for (const video of videoRefs.value) {
+    video?.pause()
   }
 }
 
@@ -496,6 +550,19 @@ onMounted(() => {
   setTimeout(() => {
     startStaggeredPlayback()
   }, 100)
+
+  // Pause the collage videos while the header is scrolled out of view
+  if (collageHeaderRef.value) {
+    collageHeaderObserver = new IntersectionObserver((entries) => {
+      collageHeaderVisible = entries[0]?.isIntersecting ?? true
+      if (collageHeaderVisible) {
+        startStaggeredPlayback()
+      } else {
+        stopPreviews()
+      }
+    })
+    collageHeaderObserver.observe(collageHeaderRef.value)
+  }
 
   registerMovieOutOfBoundsShortcut()
 })
@@ -990,6 +1057,9 @@ onUnmounted(() => {
   window.removeEventListener("mousemove", handleHoverAudioMouseMove)
   window.removeEventListener("mediahive:gamepad-action", handleGamepadAction as EventListener)
   clearHoverAudioIdleTimer()
+  cancelStaggeredPlayback()
+  collageHeaderObserver?.disconnect()
+  collageHeaderObserver = null
   disposeOutOfBoundsHandler?.()
   disposeOutOfBoundsHandler = null
   lastReleaseShortcutRow = null

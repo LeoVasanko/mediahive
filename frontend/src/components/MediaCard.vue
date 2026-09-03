@@ -18,6 +18,7 @@
         :src="posterImageUrl"
         :alt="item.title || 'Unknown'"
         loading="lazy"
+        decoding="async"
         @error="imageError = true"
       />
       <div v-else class="media-card-placeholder">

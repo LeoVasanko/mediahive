@@ -420,6 +420,10 @@ html:not(.mouse-active) .btn-secondary.nav-focused {
   outline: none;
   text-decoration: none;
   color: inherit;
+  /* Skip rendering work for cards scrolled out of view (long rows). Width is
+     fixed; the intrinsic height is only a pre-first-render estimate. */
+  content-visibility: auto;
+  contain-intrinsic-height: auto 330px;
 }
 
 html.mouse-active .media-card:hover,
