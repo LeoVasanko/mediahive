@@ -9,6 +9,7 @@ import asyncio
 import contextlib
 import ctypes
 import html
+import importlib.metadata
 import json
 import logging
 import os
@@ -936,14 +937,31 @@ def winmain() -> None:
     backend_url = f"http://{BACKEND_HOST}:{backend_port}"
     os.environ["MEDIAHIVE_BACKEND_URL"] = backend_url
 
-    # Run the FastAPI backend on a background thread
+    # Startup banner, same as fastapi-vue's server.run() prints in CLI mode.
+    # Goes to stderr, which frozen builds redirect to the log file.
+    from fastapi_vue.startupbox import print_box
+
+    try:
+        version = importlib.metadata.version("mediahive")
+    except importlib.metadata.PackageNotFoundError:
+        version = "dev"
+    print_box(f"MediaHive {version}\n{backend_url}")
+
+    # Run the FastAPI backend on a background thread.  fastapi-vue's patched
+    # log config wires up its access-log middleware, emoji level prefixes and
+    # tracerite tracebacks (colors are auto-disabled when stderr is not a tty,
+    # e.g. redirected to the log file in frozen builds).
+    from fastapi_vue.logging import patch_log_config
+
     config = uvicorn.Config(
         "mediahive.server:app",
         host=BACKEND_HOST,
         port=backend_port,
         loop="asyncio",
-        log_level="warning",
+        server_header=False,
         timeout_graceful_shutdown=0,
+        access_log=False,  # fastapi-vue's middleware replaces uvicorn's
+        log_config=patch_log_config(uvicorn.config.LOGGING_CONFIG),
     )
     server = uvicorn.Server(config)
     backend_thread = threading.Thread(
