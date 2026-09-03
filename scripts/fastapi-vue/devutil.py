@@ -1,33 +1,32 @@
-"""Utilities for the devserver script in the source repository.
-
-Used only with development dependencies.
-"""
+"""Utilities meant for devserver script, used only in source repository with dev deps."""
 
 import asyncio
 import subprocess
 import sys
-from collections.abc import Coroutine
 from contextlib import suppress
 from pathlib import Path
-from typing import Any, Self
+from typing import TYPE_CHECKING, Any, Self
+from urllib.parse import urlsplit
 
-import httpx
 from buildutil import find_dev_tool, find_install_tool, logger
 from fastapi_vue.hostutil import parse_endpoint
 
+if TYPE_CHECKING:
+    from collections.abc import Coroutine
+
 
 class ProcessGroup:
-    """Manage async subprocesses with automatic cleanup.
-
-    Acts like TaskGroup for processes.
-    """
+    """Manage async subprocesses with automatic cleanup, like TaskGroup for processes."""
 
     def __init__(self) -> None:
+        """Initialize empty process tracking."""
         self._procs: list[asyncio.subprocess.Process] = []
         self._cmds: dict[int, str] = {}  # pid -> command name
 
     async def spawn(
-        self, *cmd: str, cwd: str | None = None
+        self,
+        *cmd: str,
+        cwd: str | None = None,
     ) -> asyncio.subprocess.Process:
         """Spawn a subprocess and track it."""
         cmd_name = Path(cmd[0]).stem
@@ -38,7 +37,8 @@ class ProcessGroup:
         return proc
 
     async def wait(
-        self, *waitables: asyncio.subprocess.Process | Coroutine[Any, Any, Any]
+        self,
+        *waitables: asyncio.subprocess.Process | Coroutine[Any, Any, Any],
     ) -> None:
         """Wait for processes/coroutines to complete, raise SystemExit on failure."""
 
@@ -59,18 +59,14 @@ class ProcessGroup:
             raise SystemExit(1) from None
 
     async def __aenter__(self) -> Self:
-        """Return this process group context manager."""
+        """Enter the async context manager."""
         return self
 
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        *_: object,
-    ) -> None:
+    async def __aexit__(self, exc_type: type[BaseException] | None, *_: object) -> None:
         """Wait for one process to exit, terminate others, then wait for all."""
         await self._cleanup(immediate=exc_type is not None)
 
-    async def _cleanup(self, immediate: bool = False) -> None:
+    async def _cleanup(self, *, immediate: bool = False) -> None:
         running = [p for p in self._procs if p.returncode is None]
         if not running:
             return
@@ -98,7 +94,7 @@ class ProcessGroup:
                         asyncio.wait_for(
                             asyncio.gather(*[p.wait() for p in still_running]),
                             timeout=10,
-                        )
+                        ),
                     )
                 except TimeoutError:
                     for p in self._procs:
@@ -108,46 +104,71 @@ class ProcessGroup:
                             await p.wait()
 
 
-async def check_ports_free(*urls: str) -> None:
-    """Verify URLs are not responding (ports are free).
+async def http_get_server(url: str, timeout: float) -> str | None:  # noqa: ASYNC109
+    """GET url with plain asyncio streams, return the response Server header.
 
-    Raise SystemExit if any endpoint responds.
+    Returns an empty string when the server responds without a Server header,
+    and None when the server is unreachable or doesn't answer in time.
     """
+    parts = urlsplit(url)
+    host = parts.hostname or "localhost"
+    port = parts.port or (443 if parts.scheme == "https" else 80)
+    path = parts.path or "/"
+    if parts.query:
+        path += f"?{parts.query}"
+    try:
+        async with asyncio.timeout(timeout):
+            reader, writer = await asyncio.open_connection(host, port)
+            try:
+                writer.write(f"GET {path} HTTP/1.0\r\nHost: {host}\r\n\r\n".encode())
+                await writer.drain()
+                data = await reader.readuntil(b"\r\n\r\n")
+            finally:
+                writer.close()
+    except OSError, EOFError, ValueError, TimeoutError:
+        return None
+    for line in data.decode("latin-1").split("\r\n"):
+        if line.lower().startswith("server:"):
+            return line.split(":", 1)[1].strip()
+    return ""
 
-    async def check(client: httpx.AsyncClient, url: str) -> None:
-        with suppress(httpx.RequestError):
-            res = await client.get(url, timeout=0.1)
-            server = res.headers.get("server", "server")
-            logger.warning("Conflicting %s already running at %s", server, url)
+
+async def check_ports_free(*urls: str) -> None:
+    """Verify URLs are not responding (ports are free). Raise SystemExit if any respond."""
+
+    async def check(url: str) -> None:
+        server = await http_get_server(url, timeout=0.1)
+        if server is not None:
+            logger.warning(
+                "Conflicting %s already running at %s", server or "server", url
+            )
             raise SystemExit(1)
 
-    async with httpx.AsyncClient() as client:
-        await asyncio.gather(*[check(client, url) for url in urls])
+    await asyncio.gather(*[check(url) for url in urls])
 
 
-async def ready(url: str, path: str = "") -> None:
+async def ready(url: str, path: str = "", max_attempts: int = 50) -> None:
     """Wait for the server to be ready by polling an endpoint.
 
+    Use empty path to disable the check and make this return immediately.
     Raises SystemExit(1) if server doesn't start in time.
     """
-    max_attempts = 50
-    full_url = f"{url}{path}"
+    if not path:
+        return
 
-    async with httpx.AsyncClient() as client:
-        for attempt in range(max_attempts):
-            try:
-                await client.get(full_url, timeout=1.0)
-                logger.info("✓ Backend ready!")
-                return
-            except httpx.RequestError:
-                if attempt == max_attempts - 1:
-                    logger.warning("Backend didn't start in time")
-                    raise SystemExit(1)
-                await asyncio.sleep(0.1)
+    for attempt in range(max_attempts):
+        if await http_get_server(f"{url}{path}", timeout=1.0) is not None:
+            logger.info("✓ Backend ready!")
+            return
+        if attempt == max_attempts - 1:
+            logger.warning("Backend didn't start in time")
+            raise SystemExit(1)
+        await asyncio.sleep(0.1)
 
 
 def setup_vite(
-    endpoint: str, default_port: int = 5173
+    endpoint: str,
+    default_port: int = 5173,
 ) -> tuple[str, list[str], list[str]]:
     """Parse frontend endpoint and build commands.
 
@@ -173,7 +194,9 @@ def setup_vite(
 
 
 def setup_fastapi(
-    endpoint: str, module: str, default_port: int = 8000
+    endpoint: str,
+    module: str,
+    default_port: int = 8000,
 ) -> tuple[str, list[str]]:
     """Parse backend endpoint and build uvicorn command.
 
@@ -205,7 +228,9 @@ def setup_fastapi(
 
 
 def setup_cli(
-    cli: str, endpoint: str, default_port: int = 8000
+    cli: str,
+    endpoint: str,
+    default_port: int = 8000,
 ) -> tuple[str, list[str]]:
     """Parse backend endpoint and build CLI command.
 
@@ -221,5 +246,7 @@ def setup_cli(
     host = endpoints[0]["host"]
     port = endpoints[0]["port"]
 
-    cmd = [cli, f"--listen={host}:{port}"]
+    # Run the package as a module with the current interpreter, instead of
+    # relying on a PATH-installed CLI entry point.
+    cmd = [sys.executable, "-m", cli, f"--listen={host}:{port}"]
     return f"http://{host}:{port}", cmd

@@ -34,12 +34,6 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi_vue import Frontend
 
 from mediahive.__main__ import DEVMODE
-from mediahive.access_logging import (
-    AccessLogMiddleware,
-    configure_access_logging,
-    log_ws_close,
-    log_ws_open,
-)
 from mediahive.config import load_config
 from mediahive.hivescan.images import close_image_client
 from mediahive.hivescan.scanner import RootScanner
@@ -62,8 +56,6 @@ from mediahive.players import detect_players, launch_player
 from mediahive.root_registry import Supervisor
 
 logger = logging.getLogger("mediahive.server")
-
-configure_access_logging()
 
 MPC_BE_DEFAULT_PORT = 13579
 
@@ -769,9 +761,6 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(title="MediaHive Server", lifespan=lifespan, debug=DEVMODE)
 
-# Custom access logging (uvicorn access logs are suppressed in access_logging)
-app.add_middleware(AccessLogMiddleware)
-
 # Allow CORS for development
 app.add_middleware(
     CORSMiddleware,
@@ -829,9 +818,6 @@ async def ws_endpoint(ws: WebSocket) -> None:
     attached_contexts = supervisor.all_contexts()
     outbound: asyncio.Queue[bytes] = asyncio.Queue()
 
-    start = time.perf_counter()
-    ws_id = log_ws_open(ws)
-    close_code: int | None = None
     prev_root_ids: set[str] = set()
     prev_meta: dict[str, tuple[str, str, str | None, bool]] = {}
 
@@ -918,9 +904,7 @@ async def ws_endpoint(ws: WebSocket) -> None:
     try:
         while True:
             await ws.receive_text()
-    except WebSocketDisconnect as exc:
-        close_code = exc.code
-    except OSError, RuntimeError:
+    except WebSocketDisconnect, OSError, RuntimeError:
         pass
     finally:
         sender_task.cancel()
@@ -934,8 +918,6 @@ async def ws_endpoint(ws: WebSocket) -> None:
             ctx = attached_contexts.get(rid)
             if ctx is not None:
                 ctx.store.remove_listener(listener)
-
-        log_ws_close(ws_id, close_code, time.perf_counter() - start)
 
 
 # --- Media actions ---

@@ -5,13 +5,14 @@
  * Configures Vite for FastAPI backend integration:
  * - Proxies /api/* requests to the FastAPI backend
  * - Builds to the Python module's frontend-build directory
+ * - Disables Vite's screen clearing on startup
  *
  * Options:
  *   paths - Array of paths to proxy (default: ["/api"])
  */
 
 export default function fastapiVue({ paths = ["/api"] } = {}) {
-  const backendUrl = process.env.MEDIAHIVE_BACKEND_URL || "http://localhost:8420"
+  const backendUrl = process.env.MEDIAHIVE_BACKEND_URL || "http://localhost:8421"
 
   // Build proxy configuration for each path
   const proxy = {}
@@ -26,6 +27,7 @@ export default function fastapiVue({ paths = ["/api"] } = {}) {
   return {
     name: "vite-plugin-fastapi-mediahive",
     config: () => ({
+      clearScreen: false,
       server: { proxy },
       build: {
         outDir: "../mediahive/frontend-build",
