@@ -1168,6 +1168,74 @@ def _resolve_root_scoped_path(base: Path, raw_path: str) -> Path:
     return candidate
 
 
+class StreamingFileResponse(StreamingResponse):
+    """Stream a file from disk with optional single-range support.
+
+    Unlike plain ``StreamingResponse`` with a generator, the file handle is
+    held in ``stream_response`` scope across the send loop (the same pattern
+    as Starlette's ``FileResponse``), so it is always closed promptly and in
+    flow — including on client disconnect, where a generator's cleanup would
+    be deferred to GC and its exceptions lost.
+    """
+
+    chunk_size = 64 * 1024
+
+    def __init__(
+        self,
+        path: Path,
+        *,
+        file_size: int,
+        etag: str,
+        cache_control: str,
+        media_type: str,
+        range_header: str | None = None,
+    ) -> None:
+        if range_header:
+            self._start, self._end = _parse_range_header(range_header, file_size)
+            status_code = 206
+        else:
+            self._start, self._end = 0, file_size - 1
+            status_code = 200
+
+        headers = {
+            "Cache-Control": cache_control,
+            "ETag": etag,
+            "Accept-Ranges": "bytes",
+            "Content-Length": str(self._end - self._start + 1),
+        }
+        if status_code == 206:
+            headers["Content-Range"] = f"bytes {self._start}-{self._end}/{file_size}"
+
+        super().__init__(  # body_iterator is unused; stream_response is overridden
+            content=(),
+            status_code=status_code,
+            headers=headers,
+            media_type=media_type,
+        )
+        self.path = path
+
+    async def stream_response(self, send) -> None:
+        await send({
+            "type": "http.response.start",
+            "status": self.status_code,
+            "headers": self.raw_headers,
+        })
+        async with aiofiles.open(self.path, "rb") as f:
+            await f.seek(self._start)
+            remaining = self._end - self._start + 1
+            while remaining > 0:
+                chunk = await f.read(min(self.chunk_size, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+                await send({
+                    "type": "http.response.body",
+                    "body": chunk,
+                    "more_body": True,
+                })
+        await send({"type": "http.response.body", "body": b"", "more_body": False})
+
+
 def _serve_file_response(full_path: Path, file_path: str, request: Request):
     """Serve a file with range + cache support."""
     if not full_path.exists():
@@ -1201,40 +1269,13 @@ def _serve_file_response(full_path: Path, file_path: str, request: Request):
             headers={"Cache-Control": cache_control, "ETag": etag},
         )
 
-    async def stream_file(start: int, end: int):
-        async with aiofiles.open(full_path, "rb") as f:
-            await f.seek(start)
-            remaining = end - start + 1
-            while remaining > 0:
-                chunk = await f.read(min(64 * 1024, remaining))
-                if not chunk:
-                    break
-                remaining -= len(chunk)
-                yield chunk
-
-    headers = {
-        "Cache-Control": cache_control,
-        "ETag": etag,
-        "Accept-Ranges": "bytes",
-    }
-
-    if range_header:
-        start, end = _parse_range_header(range_header, file_size)
-        headers["Content-Range"] = f"bytes {start}-{end}/{file_size}"
-        headers["Content-Length"] = str(end - start + 1)
-        return StreamingResponse(
-            stream_file(start, end),
-            status_code=206,
-            media_type=content_type,
-            headers=headers,
-        )
-
-    headers["Content-Length"] = str(file_size)
-
-    return StreamingResponse(
-        stream_file(0, file_size - 1),
+    return StreamingFileResponse(
+        full_path,
+        file_size=file_size,
+        etag=etag,
+        cache_control=cache_control,
         media_type=content_type,
-        headers=headers,
+        range_header=range_header,
     )
 
 
