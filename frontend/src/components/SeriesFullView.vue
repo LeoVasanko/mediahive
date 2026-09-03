@@ -101,7 +101,7 @@
                 v-if="getEpisodeVideoSources(episode).length > 0"
                 :ref="(el) => setVideoRef(el as HTMLVideoElement, `${sIndex}-${eIndex}`)"
                 :autoplay="false"
-                :preload="sIndex === activeSeasonIndex ? 'auto' : 'none'"
+                preload="auto"
                 loop
                 muted
                 playsinline
@@ -641,15 +641,15 @@ function handleOpenFolderFromMenu(filePath: string) {
 // Video refs for hover effects
 const videoRefs = ref<Map<string, HTMLVideoElement>>(new Map())
 const safariAutoplay = isSafariBrowser()
-// No season plays until the user browses it (keyboard/gamepad focus or mouse hover)
-const activeSeasonIndex = ref(-1)
+const activeSeasonIndex = ref(0)
 const SEASON_VIDEO_STARTUP_STEP_MS = 500
 const seasonStartupTimers = new Map<string, ReturnType<typeof setTimeout>>()
 let seasonStartupToken = 0
 
-// Episode tiles currently near the viewport; only these are allowed to play
-const visibleEpisodeKeys = new Set<string>()
-const episodeTileByKey = new Map<string, Element>()
+// Episode videos the IntersectionObserver has reported as off-screen. This is
+// a blocklist, not an allowlist: a video may play until reported otherwise, so
+// playback degrades to always-on if observation fails or lags.
+const offscreenEpisodeKeys = new Set<string>()
 let episodeVisibilityObserver: IntersectionObserver | null = null
 
 const { stopped: previewPlaybackStopped } = useIdlePreviewPlayback({
@@ -680,14 +680,14 @@ function getEpisodeVisibilityObserver(): IntersectionObserver {
       (entries) => {
         let changed = false
         for (const entry of entries) {
-          const target = entry.target as HTMLElement
-          const key = `${target.dataset.seasonIndex}-${target.dataset.episodeIndex}`
+          const key = (entry.target as HTMLElement).dataset.previewKey
+          if (!key) continue
           if (entry.isIntersecting) {
-            if (!visibleEpisodeKeys.has(key)) {
-              visibleEpisodeKeys.add(key)
+            if (offscreenEpisodeKeys.delete(key)) {
               changed = true
             }
-          } else if (visibleEpisodeKeys.delete(key)) {
+          } else if (!offscreenEpisodeKeys.has(key)) {
+            offscreenEpisodeKeys.add(key)
             changed = true
           }
         }
@@ -703,6 +703,7 @@ function getEpisodeVisibilityObserver(): IntersectionObserver {
 
 function stopEpisodePreviews() {
   seasonStartupToken += 1
+  const token = seasonStartupToken
   clearSeasonStartupTimers()
   clearEpisodeHoverAudioIdleTimer()
   hoveredEpisodeAudioKey = null
@@ -710,8 +711,21 @@ function stopEpisodePreviews() {
     clearInterval(interval)
   }
   volumeFadeIntervals.clear()
-  for (const video of videoRefs.value.values()) {
-    pauseEpisodeVideo(video)
+
+  // Stagger the stop instead of pausing everything at once
+  let stopIndex = 0
+  for (const [key, video] of videoRefs.value.entries()) {
+    if (!video.paused && !video.ended) {
+      const timeoutId = setTimeout(() => {
+        seasonStartupTimers.delete(key)
+        if (token !== seasonStartupToken) return
+        pauseEpisodeVideo(video)
+      }, stopIndex * SEASON_VIDEO_STARTUP_STEP_MS)
+      seasonStartupTimers.set(key, timeoutId)
+      stopIndex += 1
+    } else {
+      pauseEpisodeVideo(video)
+    }
   }
 }
 
@@ -733,7 +747,8 @@ function syncSeasonVideoPlayback(priorityKey?: string) {
   }
   volumeFadeIntervals.clear()
 
-  const activeSeasonVideos: Array<{ key: string; episodeIndex: number; video: HTMLVideoElement }> = []
+  const videosToStart: Array<{ key: string; episodeIndex: number; video: HTMLVideoElement }> = []
+  const videosToStop: Array<{ key: string; episodeIndex: number; video: HTMLVideoElement }> = []
 
   for (const [key, video] of videoRefs.value.entries()) {
     const parsed = parseEpisodeKey(key)
@@ -742,15 +757,19 @@ function syncSeasonVideoPlayback(priorityKey?: string) {
       continue
     }
 
-    // Only the browsed season's near-viewport tiles may play, and only while
-    // the user is active.
+    // Only the browsed season's on-screen tiles may play, and only while the
+    // user is active.
     const eligible =
       parsed.seasonIndex === activeSeasonIndex.value &&
-      visibleEpisodeKeys.has(key) &&
+      !offscreenEpisodeKeys.has(key) &&
       !previewPlaybackStopped.value
 
     if (!eligible) {
-      pauseEpisodeVideo(video)
+      if (!video.paused && !video.ended) {
+        videosToStop.push({ key, episodeIndex: parsed.episodeIndex, video })
+      } else {
+        pauseEpisodeVideo(video)
+      }
       continue
     }
 
@@ -761,14 +780,14 @@ function syncSeasonVideoPlayback(priorityKey?: string) {
     }
 
     pauseEpisodeVideo(video)
-    activeSeasonVideos.push({
+    videosToStart.push({
       key,
       episodeIndex: parsed.episodeIndex,
       video,
     })
   }
 
-  activeSeasonVideos.sort((a, b) => {
+  videosToStart.sort((a, b) => {
     if (priorityKey) {
       if (a.key === priorityKey) return -1
       if (b.key === priorityKey) return 1
@@ -776,8 +795,8 @@ function syncSeasonVideoPlayback(priorityKey?: string) {
     return a.episodeIndex - b.episodeIndex
   })
 
-  for (let i = 0; i < activeSeasonVideos.length; i += 1) {
-    const { key, video } = activeSeasonVideos[i]
+  for (let i = 0; i < videosToStart.length; i += 1) {
+    const { key, video } = videosToStart[i]
     const delayMs = priorityKey ? (i === 0 ? 0 : i * SEASON_VIDEO_STARTUP_STEP_MS) : i * SEASON_VIDEO_STARTUP_STEP_MS
     const timeoutId = setTimeout(() => {
       if (token !== seasonStartupToken || activeSeasonIndex.value < 0 || previewPlaybackStopped.value)
@@ -788,6 +807,18 @@ function syncSeasonVideoPlayback(priorityKey?: string) {
       video.play().catch(() => {})
       seasonStartupTimers.delete(key)
     }, delayMs)
+    seasonStartupTimers.set(key, timeoutId)
+  }
+
+  // Stop no-longer-eligible videos with the same stagger instead of all at once
+  videosToStop.sort((a, b) => a.episodeIndex - b.episodeIndex)
+  for (let i = 0; i < videosToStop.length; i += 1) {
+    const { key, video } = videosToStop[i]
+    const timeoutId = setTimeout(() => {
+      seasonStartupTimers.delete(key)
+      if (token !== seasonStartupToken) return
+      pauseEpisodeVideo(video)
+    }, i * SEASON_VIDEO_STARTUP_STEP_MS)
     seasonStartupTimers.set(key, timeoutId)
   }
 }
@@ -822,11 +853,11 @@ function setVideoRef(el: HTMLVideoElement | null, key: string) {
     }
 
     videoRefs.value.set(key, el)
-    const tile = el.closest(".episode-tile")
-    if (tile) {
-      episodeTileByKey.set(key, tile)
-      getEpisodeVisibilityObserver().observe(tile)
-    }
+    // Observe the video itself (it fills the tile, so same visibility box).
+    // Note: el.closest() is unreliable here — ref callbacks can fire before
+    // the element's ancestors are attached.
+    el.dataset.previewKey = key
+    getEpisodeVisibilityObserver().observe(el)
     el.addEventListener(
       "loadeddata",
       () => {
@@ -844,12 +875,6 @@ function setVideoRef(el: HTMLVideoElement | null, key: string) {
       clearTimeout(timeoutId)
       seasonStartupTimers.delete(key)
     }
-    const tile = episodeTileByKey.get(key)
-    if (tile) {
-      episodeVisibilityObserver?.unobserve(tile)
-      episodeTileByKey.delete(key)
-    }
-    visibleEpisodeKeys.delete(key)
     const old = videoRefs.value.get(key)
     if (old) {
       cleanupVideo(old)
@@ -1099,8 +1124,7 @@ onUnmounted(() => {
   clearSeasonStartupTimers()
   episodeVisibilityObserver?.disconnect()
   episodeVisibilityObserver = null
-  episodeTileByKey.clear()
-  visibleEpisodeKeys.clear()
+  offscreenEpisodeKeys.clear()
   if (seasonLayoutFrame !== null) {
     window.cancelAnimationFrame(seasonLayoutFrame)
     seasonLayoutFrame = null

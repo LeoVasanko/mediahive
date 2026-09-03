@@ -283,6 +283,7 @@ const collageHeaderRef = ref<HTMLElement | null>(null)
 let collageHeaderVisible = true
 let collageHeaderObserver: IntersectionObserver | null = null
 const staggerTimers = new Set<ReturnType<typeof setTimeout>>()
+const COLLAGE_STOP_STEP_MS = 500
 let staggerToken = 0
 
 const { stopped: previewPlaybackStopped } = useIdlePreviewPlayback({
@@ -438,17 +439,34 @@ function startStaggeredPlayback() {
   }
 }
 
-// Stop all collage previews and cancel any pending staggered starts
+function scheduleStaggeredStop(token: number, stop: () => void, delayMs: number) {
+  const timer = setTimeout(() => {
+    staggerTimers.delete(timer)
+    if (token !== staggerToken) return
+    stop()
+  }, delayMs)
+  staggerTimers.add(timer)
+}
+
+// Stop all collage previews with a stagger, and cancel pending staggered starts
 function stopPreviews() {
   cancelStaggeredPlayback()
+  const token = staggerToken
   clearHoverAudioIdleTimer()
   hoveredVideoIndex = null
   for (const interval of volumeFadeIntervals.values()) {
     clearInterval(interval)
   }
   volumeFadeIntervals.clear()
+
+  let stopIndex = 0
   for (const video of videoRefs.value) {
-    video?.pause()
+    if (video && !video.paused && !video.ended) {
+      scheduleStaggeredStop(token, () => video.pause(), stopIndex * COLLAGE_STOP_STEP_MS)
+      stopIndex += 1
+    } else {
+      video?.pause()
+    }
   }
 }
 
