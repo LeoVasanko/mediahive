@@ -7,13 +7,14 @@ and HDR passthrough.
 
 import asyncio
 import contextlib
+import json
 import logging
 import re
 import shlex
 import subprocess
 import sys
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -425,6 +426,85 @@ class MediaProbeInfo:
 
 
 _media_probe_cache: dict[str, MediaProbeInfo] = {}
+
+# ---------------------------------------------------------------------------
+# Persistent probe records
+#
+# Probe results are keyed by (path, mtime, size) and persisted to
+# ``probe-cache.json`` under the root's .mediahive folder so that process
+# restarts do not re-run ffmpeg on unchanged files.  The in-RAM structures
+# are process-global (keyed by absolute path, so sharing across roots is
+# safe); each root loads/saves its own file, merging into the same dict.
+# ---------------------------------------------------------------------------
+
+_probe_records: dict[str, dict] = {}
+_probe_records_path: Path | None = None
+_probe_records_dirty = False
+
+
+def load_probe_records(path: Path) -> None:
+    """Load persisted probe records from ``path`` (missing file is fine)."""
+    global _probe_records_path
+    _probe_records_path = path
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return
+    except OSError, ValueError:
+        logger.exception("Failed to load probe cache from %s", path)
+        return
+    records = data.get("records")
+    if isinstance(records, dict):
+        _probe_records.update(records)
+        logger.info("Loaded probe cache: %d records from %s", len(records), path)
+
+
+def probe_records_dirty() -> bool:
+    return _probe_records_dirty
+
+
+def save_probe_records() -> None:
+    """Persist probe records if any were added since the last save."""
+    global _probe_records_dirty
+    if not _probe_records_dirty or _probe_records_path is None:
+        return
+    _probe_records_dirty = False
+    try:
+        payload = json.dumps({"version": 1, "records": _probe_records})
+        tmp = _probe_records_path.with_suffix(".tmp")
+        tmp.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(payload, encoding="utf-8")
+        tmp.replace(_probe_records_path)
+    except OSError, TypeError, ValueError:
+        logger.exception("Failed to save probe cache to %s", _probe_records_path)
+
+
+def _record_probe(video_path: str, stat_info, info: MediaProbeInfo) -> None:
+    global _probe_records_dirty
+    if stat_info is None:
+        return  # Non-plain paths (bluray:/concat: URIs) are not persisted
+    _probe_records[video_path] = {
+        "mtime": int(stat_info.st_mtime),
+        "size": stat_info.st_size,
+        "info": asdict(info),
+    }
+    _probe_records_dirty = True
+
+
+def _lookup_probe_record(video_path: str, stat_info) -> MediaProbeInfo | None:
+    rec = _probe_records.get(video_path)
+    if rec is None or stat_info is None:
+        return None
+    if rec.get("mtime") != int(stat_info.st_mtime):
+        return None
+    if rec.get("size") != stat_info.st_size:
+        return None
+    try:
+        return MediaProbeInfo(**rec["info"])
+    except TypeError, KeyError:
+        return None
+
+
 _duration_re = re.compile(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)")
 _dimension_re = re.compile(r"(\d{2,5})x(\d{2,5})")
 _dovi_profile_re = re.compile(
@@ -449,11 +529,23 @@ async def probe_media_info(video_path: str) -> MediaProbeInfo:
     if cached is not None:
         return cached
 
+    # Stat once: used both to validate persisted records and to key new ones.
+    # Non-plain paths (bluray:/concat: URIs) fail stat and stay memory-cached.
+    stat_info = None
+    with contextlib.suppress(OSError, ValueError):
+        stat_info = await AsyncPath(video_path).stat()
+
+    recorded = _lookup_probe_record(video_path, stat_info)
+    if recorded is not None:
+        _media_probe_cache[video_path] = recorded
+        return recorded
+
     info = MediaProbeInfo()
     cmd = ["ffmpeg", "-hide_banner", "-i", video_path]
     ffmpeg_result = await _run_ffmpeg(cmd, timeout_seconds=30, allow_nonzero_exit=True)
     if ffmpeg_result is None:
         _media_probe_cache[video_path] = info
+        _record_probe(video_path, stat_info, info)
         return info
 
     stdout, stderr = ffmpeg_result
@@ -552,6 +644,7 @@ async def probe_media_info(video_path: str) -> MediaProbeInfo:
     info.subtitle_languages = subtitle_languages or None
 
     _media_probe_cache[video_path] = info
+    _record_probe(video_path, stat_info, info)
     return info
 
 

@@ -13,9 +13,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import os
 import threading
+import time
 import uuid
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -33,15 +35,25 @@ from mediahive.hivescan.showreel import (
     generate_showreel_images,
     get_existing_episode_reel_sources,
     get_existing_showreel_source_sets,
+    load_probe_records,
     movie_showreels_exist,
+    probe_records_dirty,
+    save_probe_records,
 )
 from mediahive.hivescan.tmdb_client import set_cache_dir
 from mediahive.hivescan.utils import (
     DEFAULT_OUTPUT_FOLDER,
     make_relative_path,
 )
-from mediahive.models.data import Movie, Series, TaskInfo
-from mediahive.models.events import ScanEvent, Task, Upsert
+from mediahive.models.data import TaskInfo
+from mediahive.models.events import (
+    EpisodeReel,
+    MovieShowreel,
+    ScanEvent,
+    Sync,
+    Task,
+    Upsert,
+)
 
 logger = logging.getLogger("hivescan.scanner")
 
@@ -76,6 +88,13 @@ class RootScanner:
         self._rescan_worker_task: asyncio.Task | None = None
         self._seen_mtimes: dict[str, int] = {}
 
+        # Persisted state (under .mediahive/)
+        self._scan_state_path = self._output_dir / "scan-state.json"
+        self._reel_state_path = self._output_dir / "reel-state.json"
+        self._probe_cache_path = self._output_dir / "probe-cache.json"
+        self._reel_state: dict[str, dict[str, dict]] = {"movies": {}, "episodes": {}}
+        self._reel_state_dirty = False
+
     # ------------------------------------------------------------------
     # Public lifecycle
     # ------------------------------------------------------------------
@@ -84,12 +103,16 @@ class RootScanner:
         """Initialise and start background workers."""
         await AsyncPath(self._output_dir).mkdir(parents=True, exist_ok=True)
         set_cache_dir(self._output_dir / ".tmdb-cache")
+        await asyncio.to_thread(self._load_scan_state)
+        await asyncio.to_thread(load_probe_records, self._probe_cache_path)
+        await asyncio.to_thread(self._load_reel_state)
 
         logger.info(
-            "Scanner started for root %s — path=%s, scanignore=%s",
+            "Scanner started for root %s — path=%s, scanignore=%s, known-paths=%d",
             self.root_id,
             self.media_root,
             "loaded" if self._scanignore.file_path.exists() else "defaults only",
+            len(self._seen_mtimes),
         )
 
         self._showreel_worker_task = asyncio.create_task(self._showreel_worker())
@@ -110,6 +133,11 @@ class RootScanner:
             if task and not task.done():
                 with contextlib.suppress(TimeoutError, asyncio.CancelledError):
                     await asyncio.wait_for(task, timeout=2.0)
+        # Best-effort persistence of scanner state.
+        with contextlib.suppress(Exception):
+            await asyncio.to_thread(self._save_scan_state)
+            await asyncio.to_thread(self._save_reel_state)
+            await asyncio.to_thread(save_probe_records)
 
     def is_scanning(self) -> bool:
         return self._scan_task is not None and not self._scan_task.done()
@@ -117,12 +145,163 @@ class RootScanner:
     def showreel_queue_size(self) -> int:
         return self._showreel_queue.qsize()
 
-    def trigger_scan(self) -> bool:
-        """Start a scan. Returns False if one is already running."""
-        if self.is_scanning():
-            return False
-        self._start_scan()
-        return True
+    # ------------------------------------------------------------------
+    # Scan-state persistence
+    # ------------------------------------------------------------------
+
+    def _load_scan_state(self) -> None:
+        try:
+            data = json.loads(self._scan_state_path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return
+        except OSError, ValueError:
+            logger.exception("Failed to load scan state from %s", self._scan_state_path)
+            return
+        seen = data.get("seen_mtimes")
+        if isinstance(seen, dict):
+            self._seen_mtimes = {str(k): int(v) for k, v in seen.items()}
+
+    def _save_scan_state(self) -> None:
+        try:
+            payload = json.dumps({"version": 1, "seen_mtimes": self._seen_mtimes})
+            tmp = self._scan_state_path.with_suffix(".tmp")
+            tmp.parent.mkdir(parents=True, exist_ok=True)
+            tmp.write_text(payload, encoding="utf-8")
+            tmp.replace(self._scan_state_path)
+        except OSError, TypeError, ValueError:
+            logger.exception("Failed to save scan state to %s", self._scan_state_path)
+
+    # ------------------------------------------------------------------
+    # Reel-state persistence and gating
+    #
+    # ``reel-state.json`` records, per media folder (movies) or per episode,
+    # whether reel generation succeeded or failed for the current video file
+    # (keyed by mtime+size).  This stops the showreel worker from retrying
+    # permanently unreadable files on every scan, and stops short videos from
+    # being re-queued forever because they legitimately have fewer reels than
+    # the maximum.
+    # ------------------------------------------------------------------
+
+    # Retry delay for failed generations: 6h, 12h, 24h, ... capped at a week.
+    _REEL_RETRY_BASE_HOURS = 6
+    _REEL_RETRY_MAX_HOURS = 168
+
+    def _load_reel_state(self) -> None:
+        try:
+            data = json.loads(self._reel_state_path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return
+        except OSError, ValueError:
+            logger.exception("Failed to load reel state from %s", self._reel_state_path)
+            return
+        for bucket in ("movies", "episodes"):
+            records = data.get(bucket)
+            if isinstance(records, dict):
+                self._reel_state[bucket] = records
+
+    def _save_reel_state(self) -> None:
+        try:
+            payload = json.dumps({"version": 1, **self._reel_state})
+            tmp = self._reel_state_path.with_suffix(".tmp")
+            tmp.parent.mkdir(parents=True, exist_ok=True)
+            tmp.write_text(payload, encoding="utf-8")
+            tmp.replace(self._reel_state_path)
+        except OSError, TypeError, ValueError:
+            logger.exception("Failed to save reel state to %s", self._reel_state_path)
+
+    def _reel_state_bucket(
+        self,
+        kind: str,
+        media_folder: Path,
+        season_num: int | None = None,
+        episode_num: int | None = None,
+    ) -> tuple[dict[str, dict], str]:
+        folder_key = make_relative_path(
+            media_folder.as_posix(), self.media_root.as_posix()
+        )
+        if kind == "movie":
+            return self._reel_state["movies"], folder_key
+        key = f"{folder_key}#S{season_num:02d}E{episode_num:02d}"
+        return self._reel_state["episodes"], key
+
+    def _record_reel_state(
+        self,
+        kind: str,
+        media_folder: Path,
+        season_num: int | None,
+        episode_num: int | None,
+        video_path: str,
+        sig: tuple[int, int] | None,
+        status: str,
+        error: str | None = None,
+    ) -> None:
+        bucket, key = self._reel_state_bucket(kind, media_folder, season_num, episode_num)
+        previous = bucket.get(key)
+        attempts = (
+            0 if status == "done" else int((previous or {}).get("attempts", 0)) + 1
+        )
+        bucket[key] = {
+            "video": make_relative_path(video_path, self.media_root.as_posix()),
+            "mtime": sig[0] if sig else None,
+            "size": sig[1] if sig else None,
+            "status": status,
+            "attempts": attempts,
+            "last": time.time(),
+            "error": error,
+        }
+        self._reel_state_dirty = True
+
+    async def _reel_needed(
+        self,
+        kind: str,
+        video_path: str,
+        media_folder: Path,
+        season_num: int | None = None,
+        episode_num: int | None = None,
+    ) -> tuple[bool, tuple[int, int] | None]:
+        """Decide whether a reel-generation task should be queued.
+
+        Returns ``(needed, signature)`` where signature is the video file's
+        (mtime, size) or None when it cannot be stat'ed.
+        """
+        sig: tuple[int, int] | None = None
+        try:
+            st = await AsyncPath(video_path).stat()
+            sig = (int(st.st_mtime), st.st_size)
+        except OSError, ValueError:
+            pass
+
+        bucket, key = self._reel_state_bucket(kind, media_folder, season_num, episode_num)
+        rec = bucket.get(key)
+        if (
+            rec is not None
+            and sig is not None
+            and rec.get("mtime") == sig[0]
+            and rec.get("size") == sig[1]
+        ):
+            if rec.get("status") == "done":
+                return False, sig
+            attempts = int(rec.get("attempts", 1))
+            delay = min(
+                self._REEL_RETRY_BASE_HOURS * 2**attempts,
+                self._REEL_RETRY_MAX_HOURS,
+            ) * 3600
+            if time.time() - float(rec.get("last", 0)) < delay:
+                return False, sig
+
+        if kind == "movie":
+            exists = await movie_showreels_exist(media_folder)
+        else:
+            exists = await episode_reel_exists(media_folder, season_num, episode_num)
+        if exists:
+            if rec is None and sig is not None:
+                # Reels already on disk (e.g. generated before this feature):
+                # record success so future scans take the cheap path.
+                self._record_reel_state(
+                    kind, media_folder, season_num, episode_num, video_path, sig, "done"
+                )
+            return False, sig
+        return True, sig
 
     # ------------------------------------------------------------------
     # Internal scan orchestration
@@ -143,9 +322,20 @@ class RootScanner:
         except Exception:
             logger.exception("Rescan loop error")
 
-    async def _discover_downloads(self, task_id: str) -> list[ParsedContent]:
-        """Recursively walk the media root, respecting scanignore rules."""
+    async def _discover_downloads(
+        self, task_id: str
+    ) -> tuple[list[ParsedContent], dict[str, int], set[str]]:
+        """Recursively walk the media root, respecting scanignore rules.
+
+        Returns ``(downloads, found_mtimes, known_paths)``: the new/changed
+        items to process, the mtimes observed for them (committed to
+        ``_seen_mtimes`` only after the scan completes successfully), and the
+        full set of media-root-relative candidate paths seen on disk (used
+        for deletion detection).
+        """
         downloads: list[ParsedContent] = []
+        found_mtimes: dict[str, int] = {}
+        known_paths: set[str] = set()
         media_root_str = self.media_root.as_posix()
         dirs_visited = 0
 
@@ -251,6 +441,7 @@ class RootScanner:
 
             if is_media_container:
                 relpath = make_relative_path(str(directory), media_root_str)
+                known_paths.add(relpath)
                 try:
                     stat_info = await ap.stat()
                     mtime = int(stat_info.st_mtime)
@@ -260,7 +451,7 @@ class RootScanner:
                     relpath not in self._seen_mtimes
                     or self._seen_mtimes[relpath] != mtime
                 ):
-                    self._seen_mtimes[relpath] = mtime
+                    found_mtimes[relpath] = mtime
                     downloads.append(await parse_download(directory))
                 return
 
@@ -277,6 +468,7 @@ class RootScanner:
                 for child_file in child_files:
                     if child_file.suffix.lower() in video_extensions:
                         relpath = make_relative_path(str(child_file), media_root_str)
+                        known_paths.add(relpath)
                         try:
                             stat_info = await AsyncPath(child_file).stat()
                             mtime = int(stat_info.st_mtime)
@@ -287,10 +479,11 @@ class RootScanner:
                             and self._seen_mtimes[relpath] == mtime
                         ):
                             continue
-                        self._seen_mtimes[relpath] = mtime
+                        found_mtimes[relpath] = mtime
                         downloads.append(await parse_download(child_file))
             else:
                 relpath = make_relative_path(str(directory), media_root_str)
+                known_paths.add(relpath)
                 try:
                     stat_info = await ap.stat()
                     mtime = int(stat_info.st_mtime)
@@ -298,7 +491,7 @@ class RootScanner:
                     return
                 if relpath in self._seen_mtimes and self._seen_mtimes[relpath] == mtime:
                     return
-                self._seen_mtimes[relpath] = mtime
+                found_mtimes[relpath] = mtime
                 downloads.append(await parse_download(directory))
 
         logger.info("Starting filesystem discovery at %s", self.media_root)
@@ -316,7 +509,7 @@ class RootScanner:
             raise
         except OSError, PermissionError:
             logger.exception("Cannot list media root: %s", self.media_root)
-            return downloads
+            return downloads, found_mtimes, known_paths
 
         for item_async in root_children:
             item = Path(item_async)
@@ -329,6 +522,7 @@ class RootScanner:
                 await _walk(item)
             else:
                 relpath = make_relative_path(str(item), media_root_str)
+                known_paths.add(relpath)
                 try:
                     stat_info = await AsyncPath(item).stat()
                     mtime = int(stat_info.st_mtime)
@@ -336,7 +530,7 @@ class RootScanner:
                     continue
                 if relpath in self._seen_mtimes and self._seen_mtimes[relpath] == mtime:
                     continue
-                self._seen_mtimes[relpath] = mtime
+                found_mtimes[relpath] = mtime
                 downloads.append(await parse_download(item))
 
         logger.info(
@@ -344,7 +538,31 @@ class RootScanner:
             len(downloads),
             dirs_visited,
         )
-        return downloads
+        return downloads, found_mtimes, known_paths
+
+    async def _finalize_scan(
+        self, found_mtimes: dict[str, int], known_paths: set[str]
+    ) -> None:
+        """Commit discovery state after a fully completed scan.
+
+        Commits observed mtimes (so cancelled/failed scans retry their items),
+        prunes vanished paths, persists state when anything changed, and sends
+        the Sync event that lets the store drop deleted torrents.
+        """
+        committed = {k: v for k, v in self._seen_mtimes.items() if k in known_paths}
+        committed.update(found_mtimes)
+        state_changed = committed != self._seen_mtimes
+        self._seen_mtimes = committed
+
+        await self._send(Sync(paths=sorted(known_paths)))
+
+        if state_changed:
+            await asyncio.to_thread(self._save_scan_state)
+        if probe_records_dirty():
+            await asyncio.to_thread(save_probe_records)
+        if self._reel_state_dirty:
+            self._reel_state_dirty = False
+            await asyncio.to_thread(self._save_reel_state)
 
     async def _run_scan(self) -> None:
         """Full scan pipeline:
@@ -370,10 +588,13 @@ class RootScanner:
                 )
             )
 
-            downloads = await self._discover_downloads(task_id)
+            downloads, found_mtimes, known_paths = await self._discover_downloads(
+                task_id
+            )
 
             if not downloads:
                 logger.info("No new downloads found (%s)", task_id)
+                await self._finalize_scan(found_mtimes, known_paths)
                 await self._send(
                     Task(
                         data=TaskInfo(
@@ -418,7 +639,7 @@ class RootScanner:
                         )
                     )
                 )
-            async for movie_id, movie, showreel_task, people in _process_movies(
+            async for movie_id, movie, showreel_task, people, scanned in _process_movies(
                 categories,
                 self._output_dir,
                 fetch_covers=True,
@@ -432,22 +653,34 @@ class RootScanner:
                         id=movie_id,
                         item=movie,
                         people=people or None,
+                        scanned=scanned,
                     )
                 )
                 if showreel_task:
-                    await self._showreel_queue.put((
-                        "movie",
-                        movie_id,
-                        showreel_task,
-                        movie,
-                    ))
-                    logger.info(
-                        "[%d/%d] Movie: %s (showreel queued, queue=%d)",
-                        processed + 1,
-                        total,
-                        movie.title,
-                        self._showreel_queue.qsize(),
+                    needed, sig = await self._reel_needed(
+                        "movie", showreel_task[0], showreel_task[1]
                     )
+                    if needed:
+                        await self._showreel_queue.put((
+                            "movie",
+                            movie_id,
+                            showreel_task,
+                            sig,
+                        ))
+                        logger.info(
+                            "[%d/%d] Movie: %s (showreel queued, queue=%d)",
+                            processed + 1,
+                            total,
+                            movie.title,
+                            self._showreel_queue.qsize(),
+                        )
+                    else:
+                        logger.info(
+                            "[%d/%d] Movie: %s (showreel up to date)",
+                            processed + 1,
+                            total,
+                            movie.title,
+                        )
                 else:
                     logger.info(
                         "[%d/%d] Movie: %s (no showreel task)",
@@ -480,7 +713,7 @@ class RootScanner:
                         )
                     )
                 )
-            async for series_id, series, ep_reel_tasks, people in _process_series(
+            async for series_id, series, ep_reel_tasks, people, scanned in _process_series(
                 categories,
                 self._output_dir,
                 fetch_covers=True,
@@ -494,22 +727,29 @@ class RootScanner:
                         id=series_id,
                         item=series,
                         people=people or None,
+                        scanned=scanned,
                     )
                 )
+                queued = 0
                 for task in ep_reel_tasks:
-                    await self._showreel_queue.put(("episode", series_id, task, series))
-                if ep_reel_tasks:
+                    needed, sig = await self._reel_needed(
+                        "episode", task[0], task[1], task[2], task[3]
+                    )
+                    if needed:
+                        await self._showreel_queue.put(("episode", series_id, task, sig))
+                        queued += 1
+                if queued:
                     logger.info(
                         "[%d/%d] Series: %s (%d episode reels queued, queue=%d)",
                         processed + 1,
                         total,
                         series.title,
-                        len(ep_reel_tasks),
+                        queued,
                         self._showreel_queue.qsize(),
                     )
                 else:
                     logger.info(
-                        "[%d/%d] Series: %s (no reel tasks)",
+                        "[%d/%d] Series: %s (reels up to date)",
                         processed + 1,
                         total,
                         series.title,
@@ -527,6 +767,7 @@ class RootScanner:
                     )
                 )
 
+            await self._finalize_scan(found_mtimes, known_paths)
             await self._send(
                 Task(
                     data=TaskInfo(
@@ -578,16 +819,14 @@ class RootScanner:
         """Background worker that generates showreels one at a time."""
         logger.info("Showreel worker started for root %s", self.root_id)
         media_root_path = self.media_root
-        media_root_str = self.media_root.as_posix()
 
         while True:
             try:
-                kind, item_id, task_data, item = await self._showreel_queue.get()
+                kind, item_id, task_data, sig = await self._showreel_queue.get()
                 task_id = f"showreel-{uuid.uuid4().hex[:8]}"
                 remaining = self._showreel_queue.qsize()
 
                 if kind == "movie":
-                    movie: Movie = item
                     video_path, media_folder, title = task_data
                     logger.info(
                         "Showreel dequeued: %s (video=%s, folder=%s, %d remaining)",
@@ -596,7 +835,8 @@ class RootScanner:
                         media_folder,
                         remaining,
                     )
-                    if await movie_showreels_exist(media_folder):
+                    needed, _ = await self._reel_needed("movie", video_path, media_folder)
+                    if not needed:
                         logger.info("Showreel skipped (already exists): %s", title)
                         self._showreel_queue.task_done()
                         continue
@@ -620,9 +860,16 @@ class RootScanner:
                             media_folder, media_root=media_root_path
                         )
                         paths = [sources[0] for sources in source_sets if sources]
-                        movie.showreel_images = paths or None
-                        movie.showreel_source_sets = source_sets or None
-                        await self._send(Upsert(kind="movie", id=item_id, item=movie))
+                        self._record_reel_state(
+                            "movie", media_folder, None, None, video_path, sig, "done"
+                        )
+                        await self._send(
+                            MovieShowreel(
+                                id=item_id,
+                                showreel_images=paths or None,
+                                showreel_source_sets=source_sets or None,
+                            )
+                        )
                         await self._send(
                             Task(
                                 data=TaskInfo(
@@ -636,6 +883,16 @@ class RootScanner:
                             )
                         )
                     else:
+                        self._record_reel_state(
+                            "movie",
+                            media_folder,
+                            None,
+                            None,
+                            video_path,
+                            sig,
+                            "failed",
+                            error="no reels produced",
+                        )
                         logger.warning(
                             "Showreel generation returned nothing: %s", title
                         )
@@ -651,7 +908,6 @@ class RootScanner:
                         )
 
                 elif kind == "episode":
-                    series: Series = item
                     video_path, media_folder, season_num, episode_num, series_title = (
                         task_data
                     )
@@ -663,7 +919,10 @@ class RootScanner:
                         video_path,
                         remaining,
                     )
-                    if await episode_reel_exists(media_folder, season_num, episode_num):
+                    needed, _ = await self._reel_needed(
+                        "episode", video_path, media_folder, season_num, episode_num
+                    )
+                    if not needed:
                         logger.info(
                             "Episode reel skipped (already exists): %s %s",
                             series_title,
@@ -694,20 +953,29 @@ class RootScanner:
                             episode_num,
                             media_root=media_root_path,
                         )
-                        for season in series.seasons:
-                            if season.season_number == season_num:
-                                for episode in season.episodes:
-                                    if episode.episode_number == episode_num:
-                                        episode.reel_image = (
-                                            reel_sources[0]
-                                            if reel_sources
-                                            else make_relative_path(
-                                                reel_path,
-                                                media_root_str,
-                                            )
-                                        )
-                                        episode.reel_sources = reel_sources or None
-                        await self._send(Upsert(kind="series", id=item_id, item=series))
+                        reel_image = (
+                            reel_sources[0]
+                            if reel_sources
+                            else make_relative_path(reel_path, media_root_path.as_posix())
+                        )
+                        self._record_reel_state(
+                            "episode",
+                            media_folder,
+                            season_num,
+                            episode_num,
+                            video_path,
+                            sig,
+                            "done",
+                        )
+                        await self._send(
+                            EpisodeReel(
+                                id=item_id,
+                                season=season_num,
+                                episode=episode_num,
+                                reel_image=reel_image,
+                                reel_sources=reel_sources or None,
+                            )
+                        )
                         await self._send(
                             Task(
                                 data=TaskInfo(
@@ -719,6 +987,16 @@ class RootScanner:
                             )
                         )
                     else:
+                        self._record_reel_state(
+                            "episode",
+                            media_folder,
+                            season_num,
+                            episode_num,
+                            video_path,
+                            sig,
+                            "failed",
+                            error="no reel produced",
+                        )
                         logger.warning(
                             "Episode reel generation failed: %s %s",
                             series_title,
@@ -736,6 +1014,11 @@ class RootScanner:
                         )
 
                 self._showreel_queue.task_done()
+                if self._showreel_queue.empty() and self._reel_state_dirty:
+                    # Persist as soon as the queue drains; scans may be far
+                    # apart and a crash would otherwise lose the records.
+                    self._reel_state_dirty = False
+                    await asyncio.to_thread(self._save_reel_state)
 
             except asyncio.CancelledError:
                 logger.info("Showreel worker shutting down for root %s", self.root_id)

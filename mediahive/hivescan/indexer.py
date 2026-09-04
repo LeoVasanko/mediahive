@@ -148,20 +148,30 @@ async def _cache_people_profiles(
     if not info or not info.cast:
         return info, people
 
+    semaphore = asyncio.Semaphore(8)
+
+    async def fetch_profile(cast_credit, person):
+        async with semaphore:
+            return cast_credit.id, await download_cast_profile(
+                person.profile_path,
+                media_folder,
+                person.name,
+                cast_credit.id,
+            )
+
+    tasks = []
     for cast_credit in info.cast:
         if cast_credit.id is None:
             continue
         person = people.get(cast_credit.id)
         if person is None or not person.profile_path:
             continue
-        downloaded_path = await download_cast_profile(
-            person.profile_path,
-            media_folder,
-            person.name,
-            cast_credit.id,
-        )
+        tasks.append(fetch_profile(cast_credit, person))
+
+    for cast_id, downloaded_path in await asyncio.gather(*tasks):
         if downloaded_path:
-            people[cast_credit.id] = Person(
+            person = people[cast_id]
+            people[cast_id] = Person(
                 name=person.name,
                 profile_path=Path(downloaded_path).name,
                 gender=person.gender,
@@ -378,6 +388,25 @@ async def _build_seasons_data(
             seasons_map[season_num] = {}
         seasons_map[season_num][episode_num] = files
 
+    # Prefetch all missing season details in parallel; the loop below then
+    # reads them straight from season_cache.
+    if tmdb_id:
+        missing = [
+            season_num
+            for season_num in seasons_map
+            if (tmdb_id, season_num) not in season_cache
+        ]
+        if missing:
+            semaphore = asyncio.Semaphore(4)
+
+            async def prefetch(num: int) -> None:
+                async with semaphore:
+                    season_cache[tmdb_id, num] = await fetch_season_details(
+                        tmdb_id, num
+                    )
+
+            await asyncio.gather(*(prefetch(num) for num in missing))
+
     seasons_data = []
     for season_num in sorted(seasons_map.keys()):
         episodes_in_season = seasons_map[season_num]
@@ -442,11 +471,15 @@ async def _process_movies(
     generate_showreels: bool,
     media_root: str | None = None,
     root_id: str | None = None,
-) -> AsyncIterator[tuple[str, Movie, tuple[str, Path, str] | None, dict[int, Person]]]:
+) -> AsyncIterator[
+    tuple[str, Movie, tuple[str, Path, str] | None, dict[int, Person], list[str]]
+]:
     """Async generator that processes all movies.
 
     Yields:
-        Tuples of ``(Movie, showreel_task_or_None)`` as each movie is processed.
+        Tuples of ``(movie_id, Movie, showreel_task_or_None, people, scanned)``
+        as each movie is processed.  ``scanned`` lists the media-root-relative
+        torrent paths whose content was (re)scanned to build the movie.
 
     """
     _ = root_id
@@ -498,6 +531,21 @@ async def _process_movies(
             len(movie_groups),
             len(categories[ContentType.MOVIE]),
         ) if movie_groups else None
+
+    # Prefetch TMDb lookups for all unique titles in parallel; the grouping
+    # loop below then reads them straight from movie_tmdb_cache.
+    if movie_groups:
+        semaphore = asyncio.Semaphore(4)
+        first_by_key = {
+            f"{items[0].title.lower()}:{items[0].year}": items[0]
+            for items in movie_groups.values()
+        }
+
+        async def prefetch(item: ParsedContent) -> None:
+            async with semaphore:
+                await get_movie_tmdb(item.title, item.year)
+
+        await asyncio.gather(*(prefetch(item) for item in first_by_key.values()))
 
     for idx, (_movie_key, items) in enumerate(movie_groups.items(), 1):
         first_item = items[0]
@@ -640,7 +688,8 @@ async def _process_movies(
             showreel_source_sets=showreel_source_sets or None,
             files=files,
         )
-        yield item_id, movie, showreel_task, people
+        scanned = [make_relative_path(item.path.as_posix(), media_root) for item in items]
+        yield item_id, movie, showreel_task, people, scanned
 
     # Process movies without TMDb info
     for group_data in no_tmdb_movie_groups.values():
@@ -712,7 +761,8 @@ async def _process_movies(
             showreel_source_sets=showreel_source_sets or None,
             files=files,
         )
-        yield item_id, movie, showreel_task, {}
+        scanned = [make_relative_path(item.path.as_posix(), media_root) for item in items]
+        yield item_id, movie, showreel_task, {}, scanned
 
 
 async def _process_series(
@@ -723,12 +773,14 @@ async def _process_series(
     media_root: str | None = None,
     root_id: str | None = None,
 ) -> AsyncIterator[
-    tuple[str, Series, list[tuple[str, Path, int, int, str]], dict[int, Person]]
+    tuple[str, Series, list[tuple[str, Path, int, int, str]], dict[int, Person], list[str]]
 ]:
     """Async generator that processes all series.
 
     Yields:
-        Tuples of ``(Series, episode_reel_tasks)`` as each series is processed.
+        Tuples of ``(series_id, Series, episode_reel_tasks, people, scanned)``
+        as each series is processed.  ``scanned`` lists the media-root-relative
+        torrent paths whose content was (re)scanned to build the series.
 
     """
     _ = root_id
@@ -782,6 +834,20 @@ async def _process_series(
             len(series_groups),
             len(categories[ContentType.SERIES]),
         )
+
+    # Prefetch TMDb lookups for all unique titles in parallel; the grouping
+    # loop below then reads them straight from series_tmdb_cache.
+    if series_groups:
+        semaphore = asyncio.Semaphore(4)
+        first_by_key = {
+            items[0].title.lower(): items[0] for items in series_groups.values()
+        }
+
+        async def prefetch(item: ParsedContent) -> None:
+            async with semaphore:
+                await get_series_tmdb(item.title)
+
+        await asyncio.gather(*(prefetch(item) for item in first_by_key.values()))
 
     for idx, (_series_key, items) in enumerate(series_groups.items(), 1):
         first_item = items[0]
@@ -898,7 +964,8 @@ async def _process_series(
             backdrop_path=make_relative_path(backdrop_path, media_root),
             seasons=seasons_data,
         )
-        yield series_id, series, ep_reel_tasks, people
+        scanned = [make_relative_path(item.path.as_posix(), media_root) for item in items]
+        yield series_id, series, ep_reel_tasks, people, scanned
 
     # Process series without TMDb info
     for group_data in no_tmdb_groups.values():
@@ -941,4 +1008,5 @@ async def _process_series(
             cover_path=make_relative_path(cover_path, media_root),
             seasons=seasons_data,
         )
-        yield series_id, series, ep_reel_tasks, {}
+        scanned = [make_relative_path(item.path.as_posix(), media_root) for item in items]
+        yield series_id, series, ep_reel_tasks, {}, scanned

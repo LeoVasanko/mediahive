@@ -18,10 +18,13 @@ from aiopathlib import AsyncPath
 from fastapi import WebSocket
 
 from mediahive.models.data import (
+    Episode,
     IndexSnapshot,
     Movie,
+    Season,
     Series,
     TaskInfo,
+    Torrent,
 )
 from mediahive.models.events import Remove, Task, Upsert
 from mediahive.models.tmdb import Person
@@ -147,6 +150,107 @@ class IndexStore:
             return None
         return item.info.tmdb_id
 
+    @staticmethod
+    def _newest_from_files(files: dict[str, Torrent]) -> int | None:
+        timestamps = [t.added_at for t in files.values() if t.added_at]
+        return max(timestamps) if timestamps else None
+
+    # ------------------------------------------------------------------
+    # Merge helpers (partial rescan support)
+    # ------------------------------------------------------------------
+
+    def _merge_movie(self, existing: Movie, new: Movie, scanned: set[str]) -> Movie:
+        """Merge a partially rebuilt movie into the existing entry.
+
+        File entries belonging to torrents in ``scanned`` are replaced by the
+        new data; everything else is preserved.
+        """
+        files = {k: v for k, v in existing.files.items() if k not in scanned}
+        files.update(new.files)
+        return Movie(
+            title=new.title or existing.title,
+            info=new.info or existing.info,
+            year=new.year if new.year is not None else existing.year,
+            newest=(
+                self._newest_from_files(files)
+                or max(filter(None, [existing.newest, new.newest]), default=None)
+            ),
+            cover_path=new.cover_path or existing.cover_path,
+            backdrop_path=new.backdrop_path or existing.backdrop_path,
+            showreel_images=new.showreel_images or existing.showreel_images,
+            showreel_source_sets=new.showreel_source_sets
+            or existing.showreel_source_sets,
+            files=files,
+        )
+
+    def _merge_series(
+        self, existing: Series, new: Series, scanned: set[str]
+    ) -> Series:
+        """Merge a partially rebuilt series into the existing entry.
+
+        File entries belonging to torrents in ``scanned`` are replaced by the
+        new data; seasons/episodes/files from torrents that were not rescanned
+        are preserved.  Episodes and seasons left without files are dropped.
+        """
+        seasons: dict[int, Season] = {}
+        for season in existing.seasons:
+            episodes: dict[int, Episode] = {}
+            for ep in season.episodes:
+                files = {k: v for k, v in ep.files.items() if k not in scanned}
+                if files:
+                    episodes[ep.episode_number] = msgspec.structs.replace(
+                        ep, files=files
+                    )
+            if episodes:
+                seasons[season.season_number] = msgspec.structs.replace(
+                    season,
+                    episodes=list(episodes.values()),
+                    episode_count=len(episodes),
+                )
+
+        for season in new.seasons:
+            current = seasons.get(season.season_number)
+            if current is None:
+                seasons[season.season_number] = season
+                continue
+            episodes = {ep.episode_number: ep for ep in current.episodes}
+            for ep in season.episodes:
+                old = episodes.get(ep.episode_number)
+                if old is None:
+                    episodes[ep.episode_number] = ep
+                    continue
+                # Same episode from an unscanned torrent too: union the files,
+                # prefer fresh metadata/reel info from the new scan.
+                files = dict(old.files)
+                files.update(ep.files)
+                episodes[ep.episode_number] = msgspec.structs.replace(
+                    ep,
+                    files=files,
+                    reel_image=ep.reel_image or old.reel_image,
+                    reel_sources=ep.reel_sources or old.reel_sources,
+                )
+            ordered = [episodes[k] for k in sorted(episodes)]
+            seasons[season.season_number] = msgspec.structs.replace(
+                season,
+                episodes=ordered,
+                episode_count=len(ordered),
+                poster_path=season.poster_path or current.poster_path,
+            )
+
+        alt_titles = sorted(
+            set(existing.alternative_titles or [])
+            | set(new.alternative_titles or [])
+        )
+        return Series(
+            title=new.title or existing.title,
+            info=new.info or existing.info,
+            alternative_titles=alt_titles or None,
+            newest=max(filter(None, [existing.newest, new.newest]), default=None),
+            cover_path=new.cover_path or existing.cover_path,
+            backdrop_path=new.backdrop_path or existing.backdrop_path,
+            seasons=[seasons[k] for k in sorted(seasons)],
+        )
+
     def _rebuild_tmdb_indexes(self) -> None:
         """Rebuild TMDb id lookup maps from the current in-memory items."""
         self._movie_tmdb_ids.clear()
@@ -189,22 +293,34 @@ class IndexStore:
         self._rebuild_tmdb_indexes()
 
     def _collapse_movie_tmdb_duplicates(self, tmdb_id: int, keep_id: str) -> None:
-        """Remove other movie entries that share a TMDb id."""
+        """Fold other entries that share a TMDb id into the kept one."""
         for item_id, movie in list(self.movies.items()):
             if item_id == keep_id:
                 continue
-            if self._get_tmdb_id(movie) == tmdb_id:
-                self.movies.pop(item_id, None)
-        self._rebuild_tmdb_indexes()
+            if self._get_tmdb_id(movie) != tmdb_id:
+                continue
+            kept = self.movies.get(keep_id)
+            if kept is not None:
+                # Preserve any file versions the duplicate alone carried.
+                self.movies[keep_id] = self._merge_movie(movie, kept, set())
+            self.movies.pop(item_id, None)
+            if self._movie_tmdb_ids.get(tmdb_id) == item_id:
+                self._movie_tmdb_ids[tmdb_id] = keep_id
 
     def _collapse_series_tmdb_duplicates(self, tmdb_id: int, keep_id: str) -> None:
-        """Remove other series entries that share a TMDb id."""
+        """Fold other entries that share a TMDb id into the kept one."""
         for item_id, series in list(self.series.items()):
             if item_id == keep_id:
                 continue
-            if self._get_tmdb_id(series) == tmdb_id:
-                self.series.pop(item_id, None)
-        self._rebuild_tmdb_indexes()
+            if self._get_tmdb_id(series) != tmdb_id:
+                continue
+            kept = self.series.get(keep_id)
+            if kept is not None:
+                # Preserve any seasons/episodes the duplicate alone carried.
+                self.series[keep_id] = self._merge_series(series, kept, set())
+            self.series.pop(item_id, None)
+            if self._series_tmdb_ids.get(tmdb_id) == item_id:
+                self._series_tmdb_ids[tmdb_id] = keep_id
 
     async def _write_snapshot(self) -> None:
         """Write current index to disk (called from debounce task)."""
@@ -300,8 +416,14 @@ class IndexStore:
         item_id: str,
         item: Movie,
         people: dict[int, Person] | None = None,
+        scanned: list[str] | None = None,
     ) -> bool:
-        """Insert or update a movie. Returns True if it was a real change."""
+        """Insert or update a movie. Returns True if it was a real change.
+
+        When ``scanned`` is given, the item is a partial rebuild covering only
+        those torrent paths; it is merged into the existing entry instead of
+        replacing it.
+        """
         tmdb_id = self._get_tmdb_id(item)
         existing_id = self._movie_tmdb_ids.get(tmdb_id) if tmdb_id is not None else None
         if existing_id is not None and existing_id != item_id:
@@ -311,6 +433,10 @@ class IndexStore:
         if tmdb_id is not None:
             self._movie_tmdb_ids[tmdb_id] = item_id
             self._collapse_movie_tmdb_duplicates(tmdb_id, item_id)
+            existing = self.movies.get(item_id)
+
+        if existing is not None and scanned is not None:
+            item = self._merge_movie(existing, item, set(scanned))
 
         if existing is not None:
             if msgspec.json.encode(existing) == msgspec.json.encode(item):
@@ -334,8 +460,14 @@ class IndexStore:
         item_id: str,
         item: Series,
         people: dict[int, Person] | None = None,
+        scanned: list[str] | None = None,
     ) -> bool:
-        """Insert or update a series. Returns True if it was a real change."""
+        """Insert or update a series. Returns True if it was a real change.
+
+        When ``scanned`` is given, the item is a partial rebuild covering only
+        those torrent paths; it is merged into the existing entry instead of
+        replacing it.
+        """
         tmdb_id = self._get_tmdb_id(item)
         existing_id = (
             self._series_tmdb_ids.get(tmdb_id) if tmdb_id is not None else None
@@ -347,6 +479,10 @@ class IndexStore:
         if tmdb_id is not None:
             self._series_tmdb_ids[tmdb_id] = item_id
             self._collapse_series_tmdb_duplicates(tmdb_id, item_id)
+            existing = self.series.get(item_id)
+
+        if existing is not None and scanned is not None:
+            item = self._merge_series(existing, item, set(scanned))
 
         if existing is not None:
             if msgspec.json.encode(existing) == msgspec.json.encode(item):
@@ -367,21 +503,147 @@ class IndexStore:
 
     def remove_movie(self, item_id: str) -> None:
         """Remove a movie from the index and broadcast."""
-        self.movies.pop(item_id, None)
-        for tmdb_id, mapped_id in list(self._movie_tmdb_ids.items()):
-            if mapped_id == item_id:
-                self._movie_tmdb_ids.pop(tmdb_id, None)
+        movie = self.movies.pop(item_id, None)
+        if movie is None:
+            return
+        tmdb_id = self._get_tmdb_id(movie)
+        if tmdb_id is not None and self._movie_tmdb_ids.get(tmdb_id) == item_id:
+            self._movie_tmdb_ids.pop(tmdb_id, None)
         self._schedule_snapshot()
         self._broadcast(Remove(kind="movie", id=item_id))
 
     def remove_series(self, item_id: str) -> None:
         """Remove a series from the index and broadcast."""
-        self.series.pop(item_id, None)
-        for tmdb_id, mapped_id in list(self._series_tmdb_ids.items()):
-            if mapped_id == item_id:
-                self._series_tmdb_ids.pop(tmdb_id, None)
+        series = self.series.pop(item_id, None)
+        if series is None:
+            return
+        tmdb_id = self._get_tmdb_id(series)
+        if tmdb_id is not None and self._series_tmdb_ids.get(tmdb_id) == item_id:
+            self._series_tmdb_ids.pop(tmdb_id, None)
         self._schedule_snapshot()
         self._broadcast(Remove(kind="series", id=item_id))
+
+    # ------------------------------------------------------------------
+    # Scanner-driven maintenance
+    # ------------------------------------------------------------------
+
+    def sync_torrent_paths(self, paths: set[str]) -> None:
+        """Drop file entries whose torrent path no longer exists on disk.
+
+        ``paths`` is the complete set of media-root-relative torrent paths the
+        scanner found during a fully completed discovery pass.  Episodes and
+        seasons left without files are dropped; items left without any files
+        are removed entirely.
+        """
+        for item_id, movie in list(self.movies.items()):
+            kept = {k: v for k, v in movie.files.items() if k in paths}
+            if len(kept) == len(movie.files):
+                continue
+            if not kept:
+                self.remove_movie(item_id)
+                continue
+            updated = msgspec.structs.replace(
+                movie, files=kept, newest=self._newest_from_files(kept)
+            )
+            self.movies[item_id] = updated
+            self._schedule_snapshot()
+            self._broadcast(Upsert(kind="movie", id=item_id, item=updated))
+
+        for item_id, series in list(self.series.items()):
+            removed_any = False
+            new_seasons: list[Season] = []
+            for season in series.seasons:
+                new_episodes: list[Episode] = []
+                for ep in season.episodes:
+                    files = {k: v for k, v in ep.files.items() if k in paths}
+                    if len(files) < len(ep.files):
+                        removed_any = True
+                    if files:
+                        new_episodes.append(
+                            msgspec.structs.replace(ep, files=files)
+                        )
+                    else:
+                        removed_any = True
+                if not new_episodes:
+                    removed_any = True
+                    continue
+                if len(new_episodes) < len(season.episodes):
+                    season = msgspec.structs.replace(
+                        season,
+                        episodes=new_episodes,
+                        episode_count=len(new_episodes),
+                    )
+                new_seasons.append(season)
+            if not removed_any:
+                continue
+            if not new_seasons:
+                self.remove_series(item_id)
+                continue
+            updated_series = msgspec.structs.replace(series, seasons=new_seasons)
+            self.series[item_id] = updated_series
+            self._schedule_snapshot()
+            self._broadcast(Upsert(kind="series", id=item_id, item=updated_series))
+
+    def set_movie_showreel(
+        self,
+        item_id: str,
+        showreel_images: list[str] | None,
+        showreel_source_sets: list[list[str]] | None,
+    ) -> None:
+        """Update only the showreel fields of a movie (reel worker callback)."""
+        movie = self.movies.get(item_id)
+        if movie is None:
+            return
+        updated = msgspec.structs.replace(
+            movie,
+            showreel_images=showreel_images,
+            showreel_source_sets=showreel_source_sets,
+        )
+        if msgspec.json.encode(updated) == msgspec.json.encode(movie):
+            return
+        self.movies[item_id] = updated
+        self._schedule_snapshot()
+        self._broadcast(Upsert(kind="movie", id=item_id, item=updated))
+
+    def set_episode_reel(
+        self,
+        item_id: str,
+        season_num: int,
+        episode_num: int,
+        reel_image: str | None,
+        reel_sources: list[str] | None,
+    ) -> None:
+        """Update only the reel fields of one episode (reel worker callback)."""
+        series = self.series.get(item_id)
+        if series is None:
+            return
+        for season in series.seasons:
+            if season.season_number != season_num:
+                continue
+            for ep in season.episodes:
+                if ep.episode_number != episode_num:
+                    continue
+                if ep.reel_image == reel_image and ep.reel_sources == reel_sources:
+                    return
+                new_episodes = [
+                    msgspec.structs.replace(
+                        e, reel_image=reel_image, reel_sources=reel_sources
+                    )
+                    if e is ep
+                    else e
+                    for e in season.episodes
+                ]
+                new_seasons = [
+                    msgspec.structs.replace(s, episodes=new_episodes)
+                    if s is season
+                    else s
+                    for s in series.seasons
+                ]
+                updated = msgspec.structs.replace(series, seasons=new_seasons)
+                self.series[item_id] = updated
+                self._schedule_snapshot()
+                self._broadcast(Upsert(kind="series", id=item_id, item=updated))
+                return
 
     # ------------------------------------------------------------------
     # WebSocket management

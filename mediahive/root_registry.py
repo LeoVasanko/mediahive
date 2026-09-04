@@ -11,7 +11,14 @@ import msgspec
 
 from mediahive.config import load_config, save_config
 from mediahive.index_store import IndexStore
-from mediahive.models.events import ScanEvent, Task, Upsert
+from mediahive.models.events import (
+    EpisodeReel,
+    MovieShowreel,
+    ScanEvent,
+    Sync,
+    Task,
+    Upsert,
+)
 
 logger = logging.getLogger("mediahive.root_registry")
 
@@ -158,9 +165,27 @@ class RootContext:
                 event = await self._events.get()
                 if isinstance(event, Upsert):
                     if event.kind == "movie":
-                        self.store.upsert_movie(event.id, event.item, event.people)
+                        self.store.upsert_movie(
+                            event.id, event.item, event.people, event.scanned
+                        )
                     else:
-                        self.store.upsert_series(event.id, event.item, event.people)
+                        self.store.upsert_series(
+                            event.id, event.item, event.people, event.scanned
+                        )
+                elif isinstance(event, Sync):
+                    self.store.sync_torrent_paths(set(event.paths))
+                elif isinstance(event, MovieShowreel):
+                    self.store.set_movie_showreel(
+                        event.id, event.showreel_images, event.showreel_source_sets
+                    )
+                elif isinstance(event, EpisodeReel):
+                    self.store.set_episode_reel(
+                        event.id,
+                        event.season,
+                        event.episode,
+                        event.reel_image,
+                        event.reel_sources,
+                    )
                 elif isinstance(event, Task):
                     self.store.broadcast_task(event.data)
             except asyncio.CancelledError:
