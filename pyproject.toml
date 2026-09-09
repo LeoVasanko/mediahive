@@ -42,9 +42,6 @@ path = "scripts/fastapi-vue/buildhook.py"
 "scripts/fastapi-vue/buildhook.py" = "scripts/fastapi-vue/buildhook.py"
 "scripts/fastapi-vue/buildutil.py" = "scripts/fastapi-vue/buildutil.py"
 
-[tool.hatch.build.targets.wheel.hooks.custom]
-path = "scripts/fastapi-vue/buildhook.py"
-
 [tool.uv]
 package = true
 
