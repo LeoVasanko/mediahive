@@ -163,13 +163,10 @@ class RootScanner:
                 await asyncio.wait_for(
                     asyncio.gather(*pending, return_exceptions=True), timeout=2.0
                 )
-        # Best-effort persistence of scanner state, concurrently.
-        with contextlib.suppress(Exception):
-            await asyncio.gather(
-                asyncio.to_thread(self._save_scan_state),
-                asyncio.to_thread(self._save_reel_state),
-                asyncio.to_thread(save_probe_records),
-            )
+        # No final state save on shutdown: state is persisted after every
+        # completed scan, and a last-minute save over a network drive only
+        # delays process exit (executor threads block interpreter shutdown,
+        # so log lines appear after the shell prompt has returned).
 
     def is_scanning(self) -> bool:
         return self._scan_task is not None and not self._scan_task.done()
@@ -1115,7 +1112,7 @@ class RootScanner:
                     )
                 )
             )
-            logger.info("Scan cancelled (%s)", task_id)
+            logger.debug("Scan cancelled (%s)", task_id)
         except Exception:
             logger.exception("Scan failed (%s)", task_id)
             await self._send(
@@ -1343,7 +1340,7 @@ class RootScanner:
                     await asyncio.to_thread(self._save_reel_state)
 
             except asyncio.CancelledError:
-                logger.info("Showreel worker shutting down for root %s", self.root_id)
+                logger.debug("Showreel worker shutting down for root %s", self.root_id)
                 return
             except Exception:
                 logger.exception(

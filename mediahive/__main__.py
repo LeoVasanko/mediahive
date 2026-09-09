@@ -33,6 +33,54 @@ def _derive_name(path: str) -> str:
     return p.name or p.anchor.strip("/\\").lower() or "media"
 
 
+def _dev_reload_supervisor() -> None:
+    """Windows dev-mode reloader: restart the server process on changes.
+
+    uvicorn's own reload cannot work here: it restarts the child with
+    CTRL_C_EVENT, which is never delivered to a plain spawn child (no own
+    console process group), so the reloader blocks in join() after the
+    first reload and the old server — scanner included — keeps running.
+    And even when the child does restart, uvicorn passes it sockets bound
+    by the parent; ProactorEventLoop cannot register inherited sockets
+    with IOCP (WinError 87 on accept), while the selector loop would lose
+    asyncio subprocess support (ffmpeg/ffprobe showreel generation).
+
+    So: watch the package directory ourselves and respawn a fresh child
+    process that binds its own sockets.  The child runs with
+    MEDIAHIVE_DEV_CHILD=1 and reload disabled.  Scanner state is persisted
+    after every scan, so a non-graceful child exit on reload loses nothing.
+    """
+    import subprocess
+
+    import watchfiles
+
+    watch_dir = Path(__file__).parent
+    argv = [sys.executable, "-m", "mediahive", *sys.argv[1:]]
+    child_env = dict(os.environ, MEDIAHIVE_DEV_CHILD="1")
+
+    print(f"Dev reloader: watching {watch_dir}", file=sys.stderr)
+    proc = subprocess.Popen(argv, env=child_env)
+    try:
+        for changes in watchfiles.watch(watch_dir):
+            changed = sorted({str(Path(p).name) for _, p in changes})
+            print(
+                f"Dev reloader: change in {', '.join(changed[:5])} — restarting",
+                file=sys.stderr,
+            )
+            proc.terminate()
+            proc.wait()
+            proc = subprocess.Popen(argv, env=child_env)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+
+
 def main() -> None:
     _configure_windows_event_loop_policy()
 
@@ -93,6 +141,14 @@ def main() -> None:
                 suffix += 1
             roots[name] = p.as_posix()
         os.environ["MEDIAHIVE_ROOTS"] = json.dumps(roots)
+
+    if (
+        DEVMODE
+        and sys.platform == "win32"
+        and os.environ.get("MEDIAHIVE_DEV_CHILD") != "1"
+    ):
+        _dev_reload_supervisor()
+        return
 
     server.run(
         "mediahive.server:app",
