@@ -82,10 +82,14 @@ class RootScanner:
         root_id: str,
         media_root: Path,
         send: Send,
+        indexed_paths: Callable[[], set[str]] | None = None,
     ) -> None:
         self.root_id = root_id
         self.media_root = media_root
         self._send = send
+        # Returns the torrent paths currently present in the index; used to
+        # reprocess items missing from the database despite unchanged mtimes.
+        self._indexed_paths = indexed_paths
         self._output_dir = media_root / DEFAULT_OUTPUT_FOLDER
         self._scanignore = ScanIgnore(media_root)
 
@@ -391,6 +395,9 @@ class RootScanner:
         media_root_str = self.media_root.as_posix()
         now = time.time()
         dirs_visited = 0
+        # Torrent paths currently in the index; a matching mtime alone is not
+        # enough to skip an item that the database does not actually have.
+        indexed = self._indexed_paths() if self._indexed_paths else None
 
         media_container_dirs = {"BDMV", "VIDEO_TS", "HVDVD_TS"}
         video_extensions = {
@@ -469,7 +476,16 @@ class RootScanner:
                 except OSError, ValueError:
                     return False
             if self._seen_mtimes.get(relpath) == mtime:
-                return False
+                if indexed is None or relpath in indexed:
+                    return False
+                # Unchanged on disk but missing from the index (snapshot
+                # wiped, upsert lost, ...): reprocess it unless it is not
+                # indexable content anyway.
+                parsed = await parse_download(path)
+                if parsed.content_type is ContentType.OTHER:
+                    return False
+                downloads.append(parsed)
+                return True
             found_mtimes[relpath] = mtime
             downloads.append(await parse_download(path))
             return True
@@ -484,7 +500,7 @@ class RootScanner:
         def _complete_node(node: dict) -> None:
             """Fold a finished subtree into the backoff state and its parent."""
             rel = node["rel"]
-            if rel is not None:
+            if rel is not None and not stop_event.is_set():
                 prev = self._dir_state.get(rel)
                 if prev and prev.get("items") and not node["items"]:
                     # Items vanished from this subtree — stay hot so the
@@ -553,6 +569,7 @@ class RootScanner:
             nonlocal dirs_visited
             while True:
                 _, _, path, mtime, node = await queue.get()
+                rel = make_relative_path(str(path), media_root_str)
                 try:
                     if stop_event.is_set():
                         continue
@@ -565,7 +582,11 @@ class RootScanner:
                         ) = await asyncio.to_thread(_scan_dir, path, stop_event)
                     except OSError, PermissionError:
                         logger.debug("Cannot list directory: %s", path)
-                        # Unreadable — don't let it earn backoff.
+                        # Unreadable (e.g. a transient network-mount failure):
+                        # keep its previously known paths so the Sync event
+                        # cannot delete the subtree's items, and don't let it
+                        # earn backoff.
+                        _carry_known(rel)
                         node["changed"] = True
                         child_dirs, video_files, is_media_container = [], [], False
                     if self._scanignore:
@@ -580,7 +601,6 @@ class RootScanner:
                             if not self._scanignore.is_excluded(f[0])
                         ]
                     if dirs_visited % 8 == 1:
-                        rel = make_relative_path(str(path), media_root_str) or str(path)
                         await _report(f"Scanning: {rel} ({len(downloads)} found)")
 
                     if is_media_container or not child_dirs:
@@ -593,7 +613,6 @@ class RootScanner:
                         # (SMB), so fold in the newest video file mtime —
                         # file mtimes are reliable, and this is what makes a
                         # still-growing download show up immediately.
-                        rel = make_relative_path(str(path), media_root_str)
                         if is_media_container or video_files:
                             node["items"] = True
                         if video_files:
@@ -604,16 +623,27 @@ class RootScanner:
                         )
                     else:
                         for file_path, file_mtime in video_files:
-                            rel = make_relative_path(str(file_path), media_root_str)
+                            file_rel = make_relative_path(
+                                str(file_path), media_root_str
+                            )
                             node["items"] = True
                             node["changed"] = node[
                                 "changed"
-                            ] or await _register_candidate(file_path, rel, file_mtime)
+                            ] or await _register_candidate(
+                                file_path, file_rel, file_mtime
+                            )
                         await _enqueue_children(node, child_dirs)
+                except Exception:
+                    # Never let one bad directory kill the worker or truncate
+                    # the walk — an incomplete known_paths set would make the
+                    # Sync event delete items that still exist on disk.
+                    logger.exception("Discovery failed for directory: %s", path)
+                    _carry_known(rel)
+                    node["changed"] = True
+                finally:
                     node["pending"] -= 1
                     if node["pending"] == 0:
                         _complete_node(node)
-                finally:
                     queue.task_done()
 
         logger.info("Starting filesystem discovery at %s", self.media_root)
@@ -628,8 +658,10 @@ class RootScanner:
             stop_event.set()
             raise
         except OSError, PermissionError:
-            logger.exception("Cannot list media root: %s", self.media_root)
-            return downloads, found_mtimes, known_paths
+            # Failing to list the root must fail the whole scan: returning an
+            # empty known_paths here would make the Sync event delete every
+            # item in the index.
+            raise RuntimeError(f"Cannot list media root: {self.media_root}")
 
         if self._scanignore:
             child_dirs = [

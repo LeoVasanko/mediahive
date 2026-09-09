@@ -150,6 +150,22 @@ class IndexStore:
             return None
         return item.info.tmdb_id
 
+    def torrent_paths(self) -> set[str]:
+        """All media-root-relative torrent paths currently in the index.
+
+        The scanner uses this to reprocess items that are missing from the
+        index even though their mtime is unchanged (e.g. after the snapshot
+        was wiped or an upsert never landed).
+        """
+        paths: set[str] = set()
+        for movie in self.movies.values():
+            paths.update(movie.files)
+        for show in self.series.values():
+            for season in show.seasons:
+                for episode in season.episodes:
+                    paths.update(episode.files)
+        return paths
+
     @staticmethod
     def _newest_from_files(files: dict[str, Torrent]) -> int | None:
         timestamps = [t.added_at for t in files.values() if t.added_at]

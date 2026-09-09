@@ -652,7 +652,12 @@ async def _attach_scanners() -> None:
         for ctx in supervisor.all_contexts().values():
             if ctx.scanner is None and ctx.status == "ready":
                 try:
-                    scanner = RootScanner(ctx.root_id, ctx.root_path, ctx.send_event)
+                    scanner = RootScanner(
+                        ctx.root_id,
+                        ctx.root_path,
+                        ctx.send_event,
+                        ctx.store.torrent_paths,
+                    )
                     await scanner.start()
                     ctx.scanner = scanner
                 except Exception:
