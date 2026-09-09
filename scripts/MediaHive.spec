@@ -11,6 +11,7 @@ import sys
 import mediahive.winmain
 import mediahive.server
 from pathlib import Path
+from PyInstaller.utils.hooks import collect_data_files
 
 block_cipher = None
 
@@ -32,6 +33,9 @@ _datas = [
     # Bundled Vue frontend served by the FastAPI backend
     (str(_frontend_build), "mediahive/frontend-build"),
 ]
+# tracerite (indirect dep) loads style.css / script.js at runtime; PyInstaller
+# has no hook for it, so collect its package data explicitly
+_datas += collect_data_files("tracerite")
 if _icon_win.exists():
     _datas.append((str(_icon_win), "mediahive/assets"))
 if _icon_mac.exists():

@@ -239,6 +239,9 @@ def create_zip(version: str) -> Path:
 
 
 def main() -> None:
+    # Windows consoles default to cp1252, which can't encode ✓/✗
+    sys.stdout.reconfigure(errors="replace")
+    sys.stderr.reconfigure(errors="replace")
     try:
         version = read_version()
         print(f"MediaHive version: {version}")

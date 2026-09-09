@@ -183,9 +183,7 @@ class IndexStore:
             files=files,
         )
 
-    def _merge_series(
-        self, existing: Series, new: Series, scanned: set[str]
-    ) -> Series:
+    def _merge_series(self, existing: Series, new: Series, scanned: set[str]) -> Series:
         """Merge a partially rebuilt series into the existing entry.
 
         File entries belonging to torrents in ``scanned`` are replaced by the
@@ -238,8 +236,7 @@ class IndexStore:
             )
 
         alt_titles = sorted(
-            set(existing.alternative_titles or [])
-            | set(new.alternative_titles or [])
+            set(existing.alternative_titles or []) | set(new.alternative_titles or [])
         )
         return Series(
             title=new.title or existing.title,
@@ -559,9 +556,7 @@ class IndexStore:
                     if len(files) < len(ep.files):
                         removed_any = True
                     if files:
-                        new_episodes.append(
-                            msgspec.structs.replace(ep, files=files)
-                        )
+                        new_episodes.append(msgspec.structs.replace(ep, files=files))
                     else:
                         removed_any = True
                 if not new_episodes:

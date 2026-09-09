@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import itertools
 import json
 import logging
 import os
@@ -57,6 +58,13 @@ from mediahive.models.events import (
 
 logger = logging.getLogger("hivescan.scanner")
 
+# Discovery walk tunables: number of concurrent directory readers, and the
+# exponential backoff schedule for subtrees that repeatedly contain no items
+# of interest (60s, 120s, 240s, ... capped at 1h).
+_SCAN_WORKERS = 16
+_EMPTY_BACKOFF_BASE_S = 60.0
+_EMPTY_BACKOFF_MAX_S = 3600.0
+
 # Type alias for the send callable
 Send = Callable[[ScanEvent], Awaitable[None]]
 
@@ -87,6 +95,9 @@ class RootScanner:
         self._showreel_worker_task: asyncio.Task | None = None
         self._rescan_worker_task: asyncio.Task | None = None
         self._seen_mtimes: dict[str, int] = {}
+        # Per-directory backoff state (relpath -> {until, streak, items})
+        self._dir_state: dict[str, dict] = {}
+        self._dir_state_dirty = False
 
         # Persisted state (under .mediahive/)
         self._scan_state_path = self._output_dir / "scan-state.json"
@@ -160,10 +171,23 @@ class RootScanner:
         seen = data.get("seen_mtimes")
         if isinstance(seen, dict):
             self._seen_mtimes = {str(k): int(v) for k, v in seen.items()}
+        dir_state = data.get("dir_state")
+        if isinstance(dir_state, dict):
+            for key, value in dir_state.items():
+                if isinstance(value, dict):
+                    self._dir_state[str(key)] = {
+                        "until": float(value.get("until") or 0.0),
+                        "streak": int(value.get("streak") or 0),
+                        "items": bool(value.get("items")),
+                    }
 
     def _save_scan_state(self) -> None:
         try:
-            payload = json.dumps({"version": 1, "seen_mtimes": self._seen_mtimes})
+            payload = json.dumps({
+                "version": 2,
+                "seen_mtimes": self._seen_mtimes,
+                "dir_state": self._dir_state,
+            })
             tmp = self._scan_state_path.with_suffix(".tmp")
             tmp.parent.mkdir(parents=True, exist_ok=True)
             tmp.write_text(payload, encoding="utf-8")
@@ -235,7 +259,9 @@ class RootScanner:
         status: str,
         error: str | None = None,
     ) -> None:
-        bucket, key = self._reel_state_bucket(kind, media_folder, season_num, episode_num)
+        bucket, key = self._reel_state_bucket(
+            kind, media_folder, season_num, episode_num
+        )
         previous = bucket.get(key)
         attempts = (
             0 if status == "done" else int((previous or {}).get("attempts", 0)) + 1
@@ -271,7 +297,9 @@ class RootScanner:
         except OSError, ValueError:
             pass
 
-        bucket, key = self._reel_state_bucket(kind, media_folder, season_num, episode_num)
+        bucket, key = self._reel_state_bucket(
+            kind, media_folder, season_num, episode_num
+        )
         rec = bucket.get(key)
         if (
             rec is not None
@@ -282,10 +310,13 @@ class RootScanner:
             if rec.get("status") == "done":
                 return False, sig
             attempts = int(rec.get("attempts", 1))
-            delay = min(
-                self._REEL_RETRY_BASE_HOURS * 2**attempts,
-                self._REEL_RETRY_MAX_HOURS,
-            ) * 3600
+            delay = (
+                min(
+                    self._REEL_RETRY_BASE_HOURS * 2**attempts,
+                    self._REEL_RETRY_MAX_HOURS,
+                )
+                * 3600
+            )
             if time.time() - float(rec.get("last", 0)) < delay:
                 return False, sig
 
@@ -325,72 +356,35 @@ class RootScanner:
     async def _discover_downloads(
         self, task_id: str
     ) -> tuple[list[ParsedContent], dict[str, int], set[str]]:
-        """Recursively walk the media root, respecting scanignore rules.
+        """Walk the media root with a pool of parallel workers.
+
+        Each directory costs exactly one ``scandir`` round trip (entry
+        mtimes come from the directory listing itself), and up to
+        ``_SCAN_WORKERS`` directories are read concurrently — over a
+        network mount the walk is latency-bound, so this is close to an
+        N-fold speedup over the old serialized recursion.
+
+        Subtree scheduling is adaptive (``_dir_state``, persisted in
+        scan-state.json): directories that repeatedly yield no candidates
+        are penalised with exponential backoff (1, 2, 4, ... minutes up to
+        ``_EMPTY_BACKOFF_MAX_S``), while trees with items of interest or
+        recent changes are scanned every pass and queued first, so new
+        downloads appear almost immediately even while a large cold tree
+        is still being walked.
 
         Returns ``(downloads, found_mtimes, known_paths)``: the new/changed
         items to process, the mtimes observed for them (committed to
-        ``_seen_mtimes`` only after the scan completes successfully), and the
-        full set of media-root-relative candidate paths seen on disk (used
-        for deletion detection).
+        ``_seen_mtimes`` only after the scan completes successfully), and
+        the full set of media-root-relative candidate paths (backed-off
+        subtrees contribute their previously known paths, so deletion
+        sync never drops them unseen).
         """
         downloads: list[ParsedContent] = []
         found_mtimes: dict[str, int] = {}
         known_paths: set[str] = set()
         media_root_str = self.media_root.as_posix()
+        now = time.time()
         dirs_visited = 0
-
-        def _collect_children(
-            directory: Path,
-            stop_event: threading.Event,
-        ) -> tuple[list[Path], list[Path], bool]:
-            child_dirs: list[Path] = []
-            child_files: list[Path] = []
-            is_media_container = False
-            with os.scandir(directory) as entries:
-                for entry in entries:
-                    if stop_event.is_set():
-                        return child_dirs, child_files, is_media_container
-                    name = entry.name
-                    if name.startswith("."):
-                        continue
-                    item = Path(entry.path)
-                    try:
-                        is_dir = entry.is_dir(follow_symlinks=False)
-                    except OSError:
-                        continue
-                    if is_dir:
-                        if name.upper() in media_container_dirs:
-                            is_media_container = True
-                        child_dirs.append(item)
-                    else:
-                        child_files.append(item)
-            return child_dirs, child_files, is_media_container
-
-        def _collect_root_children(
-            directory: Path,
-            stop_event: threading.Event,
-        ) -> list[Path]:
-            items: list[Path] = []
-            with os.scandir(directory) as entries:
-                for entry in entries:
-                    if stop_event.is_set():
-                        return items
-                    if entry.name.startswith("."):
-                        continue
-                    items.append(Path(entry.path))
-            return items
-
-        async def _report(detail: str) -> None:
-            await self._send(
-                Task(
-                    data=TaskInfo(
-                        id=task_id,
-                        status="running",
-                        progress=0,
-                        detail=detail,
-                    )
-                )
-            )
 
         media_container_dirs = {"BDMV", "VIDEO_TS", "HVDVD_TS"}
         video_extensions = {
@@ -406,103 +400,223 @@ class RootScanner:
             ".m2ts",
         }
 
-        async def _walk(directory: Path) -> None:
-            nonlocal dirs_visited
-            ap = AsyncPath(directory)
-            if not await ap.is_dir():
-                return
+        queue: asyncio.PriorityQueue = asyncio.PriorityQueue()
+        seq = itertools.count()
 
-            try:
-                stop_event = threading.Event()
-                child_dirs, child_files, is_media_container = await asyncio.to_thread(
-                    _collect_children,
-                    directory,
-                    stop_event,
-                )
-            except asyncio.CancelledError:
-                stop_event.set()
-                raise
-            except OSError, PermissionError:
-                logger.debug("Cannot list directory: %s", directory)
-                return
-
-            # Apply ignore rules after fast scandir classification.
-            if self._scanignore:
-                child_dirs = [
-                    item
-                    for item in child_dirs
-                    if not self._scanignore.is_excluded(item)
-                ]
-                child_files = [
-                    item
-                    for item in child_files
-                    if not self._scanignore.is_excluded(item)
-                ]
-
-            if is_media_container:
-                relpath = make_relative_path(str(directory), media_root_str)
-                known_paths.add(relpath)
-                try:
-                    stat_info = await ap.stat()
-                    mtime = int(stat_info.st_mtime)
-                except OSError:
-                    return
-                if (
-                    relpath not in self._seen_mtimes
-                    or self._seen_mtimes[relpath] != mtime
-                ):
-                    found_mtimes[relpath] = mtime
-                    downloads.append(await parse_download(directory))
-                return
-
-            if child_dirs:
-                dirs_visited += 1
-                rel = make_relative_path(str(directory), media_root_str) or str(
-                    directory
-                )
-                if dirs_visited % 5 == 1:
-                    await _report(f"Scanning: {rel} ({len(downloads)} found)")
-                    logger.info("Scanning: %s (%d found so far)", rel, len(downloads))
-                for child in child_dirs:
-                    await _walk(child)
-                for child_file in child_files:
-                    if child_file.suffix.lower() in video_extensions:
-                        relpath = make_relative_path(str(child_file), media_root_str)
-                        known_paths.add(relpath)
+        def _scan_dir(
+            directory: Path,
+            stop_event: threading.Event,
+        ) -> tuple[list[tuple[Path, int | None]], list[tuple[Path, int]], bool]:
+            """One scandir; DirEntry stats are free from the listing."""
+            child_dirs: list[tuple[Path, int | None]] = []
+            video_files: list[tuple[Path, int]] = []
+            is_media_container = False
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    if stop_event.is_set():
+                        break
+                    name = entry.name
+                    if name.startswith("."):
+                        continue
+                    try:
+                        is_dir = entry.is_dir(follow_symlinks=False)
+                    except OSError:
+                        continue
+                    if is_dir:
+                        if name.upper() in media_container_dirs:
+                            is_media_container = True
                         try:
-                            stat_info = await AsyncPath(child_file).stat()
-                            mtime = int(stat_info.st_mtime)
+                            mtime: int | None = int(entry.stat().st_mtime)
+                        except OSError:
+                            mtime = None
+                        child_dirs.append((Path(entry.path), mtime))
+                    else:
+                        item = Path(entry.path)
+                        if item.suffix.lower() not in video_extensions:
+                            continue
+                        try:
+                            video_files.append((item, int(entry.stat().st_mtime)))
                         except OSError:
                             continue
-                        if (
-                            relpath in self._seen_mtimes
-                            and self._seen_mtimes[relpath] == mtime
-                        ):
-                            continue
-                        found_mtimes[relpath] = mtime
-                        downloads.append(await parse_download(child_file))
-            else:
-                relpath = make_relative_path(str(directory), media_root_str)
-                known_paths.add(relpath)
+            return child_dirs, video_files, is_media_container
+
+        async def _report(detail: str) -> None:
+            await self._send(
+                Task(
+                    data=TaskInfo(
+                        id=task_id,
+                        status="running",
+                        progress=0,
+                        detail=detail,
+                    )
+                )
+            )
+
+        async def _register_candidate(
+            path: Path, relpath: str, mtime: int | None
+        ) -> bool:
+            """Record a candidate; return True when it is new/changed."""
+            known_paths.add(relpath)
+            if mtime is None:
                 try:
-                    stat_info = await ap.stat()
-                    mtime = int(stat_info.st_mtime)
-                except OSError:
-                    return
-                if relpath in self._seen_mtimes and self._seen_mtimes[relpath] == mtime:
-                    return
-                found_mtimes[relpath] = mtime
-                downloads.append(await parse_download(directory))
+                    mtime = int((await AsyncPath(path).stat()).st_mtime)
+                except OSError, ValueError:
+                    return False
+            if self._seen_mtimes.get(relpath) == mtime:
+                return False
+            found_mtimes[relpath] = mtime
+            downloads.append(await parse_download(path))
+            return True
+
+        def _carry_known(relpath: str) -> None:
+            """Keep previously known paths of a skipped (backed-off) subtree."""
+            prefix = relpath + "/"
+            for p in self._seen_mtimes:
+                if p == relpath or p.startswith(prefix):
+                    known_paths.add(p)
+
+        def _complete_node(node: dict) -> None:
+            """Fold a finished subtree into the backoff state and its parent."""
+            rel = node["rel"]
+            if rel is not None:
+                prev = self._dir_state.get(rel)
+                if prev and prev.get("items") and not node["items"]:
+                    # Items vanished from this subtree — stay hot so the
+                    # deletion propagates promptly.
+                    node["changed"] = True
+                if node["items"] or node["changed"]:
+                    new = {"until": 0.0, "streak": 0, "items": node["items"]}
+                else:
+                    streak = int((prev or {}).get("streak", 0)) + 1
+                    delay = min(
+                        _EMPTY_BACKOFF_BASE_S * 2 ** (streak - 1),
+                        _EMPTY_BACKOFF_MAX_S,
+                    )
+                    new = {"until": now + delay, "streak": streak, "items": False}
+                if prev != new:
+                    self._dir_state[rel] = new
+                    self._dir_state_dirty = True
+            parent = node["parent"]
+            if parent is not None:
+                parent["items"] = parent["items"] or node["items"]
+                parent["changed"] = parent["changed"] or node["changed"]
+                parent["pending"] -= 1
+                if parent["pending"] == 0:
+                    _complete_node(parent)
+
+        def _child_priority(state: dict | None) -> int:
+            # Items of interest (or recently changed) first, never-seen
+            # directories next (they may hold brand-new content), known
+            # empty last.
+            if state is None:
+                return 1
+            if state.get("items"):
+                return 0
+            return 2
+
+        async def _enqueue_children(
+            node: dict, child_dirs: list[tuple[Path, int | None]]
+        ) -> None:
+            for child, child_mtime in child_dirs:
+                crel = make_relative_path(str(child), media_root_str)
+                state = self._dir_state.get(crel)
+                if (
+                    state is not None
+                    and not state.get("items")
+                    and float(state.get("until", 0.0)) > now
+                ):
+                    _carry_known(crel)
+                    continue
+                cnode = {
+                    "parent": node,
+                    "pending": 1,  # self-reference, released after processing
+                    "items": False,
+                    "changed": False,
+                    "rel": crel,
+                }
+                node["pending"] += 1
+                await queue.put((
+                    _child_priority(state),
+                    next(seq),
+                    child,
+                    child_mtime,
+                    cnode,
+                ))
+
+        async def _worker(stop_event: threading.Event) -> None:
+            nonlocal dirs_visited
+            while True:
+                _, _, path, mtime, node = await queue.get()
+                try:
+                    if stop_event.is_set():
+                        continue
+                    dirs_visited += 1
+                    try:
+                        (
+                            child_dirs,
+                            video_files,
+                            is_media_container,
+                        ) = await asyncio.to_thread(_scan_dir, path, stop_event)
+                    except OSError, PermissionError:
+                        logger.debug("Cannot list directory: %s", path)
+                        # Unreadable — don't let it earn backoff.
+                        node["changed"] = True
+                        child_dirs, video_files, is_media_container = [], [], False
+                    if self._scanignore:
+                        child_dirs = [
+                            c
+                            for c in child_dirs
+                            if not self._scanignore.is_excluded(c[0])
+                        ]
+                        video_files = [
+                            f
+                            for f in video_files
+                            if not self._scanignore.is_excluded(f[0])
+                        ]
+                    if dirs_visited % 8 == 1:
+                        rel = make_relative_path(str(path), media_root_str) or str(path)
+                        await _report(f"Scanning: {rel} ({len(downloads)} found)")
+
+                    if is_media_container or not child_dirs:
+                        # Disc structure or leaf directory: the directory
+                        # itself is the candidate.  For backoff purposes it
+                        # only counts as an item of interest when it actually
+                        # holds video — a leaf of nothing but flac/mp3 files
+                        # must not keep its whole subtree hot.
+                        # Directory mtimes are lazy (NTFS) and unreliable
+                        # (SMB), so fold in the newest video file mtime —
+                        # file mtimes are reliable, and this is what makes a
+                        # still-growing download show up immediately.
+                        rel = make_relative_path(str(path), media_root_str)
+                        if is_media_container or video_files:
+                            node["items"] = True
+                        if video_files:
+                            newest = max(fm for _, fm in video_files)
+                            mtime = max(mtime or 0, newest)
+                        node["changed"] = node["changed"] or await _register_candidate(
+                            path, rel, mtime
+                        )
+                    else:
+                        for file_path, file_mtime in video_files:
+                            rel = make_relative_path(str(file_path), media_root_str)
+                            node["items"] = True
+                            node["changed"] = node[
+                                "changed"
+                            ] or await _register_candidate(file_path, rel, file_mtime)
+                        await _enqueue_children(node, child_dirs)
+                    node["pending"] -= 1
+                    if node["pending"] == 0:
+                        _complete_node(node)
+                finally:
+                    queue.task_done()
 
         logger.info("Starting filesystem discovery at %s", self.media_root)
         await _report(f"Scanning: {self.media_root}")
 
+        stop_event = threading.Event()
         try:
-            stop_event = threading.Event()
-            root_children = await asyncio.to_thread(
-                _collect_root_children,
-                self.media_root,
-                stop_event,
+            child_dirs, video_files, _ = await asyncio.to_thread(
+                _scan_dir, self.media_root, stop_event
             )
         except asyncio.CancelledError:
             stop_event.set()
@@ -511,27 +625,37 @@ class RootScanner:
             logger.exception("Cannot list media root: %s", self.media_root)
             return downloads, found_mtimes, known_paths
 
-        for item_async in root_children:
-            item = Path(item_async)
-            if item.name.startswith("."):
-                continue
-            if self._scanignore and self._scanignore.is_excluded(item):
-                logger.debug("Excluded: %s", item.name)
-                continue
-            if await AsyncPath(item).is_dir():
-                await _walk(item)
-            else:
-                relpath = make_relative_path(str(item), media_root_str)
-                known_paths.add(relpath)
-                try:
-                    stat_info = await AsyncPath(item).stat()
-                    mtime = int(stat_info.st_mtime)
-                except OSError:
-                    continue
-                if relpath in self._seen_mtimes and self._seen_mtimes[relpath] == mtime:
-                    continue
-                found_mtimes[relpath] = mtime
-                downloads.append(await parse_download(item))
+        if self._scanignore:
+            child_dirs = [
+                c for c in child_dirs if not self._scanignore.is_excluded(c[0])
+            ]
+            video_files = [
+                f for f in video_files if not self._scanignore.is_excluded(f[0])
+            ]
+
+        root_node = {
+            "parent": None,
+            "pending": 1,
+            "items": False,
+            "changed": False,
+            "rel": None,
+        }
+        for file_path, file_mtime in video_files:
+            rel = make_relative_path(str(file_path), media_root_str)
+            root_node["items"] = True
+            await _register_candidate(file_path, rel, file_mtime)
+        await _enqueue_children(root_node, child_dirs)
+
+        workers = [
+            asyncio.create_task(_worker(stop_event)) for _ in range(_SCAN_WORKERS)
+        ]
+        try:
+            await queue.join()
+        finally:
+            stop_event.set()
+            for w in workers:
+                w.cancel()
+            await asyncio.gather(*workers, return_exceptions=True)
 
         logger.info(
             "Discovery complete: %d downloads found, %d directories visited",
@@ -556,7 +680,8 @@ class RootScanner:
 
         await self._send(Sync(paths=sorted(known_paths)))
 
-        if state_changed:
+        if state_changed or self._dir_state_dirty:
+            self._dir_state_dirty = False
             await asyncio.to_thread(self._save_scan_state)
         if probe_records_dirty():
             await asyncio.to_thread(save_probe_records)
@@ -639,7 +764,13 @@ class RootScanner:
                         )
                     )
                 )
-            async for movie_id, movie, showreel_task, people, scanned in _process_movies(
+            async for (
+                movie_id,
+                movie,
+                showreel_task,
+                people,
+                scanned,
+            ) in _process_movies(
                 categories,
                 self._output_dir,
                 fetch_covers=True,
@@ -713,7 +844,13 @@ class RootScanner:
                         )
                     )
                 )
-            async for series_id, series, ep_reel_tasks, people, scanned in _process_series(
+            async for (
+                series_id,
+                series,
+                ep_reel_tasks,
+                people,
+                scanned,
+            ) in _process_series(
                 categories,
                 self._output_dir,
                 fetch_covers=True,
@@ -736,7 +873,12 @@ class RootScanner:
                         "episode", task[0], task[1], task[2], task[3]
                     )
                     if needed:
-                        await self._showreel_queue.put(("episode", series_id, task, sig))
+                        await self._showreel_queue.put((
+                            "episode",
+                            series_id,
+                            task,
+                            sig,
+                        ))
                         queued += 1
                 if queued:
                     logger.info(
@@ -835,7 +977,9 @@ class RootScanner:
                         media_folder,
                         remaining,
                     )
-                    needed, _ = await self._reel_needed("movie", video_path, media_folder)
+                    needed, _ = await self._reel_needed(
+                        "movie", video_path, media_folder
+                    )
                     if not needed:
                         logger.info("Showreel skipped (already exists): %s", title)
                         self._showreel_queue.task_done()
@@ -956,7 +1100,9 @@ class RootScanner:
                         reel_image = (
                             reel_sources[0]
                             if reel_sources
-                            else make_relative_path(reel_path, media_root_path.as_posix())
+                            else make_relative_path(
+                                reel_path, media_root_path.as_posix()
+                            )
                         )
                         self._record_reel_state(
                             "episode",

@@ -688,7 +688,9 @@ async def _process_movies(
             showreel_source_sets=showreel_source_sets or None,
             files=files,
         )
-        scanned = [make_relative_path(item.path.as_posix(), media_root) for item in items]
+        scanned = [
+            make_relative_path(item.path.as_posix(), media_root) for item in items
+        ]
         yield item_id, movie, showreel_task, people, scanned
 
     # Process movies without TMDb info
@@ -761,7 +763,9 @@ async def _process_movies(
             showreel_source_sets=showreel_source_sets or None,
             files=files,
         )
-        scanned = [make_relative_path(item.path.as_posix(), media_root) for item in items]
+        scanned = [
+            make_relative_path(item.path.as_posix(), media_root) for item in items
+        ]
         yield item_id, movie, showreel_task, {}, scanned
 
 
@@ -773,7 +777,9 @@ async def _process_series(
     media_root: str | None = None,
     root_id: str | None = None,
 ) -> AsyncIterator[
-    tuple[str, Series, list[tuple[str, Path, int, int, str]], dict[int, Person], list[str]]
+    tuple[
+        str, Series, list[tuple[str, Path, int, int, str]], dict[int, Person], list[str]
+    ]
 ]:
     """Async generator that processes all series.
 
@@ -964,7 +970,9 @@ async def _process_series(
             backdrop_path=make_relative_path(backdrop_path, media_root),
             seasons=seasons_data,
         )
-        scanned = [make_relative_path(item.path.as_posix(), media_root) for item in items]
+        scanned = [
+            make_relative_path(item.path.as_posix(), media_root) for item in items
+        ]
         yield series_id, series, ep_reel_tasks, people, scanned
 
     # Process series without TMDb info
@@ -1008,5 +1016,7 @@ async def _process_series(
             cover_path=make_relative_path(cover_path, media_root),
             seasons=seasons_data,
         )
-        scanned = [make_relative_path(item.path.as_posix(), media_root) for item in items]
+        scanned = [
+            make_relative_path(item.path.as_posix(), media_root) for item in items
+        ]
         yield series_id, series, ep_reel_tasks, {}, scanned
