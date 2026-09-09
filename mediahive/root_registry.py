@@ -353,6 +353,10 @@ class Supervisor:
 
     async def shutdown(self) -> None:
         async with self._lock:
-            for ctx in list(self._contexts.values()):
-                await ctx.stop()
+            # Stop roots concurrently — each may wait on task cancellation and
+            # network-mount snapshot flushes, and those delays must not add up.
+            await asyncio.gather(
+                *(ctx.stop() for ctx in list(self._contexts.values())),
+                return_exceptions=True,
+            )
             self._contexts.clear()

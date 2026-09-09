@@ -67,7 +67,7 @@ def main() -> None:
 
     if use_gui:
         try:
-            from mediahive.winmain import winmain
+            from mediahive.winmain import gui_main
         except ImportError as exc:
             if args.gui:
                 raise RuntimeError(
@@ -75,7 +75,7 @@ def main() -> None:
                     "Install with: uv pip install mediahive[gui]"
                 ) from exc
         else:
-            winmain()
+            gui_main()
             return
 
     if args.media_folders:

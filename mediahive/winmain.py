@@ -688,6 +688,46 @@ def _start_gamepad_remote(
     return thread
 
 
+def _rotate_and_open_log(log_path: Path):
+    """Rotate mediahive.log to .log.1 and open a fresh log file.
+
+    Raises OSError when a previous MediaHive instance still holds the file
+    open (Windows forbids renaming a file that is open without delete
+    sharing) — callers treat that as "previous instance not dead yet".
+    """
+    prev = log_path.with_suffix(".log.1")
+    if log_path.exists():
+        if prev.exists():
+            prev.unlink()
+        log_path.rename(prev)
+    fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
+    return os.fdopen(fd, "w", encoding="utf-8", buffering=1)  # line-buffered
+
+
+def _wait_for_previous_instance(log_path: Path, timeout: float = 15.0):
+    """Show a waiting notice while a previous MediaHive instance exits.
+
+    Returns an open log file handle, or None on timeout.
+    """
+    result: list = []
+    window = webview.create_window(
+        "MediaHive", html=_WAIT_HTML, width=520, height=280, resizable=False
+    )
+
+    def poll() -> None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                result.append(_rotate_and_open_log(log_path))
+                break
+            except OSError:
+                time.sleep(0.5)
+        window.destroy()
+
+    webview.start(func=poll, icon=_icon_path(), **_webview_start_kwargs())
+    return result[0] if result else None
+
+
 def _setup_logging() -> Path:
     """Redirect stdout/stderr and configure logging to a file in %APPDATA%/mediahive/.
 
@@ -702,19 +742,30 @@ def _setup_logging() -> Path:
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / "mediahive.log"
 
-    # Rotate: keep previous run as .log.1
-    prev = log_path.with_suffix(".log.1")
-    if log_path.exists():
-        if prev.exists():
-            prev.unlink()
-        log_path.rename(prev)
+    try:
+        log_file = _rotate_and_open_log(log_path)
+    except OSError:
+        # A previous instance still holds the log file.  It is usually on its
+        # way out — give it a couple of seconds silently first.
+        log_file = None
+        deadline = time.monotonic() + 2.0
+        while log_file is None and time.monotonic() < deadline:
+            time.sleep(0.25)
+            with contextlib.suppress(OSError):
+                log_file = _rotate_and_open_log(log_path)
+        if log_file is None:
+            log_file = _wait_for_previous_instance(log_path)
+        if log_file is None:
+            # Never fail startup over logging: fall back to a per-process file.
+            log_path = log_dir / f"mediahive-{os.getpid()}.log"
+            with contextlib.suppress(OSError):
+                fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
+                log_file = os.fdopen(fd, "w", encoding="utf-8", buffering=1)
 
-    fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
-    log_file = os.fdopen(fd, "w", encoding="utf-8", buffering=1)  # line-buffered
-
-    # Redirect raw stdout/stderr so print() and tracebacks go to the file
-    sys.stdout = log_file
-    sys.stderr = log_file
+    if log_file is not None:
+        # Redirect raw stdout/stderr so print() and tracebacks go to the file
+        sys.stdout = log_file
+        sys.stderr = log_file
 
     # force=True removes handlers added by uvicorn/fastapi during import so that
     # basicConfig actually takes effect (without it, it's a silent no-op)
@@ -742,6 +793,54 @@ _SETUP_HTML = """<!DOCTYPE html>
 </style></head><body>
   <div><h1>MediaHive</h1><p>Choose a folder that contains your media…</p></div>
 </body></html>"""
+
+# Shown when a previous instance is still shutting down.
+_WAIT_HTML = """<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #141414; color: #fff;
+         font-family: 'Segoe UI', system-ui, sans-serif;
+         display: flex; align-items: center; justify-content: center;
+         height: 100vh; text-align: center; }
+  h1 { font-size: 2rem; color: #e50914; margin-bottom: .5rem; }
+  p  { color: #aaa; }
+</style></head><body>
+  <div><h1>MediaHive</h1>
+  <p>Waiting for the previous MediaHive instance to finish exiting…</p></div>
+</body></html>"""
+
+
+def _show_fatal_error(exc: BaseException) -> None:
+    """Show an unhandled exception as a TraceRite HTML page in a webview.
+
+    Frozen --windowed builds otherwise surface crashes only as PyInstaller's
+    plain-text error dialog (or nothing at all).
+    """
+    try:
+        from tracerite.html import html_traceback
+
+        fragment = str(html_traceback(exc))
+    except Exception:  # noqa: BLE001 - error reporting must never raise
+        return
+    page = (
+        "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+        "<title>MediaHive — Error</title></head>"
+        f"<body style='margin:1.5rem'>{fragment}</body></html>"
+    )
+    try:
+        webview.create_window("MediaHive — Error", html=page, width=1100, height=750)
+        webview.start(icon=_icon_path(), **_webview_start_kwargs())
+    except Exception:
+        logger.exception("Could not display the error window")
+
+
+def gui_main() -> None:
+    """Run the GUI, rendering fatal exceptions as a TraceRite HTML window."""
+    try:
+        winmain()
+    except Exception as exc:
+        logger.exception("Fatal error")
+        _show_fatal_error(exc)
 
 
 class JsApi:
@@ -1056,4 +1155,4 @@ def winmain() -> None:
 
 
 if __name__ == "__main__":
-    winmain()
+    gui_main()

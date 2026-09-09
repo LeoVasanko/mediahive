@@ -140,15 +140,21 @@ class RootScanner:
             if task and not task.done():
                 task.cancel()
         # Wait briefly for graceful shutdown to avoid lingering scanner tasks.
-        for task in tasks:
-            if task and not task.done():
-                with contextlib.suppress(TimeoutError, asyncio.CancelledError):
-                    await asyncio.wait_for(task, timeout=2.0)
-        # Best-effort persistence of scanner state.
+        # All tasks are awaited concurrently (a slow one must not delay the
+        # others), under a single overall timeout.
+        pending = [task for task in tasks if task and not task.done()]
+        if pending:
+            with contextlib.suppress(TimeoutError, asyncio.CancelledError):
+                await asyncio.wait_for(
+                    asyncio.gather(*pending, return_exceptions=True), timeout=2.0
+                )
+        # Best-effort persistence of scanner state, concurrently.
         with contextlib.suppress(Exception):
-            await asyncio.to_thread(self._save_scan_state)
-            await asyncio.to_thread(self._save_reel_state)
-            await asyncio.to_thread(save_probe_records)
+            await asyncio.gather(
+                asyncio.to_thread(self._save_scan_state),
+                asyncio.to_thread(self._save_reel_state),
+                asyncio.to_thread(save_probe_records),
+            )
 
     def is_scanning(self) -> bool:
         return self._scan_task is not None and not self._scan_task.done()
