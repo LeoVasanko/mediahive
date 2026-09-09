@@ -29,7 +29,7 @@ from mediahive.hivescan.indexer import _process_movies, _process_series
 from mediahive.hivescan.models import ContentType, ParsedContent
 from mediahive.hivescan.parsing import parse_download
 from mediahive.hivescan.scanignore import ScanIgnore
-from mediahive.hivescan.scanning import categorize_downloads
+from mediahive.hivescan.scanning import categorize_downloads, clear_scan_caches
 from mediahive.hivescan.showreel import (
     episode_reel_exists,
     generate_episode_reel,
@@ -102,6 +102,14 @@ class RootScanner:
         self._showreel_worker_task: asyncio.Task | None = None
         self._rescan_worker_task: asyncio.Task | None = None
         self._seen_mtimes: dict[str, int] = {}
+        # Candidates that were fully processed but produced no index entries
+        # (no playable file, no parseable episodes, or non-media content).
+        # Tracked with their mtime so they are not reprocessed on every
+        # rescan — the DB-aware gating alone cannot skip them, because they
+        # never appear in the index.  An entry is dropped as soon as the
+        # item's mtime changes or it starts producing index entries.
+        self._empty_mtimes: dict[str, int] = {}
+        self._empty_dirty = False
         # Per-directory backoff state (relpath -> {until, streak, items})
         self._dir_state: dict[str, dict] = {}
         self._dir_state_dirty = False
@@ -184,6 +192,15 @@ class RootScanner:
         seen = data.get("seen_mtimes")
         if isinstance(seen, dict):
             self._seen_mtimes = {str(k): int(v) for k, v in seen.items()}
+        empty = data.get("empty_mtimes")
+        if isinstance(empty, dict):
+            self._empty_mtimes = {str(k): int(v) for k, v in empty.items()}
+        logger.info(
+            "Loaded scan state from %s: seen=%d, empty=%d",
+            self._scan_state_path,
+            len(self._seen_mtimes),
+            len(self._empty_mtimes),
+        )
         dir_state = data.get("dir_state")
         if isinstance(dir_state, dict):
             for key, value in dir_state.items():
@@ -199,12 +216,20 @@ class RootScanner:
             payload = json.dumps({
                 "version": 2,
                 "seen_mtimes": self._seen_mtimes,
+                "empty_mtimes": self._empty_mtimes,
                 "dir_state": self._dir_state,
             })
             tmp = self._scan_state_path.with_suffix(".tmp")
             tmp.parent.mkdir(parents=True, exist_ok=True)
             tmp.write_text(payload, encoding="utf-8")
             tmp.replace(self._scan_state_path)
+            logger.info(
+                "Saved scan state to %s: seen=%d, empty=%d, dir_state=%d",
+                self._scan_state_path,
+                len(self._seen_mtimes),
+                len(self._empty_mtimes),
+                len(self._dir_state),
+            )
         except OSError, TypeError, ValueError:
             logger.exception("Failed to save scan state to %s", self._scan_state_path)
 
@@ -477,18 +502,57 @@ class RootScanner:
                 try:
                     mtime = int((await AsyncPath(path).stat()).st_mtime)
                 except OSError, ValueError:
+                    logger.info(
+                        "Skipping candidate, stat failed: %s "
+                        "(in_seen=%s, stored_mtime=%s)",
+                        relpath,
+                        relpath in self._seen_mtimes,
+                        self._seen_mtimes.get(relpath),
+                    )
                     return False
-            if self._seen_mtimes.get(relpath) == mtime:
-                if indexed is None or relpath in indexed:
+            stored = self._seen_mtimes.get(relpath)
+            if stored == mtime:
+                if indexed is not None and relpath in indexed:
+                    # Produces index entries; drop any stale empty-marker.
+                    if relpath in self._empty_mtimes:
+                        del self._empty_mtimes[relpath]
+                        self._empty_dirty = True
+                    return False
+                if indexed is None or self._empty_mtimes.get(relpath) == mtime:
                     return False
                 # Unchanged on disk but missing from the index (snapshot
                 # wiped, upsert lost, ...): reprocess it unless it is not
                 # indexable content anyway.
+                logger.info(
+                    "Reprocessing unchanged item missing from index: %s "
+                    "(stored_mtime=%d == current_mtime=%d, indexed=%s, "
+                    "empty_marker=%s)",
+                    relpath,
+                    stored,
+                    mtime,
+                    "n/a" if indexed is None else "no",
+                    self._empty_mtimes.get(relpath),
+                )
                 parsed = await parse_download(path)
                 if parsed.content_type is ContentType.OTHER:
+                    self._empty_mtimes[relpath] = mtime
+                    self._empty_dirty = True
                     return False
                 downloads.append(parsed)
                 return True
+            logger.info(
+                "Treating as new/changed: %s (stored_mtime=%s, "
+                "current_mtime=%d, in_seen=%s, in_index=%s, empty_marker=%s, "
+                "seen_total=%d, known_total=%d)",
+                relpath,
+                "ABSENT" if stored is None else str(stored),
+                mtime,
+                relpath in self._seen_mtimes,
+                "n/a" if indexed is None else (relpath in indexed),
+                self._empty_mtimes.get(relpath),
+                len(self._seen_mtimes),
+                len(known_paths),
+            )
             found_mtimes[relpath] = mtime
             downloads.append(await parse_download(path))
             return True
@@ -624,20 +688,24 @@ class RootScanner:
                         if video_files:
                             newest = max(fm for _, fm in video_files)
                             mtime = max(mtime or 0, newest)
-                        node["changed"] = node["changed"] or await _register_candidate(
-                            path, rel, mtime
-                        )
+                        if await _register_candidate(path, rel, mtime):
+                            node["changed"] = True
                     else:
                         for file_path, file_mtime in video_files:
                             file_rel = make_relative_path(
                                 str(file_path), media_root_str
                             )
                             node["items"] = True
-                            node["changed"] = node[
-                                "changed"
-                            ] or await _register_candidate(
+                            # No "or" short-circuit here: every file must be
+                            # registered even after an earlier file in this
+                            # directory was found changed, otherwise the
+                            # skipped files fall out of known_paths, get
+                            # pruned at finalize, and are rediscovered as
+                            # "new" on every subsequent scan.
+                            if await _register_candidate(
                                 file_path, file_rel, file_mtime
-                            )
+                            ):
+                                node["changed"] = True
                         await _enqueue_children(node, child_dirs)
                 except Exception:
                     # Never let one bad directory kill the worker or truncate
@@ -652,7 +720,7 @@ class RootScanner:
                         _complete_node(node)
                     queue.task_done()
 
-        logger.info("Starting filesystem discovery at %s", self.media_root)
+        logger.debug("Starting filesystem discovery at %s", self.media_root)
         await _report(f"Scanning: {self.media_root}")
 
         stop_event = threading.Event()
@@ -702,7 +770,7 @@ class RootScanner:
                 w.cancel()
             await asyncio.gather(*workers, return_exceptions=True)
 
-        logger.info(
+        logger.debug(
             "Discovery complete: %d downloads found, %d directories visited",
             len(downloads),
             dirs_visited,
@@ -718,15 +786,42 @@ class RootScanner:
         prunes vanished paths, persists state when anything changed, and sends
         the Sync event that lets the store drop deleted torrents.
         """
+        pruned = sorted(k for k in self._seen_mtimes if k not in known_paths)
+        if pruned:
+            logger.info(
+                "Finalize: pruning %d previously seen path(s) not in this "
+                "scan's known set: %s%s",
+                len(pruned),
+                pruned[:10],
+                " ..." if len(pruned) > 10 else "",
+            )
         committed = {k: v for k, v in self._seen_mtimes.items() if k in known_paths}
         committed.update(found_mtimes)
         state_changed = committed != self._seen_mtimes
         self._seen_mtimes = committed
+        if found_mtimes:
+            logger.info(
+                "Finalize: committing %d new/changed mtime(s): %s%s",
+                len(found_mtimes),
+                sorted(found_mtimes)[:10],
+                " ..." if len(found_mtimes) > 10 else "",
+            )
+
+        # Drop empty-markers for vanished or since-changed paths.
+        pruned_empty = {
+            k: v
+            for k, v in self._empty_mtimes.items()
+            if k in known_paths and committed.get(k) == v
+        }
+        if pruned_empty != self._empty_mtimes:
+            self._empty_mtimes = pruned_empty
+            self._empty_dirty = True
 
         await self._send(Sync(paths=sorted(known_paths)))
 
-        if state_changed or self._dir_state_dirty:
+        if state_changed or self._dir_state_dirty or self._empty_dirty:
             self._dir_state_dirty = False
+            self._empty_dirty = False
             await asyncio.to_thread(self._save_scan_state)
         if probe_records_dirty():
             await asyncio.to_thread(save_probe_records)
@@ -744,9 +839,10 @@ class RootScanner:
         """
         task_id = f"scan-{uuid.uuid4().hex[:8]}"
         media_root_str = self.media_root.as_posix()
+        started_at = time.monotonic()
 
         try:
-            logger.info("Scan started (%s) for root %s", task_id, self.root_id)
+            logger.debug("Scan started (%s) for root %s", task_id, self.root_id)
             await self._send(
                 Task(
                     data=TaskInfo(
@@ -758,12 +854,19 @@ class RootScanner:
                 )
             )
 
+            clear_scan_caches()
             downloads, found_mtimes, known_paths = await self._discover_downloads(
                 task_id
             )
+            elapsed = time.monotonic() - started_at
 
             if not downloads:
-                logger.info("No new downloads found (%s)", task_id)
+                logger.info(
+                    "Scan (%s): no changes — %d items inspected in %.1fs",
+                    task_id,
+                    len(known_paths),
+                    elapsed,
+                )
                 await self._finalize_scan(found_mtimes, known_paths)
                 await self._send(
                     Task(
@@ -777,7 +880,13 @@ class RootScanner:
                 )
                 return
 
-            logger.info("Found %d items to process", len(downloads))
+            logger.info(
+                "Scan (%s): %d new/changed of %d items found in %.1fs",
+                task_id,
+                len(downloads),
+                len(known_paths),
+                elapsed,
+            )
             await self._send(
                 Task(
                     data=TaskInfo(
@@ -851,14 +960,14 @@ class RootScanner:
                             self._showreel_queue.qsize(),
                         )
                     else:
-                        logger.info(
+                        logger.debug(
                             "[%d/%d] Movie: %s (showreel up to date)",
                             processed + 1,
                             total,
                             movie.title,
                         )
                 else:
-                    logger.info(
+                    logger.debug(
                         "[%d/%d] Movie: %s (no showreel task)",
                         processed + 1,
                         total,
@@ -935,7 +1044,7 @@ class RootScanner:
                         self._showreel_queue.qsize(),
                     )
                 else:
-                    logger.info(
+                    logger.debug(
                         "[%d/%d] Series: %s (reels up to date)",
                         processed + 1,
                         total,
@@ -954,6 +1063,26 @@ class RootScanner:
                     )
                 )
 
+            # Record processed candidates that yielded no index entries (no
+            # playable file, no parseable episodes, ...) so later rescans
+            # skip them while their mtime is unchanged instead of
+            # reprocessing — and re-logging — them on every pass.  The
+            # snapshot here predates this scan's upserts, so an item that
+            # just produced content may be marked empty once; the marker is
+            # dropped again on the next pass when it shows up in the index.
+            indexed_snapshot = self._indexed_paths() if self._indexed_paths else set()
+            for item in downloads:
+                rel = make_relative_path(item.path.as_posix(), media_root_str)
+                if rel in indexed_snapshot:
+                    if rel in self._empty_mtimes:
+                        del self._empty_mtimes[rel]
+                        self._empty_dirty = True
+                else:
+                    m = found_mtimes.get(rel, self._seen_mtimes.get(rel))
+                    if m is not None and self._empty_mtimes.get(rel) != m:
+                        self._empty_mtimes[rel] = m
+                        self._empty_dirty = True
+
             await self._finalize_scan(found_mtimes, known_paths)
             await self._send(
                 Task(
@@ -966,11 +1095,13 @@ class RootScanner:
                 )
             )
             logger.info(
-                "Scan complete (%s): %d movies, %d series, showreel queue=%d",
+                "Scan complete (%s): %d movies, %d series updated, "
+                "showreel queue=%d, %.1fs total",
                 task_id,
                 n_movies,
                 n_series,
                 self._showreel_queue.qsize(),
+                time.monotonic() - started_at,
             )
 
         except asyncio.CancelledError:

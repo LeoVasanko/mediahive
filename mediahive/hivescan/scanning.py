@@ -28,10 +28,21 @@ VIDEO_EXTENSIONS = {
     ".m2ts",
 }
 
-# Caches for expensive operations
+# Caches for expensive operations.  These are per-scan only: the scanner
+# clears them at the start of every scan.  Caching across scans is wrong —
+# an empty result recorded before a download finished (or during a transient
+# network-mount error) would stick for the process lifetime and report
+# "no episodes found" for series that do have episodes.
 _episode_files_cache: dict[str, dict[tuple[int, int], list[tuple[str, int]]]] = {}
 _playable_file_cache: dict[str, str | None] = {}
 _bluray_probe_file_cache: dict[str, str | None] = {}
+
+
+def clear_scan_caches() -> None:
+    """Drop all per-scan filesystem caches; called at the start of each scan."""
+    _episode_files_cache.clear()
+    _playable_file_cache.clear()
+    _bluray_probe_file_cache.clear()
 
 
 def _scandir_split(

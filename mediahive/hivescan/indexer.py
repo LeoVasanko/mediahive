@@ -951,7 +951,11 @@ async def _process_series(
         )
 
         if not seasons_data:
-            logger.info("    Skipping %s - no episodes found", display_title)
+            logger.info(
+                "    Skipping %s - no episodes in the %d scanned torrent(s)",
+                display_title,
+                len(items),
+            )
             continue
 
         different_titles = sorted(
@@ -1003,7 +1007,11 @@ async def _process_series(
         )
 
         if not seasons_data:
-            logger.info("    Skipping %s - no episodes found", title)
+            logger.info(
+                "    Skipping %s - no episodes in the %d scanned torrent(s)",
+                title,
+                len(items),
+            )
             continue
 
         item_timestamps = [await get_added_timestamp(item.path) for item in items]
