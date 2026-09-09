@@ -702,7 +702,7 @@ function findNextElement(
   }
 }
 
-function focusElement(element: HTMLElement | null) {
+function focusElement(element: HTMLElement | null, options?: { preserveScroll?: boolean }) {
   if (!element) return
   if (!isElementInActiveScope(element)) return
 
@@ -714,8 +714,10 @@ function focusElement(element: HTMLElement | null) {
   element.classList.add("nav-focused")
   element.focus({ preventScroll: true })
 
-  ensureElementVisibleVertically(element)
-  syncRowsToElement(element)
+  if (!options?.preserveScroll) {
+    ensureElementVisibleVertically(element)
+    syncRowsToElement(element)
+  }
 
   focusedElement.value = element
 }
@@ -727,13 +729,16 @@ function getFocusState(): { row: number; col: number } | null {
   return { row, col }
 }
 
-function restoreFocusState(state: { row: number; col: number } | null) {
+function restoreFocusState(
+  state: { row: number; col: number } | null,
+  options?: { preserveScroll?: boolean },
+) {
   if (!state) return
 
   const target = findElementAt(state.row, state.col)
   if (target) {
     setTimeout(() => {
-      focusElement(target.element)
+      focusElement(target.element, options)
     }, 50)
   }
 }
@@ -893,6 +898,32 @@ export function installKeyboardNavigation() {
   })
 }
 
+export interface SyncedRowScrollSnapshot {
+  rows: [HTMLElement, number][]
+  offset: number
+  targetOffset: number
+}
+
+function snapshotSyncedRowScroll(): SyncedRowScrollSnapshot {
+  return {
+    rows: getSyncedRows().map((row) => [row, row.scrollLeft]),
+    offset: syncedRowsCurrentOffset,
+    targetOffset: syncedRowsTargetOffset,
+  }
+}
+
+function restoreSyncedRowScroll(snapshot: SyncedRowScrollSnapshot) {
+  stopSyncedRowAnimation()
+  for (const [row, scrollLeft] of snapshot.rows) {
+    if (row.isConnected) {
+      row.scrollLeft = scrollLeft
+    }
+  }
+  syncedRowsCurrentOffset = snapshot.offset
+  syncedRowsTargetOffset = snapshot.targetOffset
+  lastSyncedRowsAnimationAt = null
+}
+
 export function useKeyboardNavigation() {
   return {
     focusedElement,
@@ -901,6 +932,8 @@ export function useKeyboardNavigation() {
     focusAt,
     getFocusState,
     restoreFocusState,
+    snapshotSyncedRowScroll,
+    restoreSyncedRowScroll,
   }
 }
 

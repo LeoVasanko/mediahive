@@ -211,6 +211,7 @@ import {
 } from "./api"
 import { useSettings } from "./composables/useSettings"
 import { useKeyboardNavigation, setActiveNavigationScope } from "./composables/useKeyboardNavigation"
+import type { SyncedRowScrollSnapshot } from "./composables/useKeyboardNavigation"
 import { useMediaWebSocket } from "./composables/useMediaWebSocket"
 import Header from "./components/Header.vue"
 import CollageHero from "./components/CollageHero.vue"
@@ -219,7 +220,13 @@ import MediaDetail from "./components/MediaDetail.vue"
 import type { SearchResultItem, SearchResponseMessage } from "./search-worker"
 
 // Initialize keyboard navigation
-const { getFocusState, restoreFocusState, focusElement } = useKeyboardNavigation()
+const {
+  getFocusState,
+  restoreFocusState,
+  focusElement,
+  snapshotSyncedRowScroll,
+  restoreSyncedRowScroll,
+} = useKeyboardNavigation()
 
 const router = useRouter()
 const route = useRoute()
@@ -674,6 +681,23 @@ const searchCategories = ref<{ name: string; items: MediaItem[] }[]>([])
 const focusStateMap = new Map<string, { row: number; col: number }>()
 // Track the last viewed item ID to restore focus to the right card
 const lastViewedItemId = ref<string | null>(null)
+let browseScrollSnapshot: { panelTop: number; rows: SyncedRowScrollSnapshot } | null = null
+
+function captureBrowseScrollSnapshot() {
+  browseScrollSnapshot = {
+    panelTop: browsePanelRef.value?.scrollTop ?? 0,
+    rows: snapshotSyncedRowScroll(),
+  }
+}
+
+function restoreBrowseScrollSnapshot() {
+  if (!browseScrollSnapshot) return
+  if (browsePanelRef.value) {
+    browsePanelRef.value.scrollTop = browseScrollSnapshot.panelTop
+  }
+  restoreSyncedRowScroll(browseScrollSnapshot.rows)
+  browseScrollSnapshot = null
+}
 
 // Save current focus state for a page
 function saveFocusForPage(page: string) {
@@ -693,22 +717,24 @@ function restoreFocusForPage(page: string) {
   if (lastViewedItemId.value) {
     // Use nextTick + timeout to ensure DOM is updated after navigation
     setTimeout(() => {
+      restoreBrowseScrollSnapshot()
       const itemId = lastViewedItemId.value
       // Find the element with matching item id
       const element = document.querySelector(`[data-item-id="${itemId}"]`) as HTMLElement | null
       if (element) {
-        focusElement(element)
+        focusElement(element, { preserveScroll: true })
         lastViewedItemId.value = null
         return
       }
       // Fallback to saved focus state
       const state = focusStateMap.get(page)
-      restoreFocusState(state || null)
+      restoreFocusState(state || null, { preserveScroll: true })
       lastViewedItemId.value = null
     }, 100)
   } else {
+    restoreBrowseScrollSnapshot()
     const state = focusStateMap.get(page)
-    restoreFocusState(state || null)
+    restoreFocusState(state || null, { preserveScroll: true })
   }
 }
 
@@ -1024,6 +1050,12 @@ function showDetail(item: MediaItem) {
   // Save focus state before navigating to detail
   const currentPage = route.path === "/series" ? "series" : "movies"
   saveFocusForPage(currentPage)
+
+  // Capture the exact browse scroll positions to restore on return,
+  // but only when leaving the browse page (not for detail-to-detail hops)
+  if (!isDetailOpen.value) {
+    captureBrowseScrollSnapshot()
+  }
 
   // Check if there are matched episodes to focus on
   if (item.type === "series" && item.searchMatchInfo?.matchedEpisodes?.length) {
