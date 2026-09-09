@@ -1,4 +1,10 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run
+# /// script
+# requires-python = ">=3.14"
+# dependencies = [
+#     "bencodepy>=0.9.5",
+# ]
+# ///
 """Torrent Scanner - Scans for .torrent files and analyzes their trackers."""
 
 import argparse

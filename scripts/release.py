@@ -1,3 +1,4 @@
+#!/usr/bin/env -S uv run
 """Publish a MediaHive release to Gitea.
 
 Usage:

@@ -1,3 +1,4 @@
+#!/usr/bin/env -S uv run
 """Build the desktop GUI application and package it as a version-numbered ZIP.
 
 Usage:
