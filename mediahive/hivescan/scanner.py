@@ -60,10 +60,13 @@ logger = logging.getLogger("hivescan.scanner")
 
 # Discovery walk tunables: number of concurrent directory readers, and the
 # exponential backoff schedule for subtrees that repeatedly contain no items
-# of interest (60s, 120s, 240s, ... capped at 1h).
+# of interest (60s, 120s, 240s, ... capped at 1h).  Only subtrees with at
+# least _MIN_TRACKED_DIRS directories earn backoff entries — smaller trees
+# are cheap enough to rescan every pass and are left untracked.
 _SCAN_WORKERS = 16
 _EMPTY_BACKOFF_BASE_S = 60.0
 _EMPTY_BACKOFF_MAX_S = 3600.0
+_MIN_TRACKED_DIRS = 8
 
 # Type alias for the send callable
 Send = Callable[[ScanEvent], Awaitable[None]]
@@ -502,12 +505,12 @@ class RootScanner:
             rel = node["rel"]
             if rel is not None and not stop_event.is_set():
                 prev = self._dir_state.get(rel)
-                if prev and prev.get("items") and not node["items"]:
-                    # Items vanished from this subtree — stay hot so the
-                    # deletion propagates promptly.
-                    node["changed"] = True
-                if node["items"] or node["changed"]:
-                    new = {"until": 0.0, "streak": 0, "items": node["items"]}
+                if node["items"] or node["changed"] or node["dirs"] < _MIN_TRACKED_DIRS:
+                    # Hot, changed, or tiny subtree: no tracking needed —
+                    # default scheduling (scan every pass) is already right.
+                    if prev is not None:
+                        del self._dir_state[rel]
+                        self._dir_state_dirty = True
                 else:
                     streak = int((prev or {}).get("streak", 0)) + 1
                     delay = min(
@@ -515,13 +518,14 @@ class RootScanner:
                         _EMPTY_BACKOFF_MAX_S,
                     )
                     new = {"until": now + delay, "streak": streak, "items": False}
-                if prev != new:
-                    self._dir_state[rel] = new
-                    self._dir_state_dirty = True
+                    if prev != new:
+                        self._dir_state[rel] = new
+                        self._dir_state_dirty = True
             parent = node["parent"]
             if parent is not None:
                 parent["items"] = parent["items"] or node["items"]
                 parent["changed"] = parent["changed"] or node["changed"]
+                parent["dirs"] += node["dirs"]
                 parent["pending"] -= 1
                 if parent["pending"] == 0:
                     _complete_node(parent)
@@ -554,6 +558,7 @@ class RootScanner:
                     "pending": 1,  # self-reference, released after processing
                     "items": False,
                     "changed": False,
+                    "dirs": 0,
                     "rel": crel,
                 }
                 node["pending"] += 1
@@ -574,6 +579,7 @@ class RootScanner:
                     if stop_event.is_set():
                         continue
                     dirs_visited += 1
+                    node["dirs"] += 1
                     try:
                         (
                             child_dirs,
@@ -676,6 +682,7 @@ class RootScanner:
             "pending": 1,
             "items": False,
             "changed": False,
+            "dirs": 0,
             "rel": None,
         }
         for file_path, file_mtime in video_files:
