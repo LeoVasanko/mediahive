@@ -16,6 +16,7 @@ Netflix style browsing of your local media archive. Supports keyboard, mouse and
 - Scans your chosen media folder for all movies and series that can be found
 - Produces preview video clips and downloads metadata
 - Search on names and other metadata, not just titles
+- Remembers per-episode playback positions and offers series continue points
 - Hand off playback to your preferred system player
 
 Windows and macOS builds are currently portable-only (no installer). On first startup, the app asks for your media folder, which you can later change using the in-app folder icon.
@@ -29,7 +30,7 @@ MediaHive is designed to work with a mouse, keyboard, or gamepad.
 | Input | Controls |
 | --- | --- |
 | Mouse | Click posters, rows, search, play, and folder actions directly. |
-| Keyboard | Arrow keys move focus, `Enter` activates the focused item, `Escape` goes back, and `/` jumps to search. |
+| Keyboard | Arrow keys move focus, `Enter` activates the focused item, `Escape` goes back, and `/` or `Ctrl`/`Cmd`+`F` jumps to search. |
 | Gamepad | D-pad or left stick moves focus, `A` selects or plays, and `B` goes back. `RB`/`LB` browses adjacent items, and the Search bar has an OSD keyboard. Player controls during playback. |
 
 ## Recommended Players

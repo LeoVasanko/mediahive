@@ -40,13 +40,14 @@ uv run --extra gui python -m mediahive.winmain /path/to/media/folder
 
 This launches the same pywebview-based desktop flow used by the Windows build.
 
-## Migrate Existing Index Snapshots
+## Building And Releasing
 
-```bash
-uv run python scripts/indexmigr.py /path/to/media/root --write
-```
+The helper scripts are directly executable via their `uv run` shebang (on Windows, run them with `uv run scripts/<name>.py`):
 
-This applies versioned snapshot migrations to `.mediahive/index.json` outside the main application. Use it before starting a newer build against an older index.
+- `./scripts/guibuild.py` builds the PyInstaller desktop app and a versioned portable ZIP under `build/`.
+- `./scripts/release.py` publishes a release to the Gitea releases page.
+
+Python packaging builds the frontend automatically through the hatch build hook `scripts/fastapi-vue/buildhook.py` (see `pyproject.toml`), so wheels and sdists always ship a fresh `mediahive/frontend-build`.
 
 ## Notes
 
@@ -54,3 +55,4 @@ This applies versioned snapshot migrations to `.mediahive/index.json` outside th
 - The desktop app remembers the chosen folder between launches.
 - HTTP and WebSocket endpoints are documented in [API.md](API.md).
 - MPC-BE integration details (Windows only) live in [mpc-be.md](mpc-be.md).
+- Scanner/indexer design notes and the v0.5.0 rescan fixes are reviewed in [scanning-review.md](scanning-review.md).

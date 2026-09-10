@@ -611,7 +611,9 @@ Current native command usage is centered on:
 
 - `889` for play/pause
 - `816` for exit
-- `-1&position=HH:MM:SS` for exact 4-second seeking
+- `-1&position=HH:MM:SS` to seek to the stored resume position when playback starts
+
+The GUI also polls `/variables.html` for the live position and duration and posts resume positions back to the MediaHive backend (`/api/meta/playback-state`), which is how per-episode resume positions and series continue points are tracked. Sessions shorter than 5 minutes are ignored.
 
 ## Guidance
 
