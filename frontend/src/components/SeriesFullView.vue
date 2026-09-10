@@ -41,7 +41,7 @@
     <!-- Spacer for header overlay -->
     <div class="header-spacer"></div>
 
-    <!-- Season selector jukebox: one season rendered at a time -->
+    <!-- Season poster browser: all seasons visible in two side stacks -->
     <section class="seasons-container">
       <div
         ref="seasonStageRef"
@@ -58,7 +58,7 @@
           class="season-poster-card"
           :class="{ 'season-poster-card--selected': sIndex === selectedSeasonIndex }"
           :style="getSeasonCardStyle(sIndex)"
-          v-bind="navAttrs(2, sIndex)"
+          v-bind="navAttrs(2, sIndex, selectedSeasonIndex)"
           @click="selectSeason(sIndex)"
           @focusin="selectSeason(sIndex)"
           @keydown.enter.prevent="focusFirstEpisode"
@@ -140,10 +140,10 @@
               decoding="async"
             />
             <video
-              v-if="getEpisodeVideoSources(episode).length > 0"
+              v-if="episodeMediaReady && getEpisodeVideoSources(episode).length > 0"
               :ref="(el) => setVideoRef(el as HTMLVideoElement, `${eIndex}`)"
-              :autoplay="false"
-              :preload="episodeMediaReady ? 'auto' : 'none'"
+              autoplay
+              preload="auto"
               loop
               muted
               playsinline
@@ -295,10 +295,11 @@ function selectSeason(index: number) {
   })
 }
 
-// Episode media settle gating: videos mount with preload="none" and stay
-// paused until the jukebox animation has settled, so switching seasons does
-// not trigger a burst of video loads mid-transition. The episode still image
-// underneath provides the preview picture in the meantime.
+// Episode media settle gating: video elements are not mounted until the
+// season switch animation has settled, so switching seasons neither mounts
+// media elements nor triggers video loads mid-transition (both heavy on
+// Chrome). Once mounted they load and autoplay right away; the episode still
+// image underneath provides the preview picture in the meantime.
 const episodeMediaReady = ref(false)
 const EPISODE_MEDIA_SETTLE_MS = 600
 let episodeMediaReadyTimer: ReturnType<typeof setTimeout> | null = null
@@ -348,12 +349,16 @@ function handleVideoPlaying(event: Event) {
   ;(event.target as HTMLVideoElement | null)?.classList.add("is-playing")
 }
 
-// Jukebox stage: cards are placed at constant angular steps on a semicircular
-// arc of radius R around the selection — x = R·sin(θ), depth = R·(1−cos θ) —
-// so the browser's perspective does a true 3D ring. Every season stays fully
-// opaque and visible; extreme cards pile up nearly edge-on at the arc cap but
-// are never hidden. The selected card is shifted left of center, leaving the
-// right side free for the floating season-info panel.
+// Poster browser stage: the selected season is the topmost item of the left
+// stack — flat, facing the screen — while every other season is rotated
+// about its outer vertical edge so the inner edge recedes into the screen.
+// Left-side cards are anchored by their left edge and form an even ladder
+// from the stage's left border up to the displayed card; right-side cards
+// are anchored by their right edge and fill from the info panel's gutter to
+// the right border. Each side's pitch adjusts to its card count, so cards
+// never leave the stage — they just overlap more tightly. Because rotated
+// cards only recede from their hinge, the flat displayed card naturally
+// stays in front no matter how tight a stack gets.
 const seasonStageRef = ref<HTMLElement | null>(null)
 const stageWidth = ref(1280)
 
@@ -367,45 +372,67 @@ const STAGE_PERSPECTIVE_PX = 1200
 const stageMetrics = computed(() => {
   const width = stageWidth.value
   if (width <= 600) {
-    // Info panel floats below the poster here, so the ring stays centered.
-    return { posterWidth: 170, radius: 900, stepDeg: 16, rightStartDeg: 16, infoShift: 0, maxDeg: 80 }
+    // Info panel floats below the poster here, so the right stack only needs
+    // a plain gutter after the displayed poster.
+    return { posterWidth: 170, infoShift: 0, rightGutter: 30, angleDeg: 40 }
   }
   if (width <= 900) {
-    return { posterWidth: 230, radius: 1100, stepDeg: 14, rightStartDeg: 28, infoShift: 160, maxDeg: 80 }
+    return { posterWidth: 230, infoShift: 160, rightGutter: 282, angleDeg: 40 }
   }
-  return { posterWidth: 290, radius: 1300, stepDeg: 13, rightStartDeg: 32, infoShift: 200, maxDeg: 80 }
+  return { posterWidth: 290, infoShift: 200, rightGutter: 370, angleDeg: 40 }
 })
 
 function getSeasonCardStyle(index: number): Record<string, string> {
-  const offset = index - selectedSeasonIndex.value
-  const absOffset = Math.abs(offset)
+  const total = props.series.seasons.length
+  const selected = selectedSeasonIndex.value
+  const offset = index - selected
   const metrics = stageMetrics.value
+  const posterW = metrics.posterWidth
+  const halfStage = stageWidth.value / 2
 
-  // Angular position on the arc. The right side starts past the opening
-  // reserved for the season-info panel; the cap keeps extreme cards from
-  // turning fully edge-on.
+  // The displayed card faces the screen, shifted left of center to free the
+  // floating season-info panel on its right.
+  const displayedLeft = -metrics.infoShift - posterW / 2
+  const displayedRight = displayedLeft + posterW
+
+  const angleRad = (metrics.angleDeg * Math.PI) / 180
+  const cos = Math.cos(angleRad)
+  const sin = Math.sin(angleRad)
+  // Perspective shrink at a rotated card's receded far edge (depth P·sin θ).
+  const farScale = STAGE_PERSPECTIVE_PX / (STAGE_PERSPECTIVE_PX + posterW * sin)
+
+  let anchor: number
   let thetaDeg: number
-  if (offset === 0) {
-    thetaDeg = 0
-  } else if (offset > 0) {
-    thetaDeg = Math.min(metrics.rightStartDeg + (absOffset - 1) * metrics.stepDeg, metrics.maxDeg)
+  let hingeShift: number
+  if (offset <= 0) {
+    // Left stack + displayed card: anchored by the left edge, hinge on the
+    // left, right side receding into the screen. Anchors form an even ladder
+    // from the stage's left border up to the displayed card, so the
+    // displayed card keeps the same pitch as the stack it tops.
+    const leftCount = selected
+    const span = Math.max(0, displayedLeft + halfStage)
+    const step = leftCount > 0 ? span / leftCount : 0
+    anchor = displayedLeft - (leftCount - index) * step
+    thetaDeg = offset === 0 ? 0 : metrics.angleDeg
+    hingeShift = posterW / 2
   } else {
-    thetaDeg = -Math.min(metrics.stepDeg * absOffset, metrics.maxDeg)
+    // Right stack: anchored by the right edge, hinge on the right, left side
+    // receding into the screen. The innermost card's receded edge clears the
+    // info panel; the outermost card's hinge may touch the right border.
+    const rightCount = total - selected - 1
+    const stackStart = displayedRight + metrics.rightGutter
+    const inner = Math.min(stackStart / farScale + posterW * cos, halfStage)
+    const step = rightCount > 1 ? (halfStage - inner) / (rightCount - 1) : 0
+    anchor = inner + (offset - 1) * step
+    thetaDeg = -metrics.angleDeg
+    hingeShift = -posterW / 2
   }
 
-  const theta = (thetaDeg * Math.PI) / 180
-  const depth = metrics.radius * (1 - Math.cos(theta))
-  const visualWidth =
-    metrics.posterWidth * (STAGE_PERSPECTIVE_PX / (STAGE_PERSPECTIVE_PX + depth))
-
-  // Keep every card's (perspective-shrunk) edge inside the stage.
-  const xLimit = Math.max(0, stageWidth.value / 2 - visualWidth / 2 - 8)
-  const rawX = -metrics.infoShift + metrics.radius * Math.sin(theta)
-  const translateX = Math.max(-xLimit, Math.min(rawX, xLimit))
-
+  // All states share the same transform function list
+  // (translateX/rotateY/translateX), so side switches interpolate smoothly.
   return {
-    transform: `translateX(-50%) translateX(${translateX}px) translateZ(${-depth}px) rotateY(${-thetaDeg}deg)`,
-    zIndex: String(100 - absOffset),
+    transform: `translateX(${anchor - posterW / 2}px) rotateY(${thetaDeg}deg) translateX(${hingeShift}px)`,
+    zIndex: String(100 - Math.abs(offset)),
   }
 }
 
@@ -517,7 +544,10 @@ watch(
     const seasonIndex =
       props.series.seasons?.findIndex((s) => s.season_number === ep.seasonNumber) ?? -1
     if (seasonIndex < 0) return
-    selectedSeasonIndex.value = seasonIndex
+    if (selectedSeasonIndex.value !== seasonIndex) {
+      selectedSeasonIndex.value = seasonIndex
+      scheduleEpisodeMediaReady()
+    }
     // Delay to ensure DOM is fully rendered after season switch / route transition
     nextTick(() => {
       setTimeout(() => {
@@ -810,7 +840,7 @@ function pauseEpisodeVideo(video: HTMLVideoElement) {
   video.volume = 0
 }
 
-function syncSeasonVideoPlayback(priorityKey?: string) {
+function syncSeasonVideoPlayback() {
   seasonStartupToken += 1
   const token = seasonStartupToken
   clearSeasonStartupTimers()
@@ -859,21 +889,16 @@ function syncSeasonVideoPlayback(priorityKey?: string) {
     })
   }
 
-  videosToStart.sort((a, b) => {
-    if (priorityKey) {
-      if (a.key === priorityKey) return -1
-      if (b.key === priorityKey) return 1
-    }
-    return a.episodeIndex - b.episodeIndex
-  })
+  // With no episode pointed at (cursor still in the season selector), starts
+  // are staggered to spread the load. Once an episode is pointed at (hover
+  // or keyboard/gamepad focus), every video up to it starts immediately.
+  const immediateStart = episodeCursorIndex.value !== null
+
+  videosToStart.sort((a, b) => a.episodeIndex - b.episodeIndex)
 
   for (let i = 0; i < videosToStart.length; i += 1) {
     const { key, video } = videosToStart[i]
-    const delayMs = priorityKey
-      ? i === 0
-        ? 0
-        : i * SEASON_VIDEO_STARTUP_STEP_MS
-      : i * SEASON_VIDEO_STARTUP_STEP_MS
+    const delayMs = immediateStart ? 0 : i * SEASON_VIDEO_STARTUP_STEP_MS
     const timeoutId = setTimeout(() => {
       if (token !== seasonStartupToken || previewPlaybackStopped.value) return
       if (safariAutoplay && video.readyState >= 1) {
@@ -1029,7 +1054,7 @@ function handleEpisodeHover(
     if (event?.currentTarget instanceof HTMLElement) {
       event.currentTarget.focus({ preventScroll: true })
     }
-    syncSeasonVideoPlayback(key)
+    syncSeasonVideoPlayback()
     hoveredEpisodeAudioKey = key
     videoRefs.value.forEach((_, k) => {
       if (k !== key) {
@@ -1414,8 +1439,9 @@ watch(episodeCursorIndex, () => {
   padding: 0 0 60px;
 }
 
-/* Season selector jukebox: selected season centered at full poster size,
-   neighbours stack up scaled/rotated on both sides, clamped inside the stage */
+/* Season poster browser: selected season faces the screen as top of the left
+   stack; side cards rotate about their outer edge and recede into the screen,
+   evenly spaced per side so every card stays inside the stage */
 .season-stage {
   position: relative;
   height: calc(var(--poster-w, 290px) * 1.5 + 12px);
@@ -1518,7 +1544,7 @@ html:not(.mouse-active) .season-poster-card.nav-focused,
 /* Season info floats in the space freed by shifting the selected poster left */
 .season-info {
   position: absolute;
-  left: calc(50% - var(--info-shift, 0px) + var(--poster-w, 290px) / 2 + 30px);
+  left: calc(50% - var(--info-shift, 0px) + var(--poster-w, 290px) / 2 + 22px);
   top: 50%;
   transform: translateY(-50%);
   width: 320px;
@@ -1602,7 +1628,7 @@ html:not(.mouse-active) .season-poster-card.nav-focused,
   border-radius: 10px;
   overflow: hidden;
   cursor: pointer;
-  background: rgba(255, 255, 255, 0.04);
+  background: #000;
   outline: none;
 }
 
@@ -1679,8 +1705,8 @@ html:not(.mouse-active) .episode-tile.nav-focused .tile-focus-outline rect {
   object-fit: cover;
 }
 
-/* Videos stay hidden (and preload="none") until playback starts after the
-   season switch has settled; they fade in softly over the still image. */
+/* Videos are only mounted after the season switch has settled; they stay
+   transparent until playback starts, then fade in softly over the still. */
 .tile-media video {
   position: absolute;
   inset: 0;
@@ -1710,6 +1736,31 @@ html:not(.mouse-active) .episode-tile.nav-focused .tile-focus-outline rect {
 .episode-tile--ahead .ep-overview {
   opacity: 0;
   visibility: hidden;
+}
+
+/* Hidden tiles are not left as flat black slabs: a soft sheen-and-vignette
+   veil marks them as deliberately concealed. It cross-fades with the
+   content on hide/reveal via opacity. */
+.episode-tile::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.4s ease;
+  background:
+    linear-gradient(
+      115deg,
+      rgba(255, 255, 255, 0.09) 0%,
+      rgba(255, 255, 255, 0.025) 30%,
+      rgba(255, 255, 255, 0) 55%
+    ),
+    linear-gradient(to bottom, rgba(20, 20, 28, 0.5) 0%, rgba(0, 0, 0, 0) 40%, rgba(0, 0, 0, 0.45) 100%);
+}
+
+.episode-tile--ahead::after {
+  opacity: 1;
 }
 
 .ep-number {
@@ -1804,7 +1855,7 @@ html.mouse-active .episode-tile:hover .tile-play {
 @media (max-width: 900px) {
   .season-info {
     width: 240px;
-    left: calc(50% - var(--info-shift, 0px) + var(--poster-w, 230px) / 2 + 22px);
+    left: calc(50% - var(--info-shift, 0px) + var(--poster-w, 230px) / 2 + 14px);
   }
 
   .season-info-name {
