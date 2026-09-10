@@ -1122,10 +1122,15 @@ function focusDetailEntryTarget(item: MediaItem): boolean {
       '[data-nav-release-item="true"][data-nav-row="2"][data-nav-col="0"][data-nav-focusable="true"]',
     ) as HTMLElement | null
   } else if (item.type === "series") {
-    // Initial episode tile (first season, first episode) maps to row 2 / col 0.
+    // Row 2 is the season selector strip; land on the selected season poster.
     target = detailPanel.querySelector(
-      '.episode-tile[data-nav-row="2"][data-nav-col="0"][data-nav-focusable="true"]',
+      '.season-poster-card.season-poster-card--selected[data-nav-focusable="true"]',
     ) as HTMLElement | null
+    if (!target) {
+      target = detailPanel.querySelector(
+        '.episode-tile[data-nav-focusable="true"]',
+      ) as HTMLElement | null
+    }
   }
 
   if (target) {

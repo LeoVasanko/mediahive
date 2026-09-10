@@ -41,101 +41,141 @@
     <!-- Spacer for header overlay -->
     <div class="header-spacer"></div>
 
-    <!-- Seasons with flowing layout -->
+    <!-- Season selector jukebox: one season rendered at a time -->
     <section class="seasons-container">
       <div
-        v-for="(season, sIndex) in series.seasons"
-        :key="sIndex"
-        class="season-flow"
-        :data-season-index="sIndex"
-        :class="{ 'season-even': sIndex % 2 === 1 }"
+        ref="seasonStageRef"
+        class="season-stage"
+        :style="{
+          '--poster-w': `${stageMetrics.posterWidth}px`,
+          '--info-shift': `${stageMetrics.infoShift}px`,
+        }"
       >
-        <!-- Season poster - tall strip on the side -->
-        <div
-          class="season-poster-strip"
-          :class="{ 'strip-right': sIndex % 2 === 1 }"
-          :style="getSeasonPosterStripStyle(sIndex)"
+        <button
+          v-for="(season, sIndex) in series.seasons"
+          :key="sIndex"
+          type="button"
+          class="season-poster-card"
+          :class="{ 'season-poster-card--selected': sIndex === selectedSeasonIndex }"
+          :style="getSeasonCardStyle(sIndex)"
+          v-bind="navAttrs(2, sIndex)"
+          @click="selectSeason(sIndex)"
+          @focusin="selectSeason(sIndex)"
+          @keydown.enter.prevent="focusFirstEpisode"
         >
-          <div class="poster-container">
+          <img
+            v-if="getSeasonPoster(season)"
+            :src="getSeasonPoster(season)"
+            class="season-poster-card-img"
+            :alt="season.name || `Season ${season.season_number}`"
+            loading="lazy"
+            decoding="async"
+          />
+          <div v-else class="season-poster-card-placeholder">
+            <span class="poster-num">{{ season.season_number }}</span>
+          </div>
+          <div class="season-poster-card-tag">
+            <span class="season-poster-card-tag-name">{{
+              season.name || `Season ${season.season_number}`
+            }}</span>
+            <span class="season-poster-card-tag-count"
+              >{{ season.episode_count ?? season.episodes.length }} Episodes</span
+            >
+          </div>
+        </button>
+
+        <!-- Season info floats into the space reserved beside the center poster -->
+        <div v-if="selectedSeason" class="season-info">
+          <Transition name="season-info-swap" mode="out-in">
+            <div :key="selectedSeasonIndex" class="season-info-inner">
+              <h2 class="season-info-name">
+                {{ selectedSeason.name || `Season ${selectedSeason.season_number}` }}
+              </h2>
+              <div class="season-info-line">
+                <span v-if="formatDate(selectedSeason.air_date)">{{
+                  formatDate(selectedSeason.air_date)
+                }}</span>
+                <span
+                  >{{ selectedSeason.episode_count ?? selectedSeason.episodes.length }}
+                  Episodes</span
+                >
+              </div>
+              <p v-if="selectedSeason.overview" class="season-info-overview">
+                {{ selectedSeason.overview }}
+              </p>
+            </div>
+          </Transition>
+        </div>
+      </div>
+
+      <!-- Episodes grid (selected season only) -->
+      <div class="episodes-grid">
+        <div
+          v-for="(episode, eIndex) in selectedSeason?.episodes || []"
+          :key="`${selectedSeasonIndex}-${episode.episode_number}`"
+          class="episode-tile"
+          :class="{ 'episode-tile--ahead': isEpisodeAhead(eIndex) }"
+          v-bind="getEpisodeNavAttrs(selectedSeasonIndex, eIndex)"
+          @click="handlePlay(episode)"
+          @focusin="handleEpisodeFocusIn($event, eIndex)"
+          @keydown.enter.prevent="handleEpisodeEnter($event, episode)"
+          @mouseenter="handleEpisodeHover($event, `${eIndex}`, true)"
+          @mouseleave="handleEpisodeHover(`${eIndex}`, false)"
+          @contextmenu="handleContextMenu($event, episode)"
+        >
+          <!-- SVG focus outline -->
+          <svg class="tile-focus-outline" viewBox="0 0 100 100" preserveAspectRatio="none">
+            <rect x="0" y="0" width="100" height="100" />
+          </svg>
+
+          <!-- Episode preview media -->
+          <div class="tile-media">
+            <div class="tile-placeholder"></div>
             <img
-              v-if="getSeasonPoster(season)"
-              :src="getSeasonPoster(season)"
-              class="season-poster-img"
-              :alt="season.name || `Season ${season.season_number}`"
+              v-if="getEpisodeStill(episode)"
+              :src="getEpisodeStill(episode)"
+              class="tile-still"
+              :alt="episode.name || `Episode ${episode.episode_number}`"
               loading="lazy"
               decoding="async"
             />
-            <div v-else class="poster-placeholder">
-              <span class="poster-num">{{ season.season_number }}</span>
-            </div>
-            <div class="poster-overlay">
-              <div class="season-label">{{ season.name || `Season ${season.season_number}` }}</div>
-              <div v-if="season.overview" class="season-overview-short">
-                {{ truncate(season.overview, 120) }}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Episodes flowing grid -->
-        <div class="episodes-flow" :style="getSeasonEpisodesFlowStyle(sIndex)">
-          <div
-            v-for="(episode, eIndex) in season.episodes"
-            :key="`${sIndex}-${episode.episode_number}`"
-            class="episode-tile"
-            v-bind="getEpisodeNavAttrs(sIndex, eIndex)"
-            @click="handlePlay(episode)"
-            @focusin="handleEpisodeFocus(sIndex)"
-            @keydown.enter.prevent="handleEpisodeEnter($event, episode)"
-            @mouseenter="handleEpisodeHover($event, `${sIndex}-${eIndex}`, true)"
-            @mouseleave="handleEpisodeHover(`${sIndex}-${eIndex}`, false)"
-            @contextmenu="handleContextMenu($event, episode)"
-          >
-            <!-- SVG focus outline -->
-            <svg class="tile-focus-outline" viewBox="0 0 200 113" preserveAspectRatio="none">
-              <rect x="0" y="0" width="200" height="113" />
-            </svg>
-            <!-- Episode background video -->
-            <div class="tile-bg">
-              <video
-                v-if="getEpisodeVideoSources(episode).length > 0"
-                :ref="(el) => setVideoRef(el as HTMLVideoElement, `${sIndex}-${eIndex}`)"
-                :autoplay="false"
-                preload="auto"
-                loop
-                muted
-                playsinline
-              >
-                <source
-                  v-for="source in getEpisodeVideoSources(episode)"
-                  :key="source.src"
-                  :src="source.src"
-                  :type="source.type"
-                  :codecs="source.codecs"
-                />
-              </video>
-              <div v-else class="tile-placeholder"></div>
-            </div>
-
-            <!-- Diagonal cut overlay -->
-            <div class="tile-overlay"></div>
-
-            <!-- Episode info overlay -->
-            <div class="tile-info">
-              <span class="ep-number">{{ episode.episode_number }}</span>
-              <div class="ep-details">
-                <span class="ep-name">{{
-                  episode.name || `Episode ${episode.episode_number}`
-                }}</span>
-                <span v-if="episode.rating" class="ep-rating"
-                  >★ {{ episode.rating.toFixed(1) }}</span
-                >
-              </div>
-            </div>
-
-            <!-- Play indicator on hover -->
+            <video
+              v-if="getEpisodeVideoSources(episode).length > 0"
+              :ref="(el) => setVideoRef(el as HTMLVideoElement, `${eIndex}`)"
+              :autoplay="false"
+              :preload="episodeMediaReady ? 'auto' : 'none'"
+              loop
+              muted
+              playsinline
+              @playing="handleVideoPlaying($event)"
+            >
+              <source
+                v-for="source in getEpisodeVideoSources(episode)"
+                :key="source.src"
+                :src="source.src"
+                :type="source.type"
+                :codecs="source.codecs"
+              />
+            </video>
+            <span class="ep-number">{{ episode.episode_number }}</span>
             <div class="tile-play">▶</div>
           </div>
+
+          <!-- Episode text info -->
+          <div class="tile-info">
+            <span class="ep-name">{{ episode.name || `Episode ${episode.episode_number}` }}</span>
+            <span class="ep-meta">
+              <template v-if="formatDate(episode.air_date)">{{
+                formatDate(episode.air_date)
+              }}</template>
+              <template v-if="episode.runtime"> · {{ formatRuntime(episode.runtime) }}</template>
+              <template v-if="episode.rating"> · ★ {{ episode.rating.toFixed(1) }}</template>
+            </span>
+            <p v-if="episode.overview" class="ep-overview">{{ episode.overview }}</p>
+          </div>
+        </div>
+        <div v-if="(selectedSeason?.episodes.length || 0) === 0" class="episodes-empty">
+          No episodes in library
         </div>
       </div>
 
@@ -163,7 +203,9 @@
               <span class="linked-movie-name">{{ movie.title }}</span>
               <span class="linked-movie-sub">
                 {{ movie.year || movie.info?.release_date?.slice(0, 4) || "Unknown Year" }}
-                <template v-if="movie.info?.rating"> • ★ {{ movie.info.rating.toFixed(1) }}</template>
+                <template v-if="movie.info?.rating">
+                  • ★ {{ movie.info.rating.toFixed(1) }}</template
+                >
               </span>
             </div>
           </button>
@@ -183,7 +225,10 @@
         :visible="episodeReleaseMenu.visible"
         :x="episodeReleaseMenu.x"
         :y="episodeReleaseMenu.y"
-        :episode-name="episodeReleaseMenu.episode?.name || `Episode ${episodeReleaseMenu.episode?.episode_number}`"
+        :episode-name="
+          episodeReleaseMenu.episode?.name ||
+          `Episode ${episodeReleaseMenu.episode?.episode_number}`
+        "
         :releases="episodeReleaseMenuReleases"
         :has-resume-position="props.hasResumePosition"
         @play="handlePlayVersion"
@@ -220,132 +265,172 @@ const emit = defineEmits<{
 
 const seriesRootRef = ref<HTMLElement | null>(null)
 const episodeNavCoords = ref<Map<string, { row: number; col: number }>>(new Map())
-const linkedMoviesNavRow = ref(2)
-const seasonLayoutStyles = ref<
-  Map<number, { posterStyle: Record<string, string>; episodesStyle: Record<string, string> }>
->(new Map())
+const linkedMoviesNavRow = ref(3)
 let navLayoutFrame: number | null = null
-let seasonLayoutFrame: number | null = null
 
-const EPISODE_TILE_WIDTH_FALLBACK = 200
-const EPISODE_TILE_HEIGHT_FALLBACK = 113
-const EPISODE_GAP_FALLBACK = 6
-const MIN_POSTER_WIDTH = 120
-const MAX_POSTER_WIDTH = 280
-const POSTER_ASPECT_RATIO = 3 / 2
-
-function getSeasonPosterStripStyle(seasonIndex: number): Record<string, string> {
-  return seasonLayoutStyles.value.get(seasonIndex)?.posterStyle || {}
-}
-
-function getSeasonEpisodesFlowStyle(seasonIndex: number): Record<string, string> {
-  return seasonLayoutStyles.value.get(seasonIndex)?.episodesStyle || {}
-}
-
-function parseCssPx(value: string | null | undefined, fallback = 0): number {
-  const parsed = parseFloat(value || "")
-  return Number.isFinite(parsed) ? parsed : fallback
-}
-
-function computeSeasonLayoutStyles() {
-  const root = seriesRootRef.value
-  if (!root) return
-
-  const nextStyles = new Map<
-    number,
-    { posterStyle: Record<string, string>; episodesStyle: Record<string, string> }
-  >()
-
-  for (let seasonIndex = 0; seasonIndex < props.series.seasons.length; seasonIndex += 1) {
-    const seasonFlow = root.querySelector<HTMLElement>(`.season-flow[data-season-index="${seasonIndex}"]`)
-    if (!seasonFlow) continue
-
-    const flowStyle = window.getComputedStyle(seasonFlow)
-    if (flowStyle.flexDirection.startsWith("column")) {
-      continue
-    }
-
-    const episodesFlow = seasonFlow.querySelector<HTMLElement>(".episodes-flow")
-    if (!episodesFlow) continue
-
-    const availableWidth = seasonFlow.clientWidth
-    if (availableWidth <= 0) continue
-
-    const episodesCount = props.series.seasons[seasonIndex]?.episodes?.length || 0
-    const sampleTile = episodesFlow.querySelector<HTMLElement>(".episode-tile")
-    const tileWidth = sampleTile?.offsetWidth || EPISODE_TILE_WIDTH_FALLBACK
-    const tileHeight = sampleTile?.offsetHeight || EPISODE_TILE_HEIGHT_FALLBACK
-    const episodesStyle = window.getComputedStyle(episodesFlow)
-    const columnGap = parseCssPx(episodesStyle.columnGap, EPISODE_GAP_FALLBACK)
-    const rowGap = parseCssPx(episodesStyle.rowGap, EPISODE_GAP_FALLBACK)
-    const paddingLeft = parseCssPx(episodesStyle.paddingLeft)
-    const paddingRight = parseCssPx(episodesStyle.paddingRight)
-    const paddingTop = parseCssPx(episodesStyle.paddingTop)
-    const paddingBottom = parseCssPx(episodesStyle.paddingBottom)
-    const horizontalPadding = paddingLeft + paddingRight
-    const verticalPadding = paddingTop + paddingBottom
-
-    const widthForCols = (cols: number) =>
-      cols * tileWidth + Math.max(0, cols - 1) * columnGap + horizontalPadding
-
-    const maxColsWithoutPoster = Math.max(
-      1,
-      Math.floor((availableWidth - horizontalPadding + columnGap) / (tileWidth + columnGap)),
-    )
-
-    let targetCols = Math.max(1, Math.min(Math.max(1, episodesCount), maxColsWithoutPoster))
-    let episodesWidth = widthForCols(targetCols)
-    let posterWidth = availableWidth - episodesWidth
-
-    while (targetCols > 1 && posterWidth < MIN_POSTER_WIDTH) {
-      targetCols -= 1
-      episodesWidth = widthForCols(targetCols)
-      posterWidth = availableWidth - episodesWidth
-    }
-
-    posterWidth = Math.max(MIN_POSTER_WIDTH, Math.min(MAX_POSTER_WIDTH, posterWidth))
-    episodesWidth = Math.max(0, availableWidth - posterWidth)
-
-    const rows = Math.max(1, Math.ceil(Math.max(1, episodesCount) / targetCols))
-    const episodesHeight = rows * tileHeight + Math.max(0, rows - 1) * rowGap + verticalPadding
-    const posterHeight = Math.max(140, Math.min(episodesHeight, posterWidth * POSTER_ASPECT_RATIO))
-
-    nextStyles.set(seasonIndex, {
-      posterStyle: {
-        width: `${posterWidth}px`,
-        height: `${posterHeight}px`,
-        flexBasis: `${posterWidth}px`,
-        minWidth: `${posterWidth}px`,
-        alignSelf: "flex-start",
-      },
-      episodesStyle: {
-        width: `${episodesWidth}px`,
-        flexBasis: `${episodesWidth}px`,
-        minWidth: `${episodesWidth}px`,
-        maxWidth: `${episodesWidth}px`,
-      },
-    })
+function getInitialSeasonIndex(): number {
+  const seasonNumber = props.focusEpisode?.seasonNumber
+  if (typeof seasonNumber === "number") {
+    const index = props.series.seasons.findIndex((s) => s.season_number === seasonNumber)
+    if (index >= 0) return index
   }
-
-  seasonLayoutStyles.value = nextStyles
+  return 0
 }
 
-function scheduleSeasonLayoutRecompute() {
-  if (seasonLayoutFrame !== null) return
-  seasonLayoutFrame = window.requestAnimationFrame(() => {
-    seasonLayoutFrame = null
-    computeSeasonLayoutStyles()
+const selectedSeasonIndex = ref(getInitialSeasonIndex())
+
+const selectedSeason = computed<Season | null>(
+  () => props.series.seasons[selectedSeasonIndex.value] || null,
+)
+
+function selectSeason(index: number) {
+  if (index < 0 || index >= props.series.seasons.length) return
+  if (selectedSeasonIndex.value === index) return
+  selectedSeasonIndex.value = index
+  episodeCursorIndex.value = null
+  scheduleEpisodeMediaReady()
+  syncSeasonVideoPlayback()
+  nextTick(() => {
     scheduleEpisodeNavLayoutRecompute()
   })
 }
 
-function getEpisodeKey(seasonIndex: number, episodeIndex: number): string {
-  return `${seasonIndex}-${episodeIndex}`
+// Episode media settle gating: videos mount with preload="none" and stay
+// paused until the jukebox animation has settled, so switching seasons does
+// not trigger a burst of video loads mid-transition. The episode still image
+// underneath provides the preview picture in the meantime.
+const episodeMediaReady = ref(false)
+const EPISODE_MEDIA_SETTLE_MS = 600
+let episodeMediaReadyTimer: ReturnType<typeof setTimeout> | null = null
+
+function scheduleEpisodeMediaReady() {
+  episodeMediaReady.value = false
+  if (episodeMediaReadyTimer !== null) {
+    clearTimeout(episodeMediaReadyTimer)
+  }
+  episodeMediaReadyTimer = setTimeout(() => {
+    episodeMediaReadyTimer = null
+    episodeMediaReady.value = true
+    syncSeasonVideoPlayback()
+  }, EPISODE_MEDIA_SETTLE_MS)
+}
+
+// Spoiler avoidance: episodes ahead of the cursor (keyboard/gamepad focus, or
+// mouse hover via the focus it triggers) are dimmed with their synopsis hidden.
+const episodeCursorIndex = ref<number | null>(null)
+
+function isEpisodeAhead(episodeIndex: number): boolean {
+  return episodeCursorIndex.value !== null && episodeIndex > episodeCursorIndex.value
+}
+
+function handleEpisodeFocusIn(event: FocusEvent, episodeIndex: number) {
+  episodeCursorIndex.value = episodeIndex
+  // Updating the cursor re-renders this tile's :class binding, and Vue's class
+  // patch rewrites the whole class attribute, clobbering the "nav-focused"
+  // class that the keyboard-navigation composable adds imperatively during
+  // this same focusin dispatch. Re-add it once Vue has settled.
+  const el = event.currentTarget as HTMLElement | null
+  nextTick(() => {
+    if (el && el === document.activeElement) {
+      el.classList.add("nav-focused")
+    }
+  })
+}
+
+function getEpisodeStill(episode: Episode): string | undefined {
+  if (episode.still_path) {
+    return getCoverUrl(episode.still_path, props.series.root_id)
+  }
+  return undefined
+}
+
+function handleVideoPlaying(event: Event) {
+  ;(event.target as HTMLVideoElement | null)?.classList.add("is-playing")
+}
+
+// Jukebox stage: cards are placed at constant angular steps on a semicircular
+// arc of radius R around the selection — x = R·sin(θ), depth = R·(1−cos θ) —
+// so the browser's perspective does a true 3D ring. Every season stays fully
+// opaque and visible; extreme cards pile up nearly edge-on at the arc cap but
+// are never hidden. The selected card is shifted left of center, leaving the
+// right side free for the floating season-info panel.
+const seasonStageRef = ref<HTMLElement | null>(null)
+const stageWidth = ref(1280)
+
+function measureStageWidth() {
+  stageWidth.value = seasonStageRef.value?.clientWidth || window.innerWidth
+}
+
+// Keep in sync with .season-stage { perspective } in the styles.
+const STAGE_PERSPECTIVE_PX = 1200
+
+const stageMetrics = computed(() => {
+  const width = stageWidth.value
+  if (width <= 600) {
+    // Info panel floats below the poster here, so the ring stays centered.
+    return { posterWidth: 170, radius: 900, stepDeg: 16, rightStartDeg: 16, infoShift: 0, maxDeg: 80 }
+  }
+  if (width <= 900) {
+    return { posterWidth: 230, radius: 1100, stepDeg: 14, rightStartDeg: 28, infoShift: 160, maxDeg: 80 }
+  }
+  return { posterWidth: 290, radius: 1300, stepDeg: 13, rightStartDeg: 32, infoShift: 200, maxDeg: 80 }
+})
+
+function getSeasonCardStyle(index: number): Record<string, string> {
+  const offset = index - selectedSeasonIndex.value
+  const absOffset = Math.abs(offset)
+  const metrics = stageMetrics.value
+
+  // Angular position on the arc. The right side starts past the opening
+  // reserved for the season-info panel; the cap keeps extreme cards from
+  // turning fully edge-on.
+  let thetaDeg: number
+  if (offset === 0) {
+    thetaDeg = 0
+  } else if (offset > 0) {
+    thetaDeg = Math.min(metrics.rightStartDeg + (absOffset - 1) * metrics.stepDeg, metrics.maxDeg)
+  } else {
+    thetaDeg = -Math.min(metrics.stepDeg * absOffset, metrics.maxDeg)
+  }
+
+  const theta = (thetaDeg * Math.PI) / 180
+  const depth = metrics.radius * (1 - Math.cos(theta))
+  const visualWidth =
+    metrics.posterWidth * (STAGE_PERSPECTIVE_PX / (STAGE_PERSPECTIVE_PX + depth))
+
+  // Keep every card's (perspective-shrunk) edge inside the stage.
+  const xLimit = Math.max(0, stageWidth.value / 2 - visualWidth / 2 - 8)
+  const rawX = -metrics.infoShift + metrics.radius * Math.sin(theta)
+  const translateX = Math.max(-xLimit, Math.min(rawX, xLimit))
+
+  return {
+    transform: `translateX(-50%) translateX(${translateX}px) translateZ(${-depth}px) rotateY(${-thetaDeg}deg)`,
+    zIndex: String(100 - absOffset),
+  }
+}
+
+function handleStageResize() {
+  measureStageWidth()
+  scheduleEpisodeNavLayoutRecompute()
+}
+
+function focusFirstEpisode() {
+  const firstTile = seriesRootRef.value?.querySelector<HTMLElement>(".episode-tile")
+  firstTile?.focus()
+}
+
+const EPISODE_NAV_FIRST_ROW = 3
+
+function getEpisodeKey(episodeIndex: number): string {
+  return `${episodeIndex}`
 }
 
 function getEpisodeNavAttrs(seasonIndex: number, episodeIndex: number) {
-  const key = getEpisodeKey(seasonIndex, episodeIndex)
-  const coords = episodeNavCoords.value.get(key) || { row: seasonIndex + 2, col: episodeIndex }
+  const key = getEpisodeKey(episodeIndex)
+  const coords = episodeNavCoords.value.get(key) || {
+    row: EPISODE_NAV_FIRST_ROW,
+    col: episodeIndex,
+  }
   return {
     ...navAttrs(coords.row, coords.col),
     "data-season-index": seasonIndex,
@@ -358,31 +443,23 @@ function recomputeEpisodeNavLayout() {
   if (!root) return
 
   const nextCoords = new Map<string, { row: number; col: number }>()
-  let currentRow = 2
+  let currentRow = EPISODE_NAV_FIRST_ROW
 
-  for (let seasonIndex = 0; seasonIndex < props.series.seasons.length; seasonIndex += 1) {
-    const tiles = Array.from(
-      root.querySelectorAll<HTMLElement>(`.episode-tile[data-season-index="${seasonIndex}"]`),
-    ).sort((a, b) => {
-      const aIndex = parseInt(a.getAttribute("data-episode-index") || "0", 10)
-      const bIndex = parseInt(b.getAttribute("data-episode-index") || "0", 10)
-      return aIndex - bIndex
-    })
+  const tiles = Array.from(root.querySelectorAll<HTMLElement>(".episode-tile")).sort((a, b) => {
+    const aIndex = parseInt(a.getAttribute("data-episode-index") || "0", 10)
+    const bIndex = parseInt(b.getAttribute("data-episode-index") || "0", 10)
+    return aIndex - bIndex
+  })
 
-    if (tiles.length === 0) {
-      const fallbackCount = props.series.seasons[seasonIndex]?.episodes?.length || 0
-      for (let episodeIndex = 0; episodeIndex < fallbackCount; episodeIndex += 1) {
-        nextCoords.set(getEpisodeKey(seasonIndex, episodeIndex), {
-          row: currentRow,
-          col: episodeIndex,
-        })
-      }
-      if (fallbackCount > 0) {
-        currentRow += 1
-      }
-      continue
+  if (tiles.length === 0) {
+    const fallbackCount = selectedSeason.value?.episodes?.length || 0
+    for (let episodeIndex = 0; episodeIndex < fallbackCount; episodeIndex += 1) {
+      nextCoords.set(getEpisodeKey(episodeIndex), { row: currentRow, col: episodeIndex })
     }
-
+    if (fallbackCount > 0) {
+      currentRow += 1
+    }
+  } else {
     let lastTop: number | null = null
     let rowOffset = -1
     let colInRow = 0
@@ -398,7 +475,7 @@ function recomputeEpisodeNavLayout() {
         colInRow = 0
       }
 
-      nextCoords.set(getEpisodeKey(seasonIndex, episodeIndex), {
+      nextCoords.set(getEpisodeKey(episodeIndex), {
         row: currentRow + rowOffset,
         col: colInRow,
       })
@@ -426,7 +503,6 @@ watch(
   () => props.series.seasons.map((season) => season.episodes.length),
   () => {
     nextTick(() => {
-      scheduleSeasonLayoutRecompute()
       scheduleEpisodeNavLayoutRecompute()
     })
   },
@@ -437,28 +513,27 @@ watch(
 watch(
   () => props.focusEpisode,
   (ep) => {
-    if (ep) {
-      // Delay to ensure DOM is fully rendered after route transition
+    if (!ep) return
+    const seasonIndex =
+      props.series.seasons?.findIndex((s) => s.season_number === ep.seasonNumber) ?? -1
+    if (seasonIndex < 0) return
+    selectedSeasonIndex.value = seasonIndex
+    // Delay to ensure DOM is fully rendered after season switch / route transition
+    nextTick(() => {
       setTimeout(() => {
-        // Find the season index and episode index
-        const seasonIndex =
-          props.series.seasons?.findIndex((s) => s.season_number === ep.seasonNumber) ?? -1
-        if (seasonIndex >= 0) {
-          const episodeIndex =
-            props.series.seasons?.[seasonIndex]?.episodes?.findIndex(
-              (e) => e.episode_number === ep.episodeNumber,
-            ) ?? -1
-          if (episodeIndex >= 0) {
-            const selector = `.episode-tile[data-season-index="${seasonIndex}"][data-episode-index="${episodeIndex}"]`
-            const element = seriesRootRef.value?.querySelector(selector) as HTMLElement | null
-            if (element) {
-              element.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" })
-              element.focus()
-            }
-          }
+        const episodeIndex =
+          props.series.seasons?.[seasonIndex]?.episodes?.findIndex(
+            (e) => e.episode_number === ep.episodeNumber,
+          ) ?? -1
+        if (episodeIndex < 0) return
+        const selector = `.episode-tile[data-season-index="${seasonIndex}"][data-episode-index="${episodeIndex}"]`
+        const element = seriesRootRef.value?.querySelector(selector) as HTMLElement | null
+        if (element) {
+          element.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" })
+          element.focus()
         }
       }, 150)
-    }
+    })
   },
   { immediate: true },
 )
@@ -631,17 +706,18 @@ function handlePlayVersion(filePath: string | null) {
 function handleOpenFolderFromMenu(filePath: string) {
   if (!filePath) return
   const torrent = episodeReleaseMenu.value.episode?.files
-    ? Object.values(episodeReleaseMenu.value.episode.files).find((t) => t.playable_file === filePath)
+    ? Object.values(episodeReleaseMenu.value.episode.files).find(
+        (t) => t.playable_file === filePath,
+      )
     : undefined
   const rootId = torrent?.root_id ?? props.series.root_id ?? null
   emit("openFolder", filePath, rootId)
   closeEpisodeReleaseMenu()
 }
 
-// Video refs for hover effects
+// Video refs for hover effects (key = episode index; only one season is mounted)
 const videoRefs = ref<Map<string, HTMLVideoElement>>(new Map())
 const safariAutoplay = isSafariBrowser()
-const activeSeasonIndex = ref(0)
 const SEASON_VIDEO_STARTUP_STEP_MS = 500
 const seasonStartupTimers = new Map<string, ReturnType<typeof setTimeout>>()
 let seasonStartupToken = 0
@@ -657,14 +733,9 @@ const { stopped: previewPlaybackStopped } = useIdlePreviewPlayback({
   onRestart: () => syncSeasonVideoPlayback(),
 })
 
-function parseEpisodeKey(key: string): { seasonIndex: number; episodeIndex: number } | null {
-  const [seasonPart, episodePart] = key.split("-")
-  const seasonIndex = parseInt(seasonPart || "", 10)
-  const episodeIndex = parseInt(episodePart || "", 10)
-  if (!Number.isFinite(seasonIndex) || !Number.isFinite(episodeIndex)) {
-    return null
-  }
-  return { seasonIndex, episodeIndex }
+function parseEpisodeIndex(key: string): number | null {
+  const episodeIndex = parseInt(key, 10)
+  return Number.isFinite(episodeIndex) ? episodeIndex : null
 }
 
 function clearSeasonStartupTimers() {
@@ -731,6 +802,7 @@ function stopEpisodePreviews() {
 
 function pauseEpisodeVideo(video: HTMLVideoElement) {
   video.pause()
+  video.classList.remove("is-playing")
   if (video.readyState >= 1) {
     video.currentTime = 0
   }
@@ -751,22 +823,22 @@ function syncSeasonVideoPlayback(priorityKey?: string) {
   const videosToStop: Array<{ key: string; episodeIndex: number; video: HTMLVideoElement }> = []
 
   for (const [key, video] of videoRefs.value.entries()) {
-    const parsed = parseEpisodeKey(key)
-    if (!parsed) {
+    const episodeIndex = parseEpisodeIndex(key)
+    if (episodeIndex === null) {
       pauseEpisodeVideo(video)
       continue
     }
 
-    // Only the browsed season's on-screen tiles may play, and only while the
-    // user is active.
+    // Only on-screen tiles may play, and only while the user is active.
     const eligible =
-      parsed.seasonIndex === activeSeasonIndex.value &&
+      episodeMediaReady.value &&
+      !isEpisodeAhead(episodeIndex) &&
       !offscreenEpisodeKeys.has(key) &&
       !previewPlaybackStopped.value
 
     if (!eligible) {
       if (!video.paused && !video.ended) {
-        videosToStop.push({ key, episodeIndex: parsed.episodeIndex, video })
+        videosToStop.push({ key, episodeIndex, video })
       } else {
         pauseEpisodeVideo(video)
       }
@@ -782,7 +854,7 @@ function syncSeasonVideoPlayback(priorityKey?: string) {
     pauseEpisodeVideo(video)
     videosToStart.push({
       key,
-      episodeIndex: parsed.episodeIndex,
+      episodeIndex,
       video,
     })
   }
@@ -797,10 +869,13 @@ function syncSeasonVideoPlayback(priorityKey?: string) {
 
   for (let i = 0; i < videosToStart.length; i += 1) {
     const { key, video } = videosToStart[i]
-    const delayMs = priorityKey ? (i === 0 ? 0 : i * SEASON_VIDEO_STARTUP_STEP_MS) : i * SEASON_VIDEO_STARTUP_STEP_MS
+    const delayMs = priorityKey
+      ? i === 0
+        ? 0
+        : i * SEASON_VIDEO_STARTUP_STEP_MS
+      : i * SEASON_VIDEO_STARTUP_STEP_MS
     const timeoutId = setTimeout(() => {
-      if (token !== seasonStartupToken || activeSeasonIndex.value < 0 || previewPlaybackStopped.value)
-        return
+      if (token !== seasonStartupToken || previewPlaybackStopped.value) return
       if (safariAutoplay && video.readyState >= 1) {
         video.currentTime = 0.001
       }
@@ -823,17 +898,6 @@ function syncSeasonVideoPlayback(priorityKey?: string) {
   }
 }
 
-function setActiveSeason(seasonIndex: number) {
-  if (seasonIndex < 0) return
-  if (activeSeasonIndex.value === seasonIndex) return
-  activeSeasonIndex.value = seasonIndex
-  syncSeasonVideoPlayback()
-}
-
-function handleEpisodeFocus(seasonIndex: number) {
-  setActiveSeason(seasonIndex)
-}
-
 function cleanupVideo(video: HTMLVideoElement | null | undefined) {
   if (!video) return
   video.pause()
@@ -841,7 +905,7 @@ function cleanupVideo(video: HTMLVideoElement | null | undefined) {
   video.load()
 }
 
-// Track mounted videos and sync playback with active season.
+// Track mounted videos and sync playback.
 function setVideoRef(el: HTMLVideoElement | null, key: string) {
   if (el) {
     const existing = videoRefs.value.get(key)
@@ -858,16 +922,6 @@ function setVideoRef(el: HTMLVideoElement | null, key: string) {
     // the element's ancestors are attached.
     el.dataset.previewKey = key
     getEpisodeVisibilityObserver().observe(el)
-    el.addEventListener(
-      "loadeddata",
-      () => {
-        const parsed = parseEpisodeKey(key)
-        if (!parsed || parsed.seasonIndex !== activeSeasonIndex.value) {
-          pauseEpisodeVideo(el)
-        }
-      },
-      { once: true },
-    )
     syncSeasonVideoPlayback()
   } else {
     const timeoutId = seasonStartupTimers.get(key)
@@ -936,7 +990,10 @@ function rampEpisodeVolume(key: string, targetVolume: number) {
   volumeFadeIntervals.set(key, fadeInterval)
 }
 
-function scheduleEpisodeHoverAudioIdleFade(key: string, delayMs: number = AUDIO_IDLE_FADE_DELAY_MS) {
+function scheduleEpisodeHoverAudioIdleFade(
+  key: string,
+  delayMs: number = AUDIO_IDLE_FADE_DELAY_MS,
+) {
   clearEpisodeHoverAudioIdleTimer()
   hoverEpisodeAudioIdleTimer = setTimeout(() => {
     rampEpisodeVolume(key, 0)
@@ -953,29 +1010,26 @@ function handleEpisodeHoverAudioMouseMove() {
 }
 
 // Handle hover-based audio fade in/out for episode videos
-function handleEpisodeHover(eventOrKey: MouseEvent | string, keyOrIsEntering: string | boolean, maybeIsEntering?: boolean) {
+function handleEpisodeHover(
+  eventOrKey: MouseEvent | string,
+  keyOrIsEntering: string | boolean,
+  maybeIsEntering?: boolean,
+) {
   const event = typeof eventOrKey === "string" ? null : eventOrKey
   const key = typeof eventOrKey === "string" ? eventOrKey : (keyOrIsEntering as string)
-  const isEntering = typeof eventOrKey === "string" ? Boolean(keyOrIsEntering) : Boolean(maybeIsEntering)
+  const isEntering =
+    typeof eventOrKey === "string" ? Boolean(keyOrIsEntering) : Boolean(maybeIsEntering)
 
   if (!document.documentElement.classList.contains("mouse-active")) return
 
   const video = videoRefs.value.get(key)
   if (!video) return
-  const parsed = parseEpisodeKey(key)
-  if (!parsed) return
 
   if (isEntering) {
     if (event?.currentTarget instanceof HTMLElement) {
       event.currentTarget.focus({ preventScroll: true })
     }
-    setActiveSeason(parsed.seasonIndex)
     syncSeasonVideoPlayback(key)
-  }
-
-  if (parsed.seasonIndex !== activeSeasonIndex.value) return
-
-  if (isEntering) {
     hoveredEpisodeAudioKey = key
     videoRefs.value.forEach((_, k) => {
       if (k !== key) {
@@ -1073,10 +1127,22 @@ function getCollageSliceStyle(season: Season, index: number) {
   }
 }
 
-// Truncate text
-function truncate(text: string, maxLength: number): string {
-  if (text.length <= maxLength) return text
-  return text.slice(0, maxLength).trim() + "..."
+function formatDate(value: string | null | undefined): string | null {
+  if (!value) return null
+  const parsedDate = new Date(value)
+  if (Number.isNaN(parsedDate.getTime())) return value
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(parsedDate)
+}
+
+function formatRuntime(minutes: number): string {
+  const hours = Math.floor(minutes / 60)
+  const mins = minutes % 60
+  if (hours === 0) return `${mins}m`
+  return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`
 }
 
 // Handle play
@@ -1097,38 +1163,28 @@ function handleEpisodeEnter(event: KeyboardEvent, episode: Episode) {
 
 onMounted(() => {
   window.addEventListener("mediahive:gamepad-action", handleGamepadAction as EventListener)
-  window.addEventListener("resize", scheduleEpisodeNavLayoutRecompute, { passive: true })
-  window.addEventListener("resize", scheduleSeasonLayoutRecompute, { passive: true })
+  window.addEventListener("resize", handleStageResize, { passive: true })
   window.addEventListener("mousemove", handleEpisodeHoverAudioMouseMove, { passive: true })
   nextTick(() => {
-    const focusSeasonNumber = props.focusEpisode?.seasonNumber
-    if (typeof focusSeasonNumber === "number") {
-      const focusSeasonIndex =
-        props.series.seasons.findIndex((season) => season.season_number === focusSeasonNumber) ?? -1
-      if (focusSeasonIndex >= 0) {
-        activeSeasonIndex.value = focusSeasonIndex
-      }
-    }
-    syncSeasonVideoPlayback()
-    scheduleSeasonLayoutRecompute()
+    measureStageWidth()
+    scheduleEpisodeMediaReady()
     scheduleEpisodeNavLayoutRecompute()
   })
 })
 
 onUnmounted(() => {
   window.removeEventListener("mediahive:gamepad-action", handleGamepadAction as EventListener)
-  window.removeEventListener("resize", scheduleEpisodeNavLayoutRecompute)
-  window.removeEventListener("resize", scheduleSeasonLayoutRecompute)
+  window.removeEventListener("resize", handleStageResize)
   window.removeEventListener("mousemove", handleEpisodeHoverAudioMouseMove)
   clearEpisodeHoverAudioIdleTimer()
   clearSeasonStartupTimers()
+  if (episodeMediaReadyTimer !== null) {
+    clearTimeout(episodeMediaReadyTimer)
+    episodeMediaReadyTimer = null
+  }
   episodeVisibilityObserver?.disconnect()
   episodeVisibilityObserver = null
   offscreenEpisodeKeys.clear()
-  if (seasonLayoutFrame !== null) {
-    window.cancelAnimationFrame(seasonLayoutFrame)
-    seasonLayoutFrame = null
-  }
   if (navLayoutFrame !== null) {
     window.cancelAnimationFrame(navLayoutFrame)
     navLayoutFrame = null
@@ -1146,30 +1202,19 @@ onUnmounted(() => {
 })
 
 watch(
-  () => props.focusEpisode,
-  (episode) => {
-    if (!episode) return
-    const seasonIndex = props.series.seasons.findIndex(
-      (season) => season.season_number === episode.seasonNumber,
-    )
-    if (seasonIndex >= 0) {
-      setActiveSeason(seasonIndex)
+  () => props.series.seasons.length,
+  () => {
+    if (selectedSeasonIndex.value >= props.series.seasons.length) {
+      selectedSeasonIndex.value = Math.max(0, props.series.seasons.length - 1)
     }
+    syncSeasonVideoPlayback()
   },
 )
 
-watch(
-  () => props.series.seasons.map((season) => season.episodes.length),
-  () => {
-    if (activeSeasonIndex.value >= props.series.seasons.length) {
-      activeSeasonIndex.value = Math.max(0, props.series.seasons.length - 1)
-    }
-    syncSeasonVideoPlayback()
-    nextTick(() => {
-      scheduleSeasonLayoutRecompute()
-    })
-  },
-)
+// Episodes ahead of the cursor are spoiler-faded; stop their playback too.
+watch(episodeCursorIndex, () => {
+  syncSeasonVideoPlayback()
+})
 </script>
 
 <style scoped>
@@ -1369,40 +1414,59 @@ watch(
   padding: 0 0 60px;
 }
 
-/* Season flow - alternating layout */
-.season-flow {
+/* Season selector jukebox: selected season centered at full poster size,
+   neighbours stack up scaled/rotated on both sides, clamped inside the stage */
+.season-stage {
+  position: relative;
+  height: calc(var(--poster-w, 290px) * 1.5 + 12px);
+  margin: 28px 0 12px;
+  perspective: 1200px;
+  overflow: hidden;
+}
+
+.season-poster-card {
+  appearance: none;
+  position: absolute;
+  left: 50%;
+  top: 0;
+  width: var(--poster-w, 290px);
+  height: calc(var(--poster-w, 290px) * 1.5);
   display: flex;
-  position: relative;
-  margin-bottom: 30px;
+  border: 2px solid transparent;
+  border-radius: 14px;
+  padding: 0;
+  background: rgba(255, 255, 255, 0.05);
+  color: inherit;
+  cursor: pointer;
+  overflow: hidden;
+  text-align: left;
+  transform-style: preserve-3d;
+  transition:
+    transform 0.45s ease,
+    opacity 0.45s ease,
+    border-color 0.25s ease,
+    visibility 0.45s ease;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
 }
 
-.season-flow.season-even {
-  flex-direction: row-reverse;
+.season-poster-card:focus {
+  outline: none;
 }
 
-/* Season poster strip */
-.season-poster-strip {
-  width: 280px;
-  flex-shrink: 0;
-  position: relative;
-  align-self: flex-start;
+html.mouse-active .season-poster-card:hover,
+html:not(.mouse-active) .season-poster-card.nav-focused,
+.season-poster-card:focus-visible {
+  border-color: rgba(255, 255, 255, 0.55);
 }
 
-.poster-container {
-  position: relative;
-  width: 100%;
-  height: 100%;
-  min-height: 0;
-}
-
-.season-poster-img {
+.season-poster-card-img {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  object-position: top center;
+  display: block;
 }
 
-.poster-placeholder {
+.season-poster-card-placeholder {
   width: 100%;
   height: 100%;
   background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
@@ -1412,65 +1476,134 @@ watch(
 }
 
 .poster-num {
-  font-size: 4rem;
+  font-size: 3.4rem;
   font-weight: 800;
   color: rgba(255, 255, 255, 0.15);
 }
 
-.poster-overlay {
+/* Name tag shown on non-selected posters only */
+.season-poster-card-tag {
   position: absolute;
-  bottom: 0;
   left: 0;
-  right: 0;
-  padding: 20px 15px;
-  background: linear-gradient(to top, rgba(0, 0, 0, 0.95) 0%, transparent 100%);
+  bottom: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 22px 10px 8px;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.9) 0%, transparent 100%);
+  opacity: 1;
+  transition: opacity 0.3s ease;
+  pointer-events: none;
 }
 
-.season-label {
-  font-size: 1rem;
+.season-poster-card--selected .season-poster-card-tag {
+  opacity: 0;
+}
+
+.season-poster-card-tag-name {
+  font-size: 0.78rem;
+  font-weight: 600;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.season-poster-card-tag-count {
+  font-size: 0.66rem;
+  color: rgba(255, 255, 255, 0.65);
+}
+
+/* Season info floats in the space freed by shifting the selected poster left */
+.season-info {
+  position: absolute;
+  left: calc(50% - var(--info-shift, 0px) + var(--poster-w, 290px) / 2 + 30px);
+  top: 50%;
+  transform: translateY(-50%);
+  width: 320px;
+  z-index: 101;
+  pointer-events: none;
+}
+
+.season-info-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.season-info-swap-enter-active,
+.season-info-swap-leave-active {
+  transition:
+    opacity 0.3s ease,
+    transform 0.3s ease;
+}
+
+.season-info-swap-enter-from {
+  opacity: 0;
+  transform: translateY(14px);
+}
+
+.season-info-swap-leave-to {
+  opacity: 0;
+  transform: translateY(-10px);
+}
+
+.season-info-name {
+  margin: 0;
+  font-size: 1.7rem;
   font-weight: 700;
-  margin-bottom: 6px;
+  line-height: 1.2;
 }
 
-.season-overview-short {
-  font-size: 0.75rem;
-  color: rgba(255, 255, 255, 0.7);
-  line-height: 1.4;
+.season-info-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  color: #8ee59b;
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
-/* Episodes flowing grid */
-.episodes-flow {
-  flex: 1;
+.season-info-overview {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.55;
+  color: rgba(255, 255, 255, 0.85);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 8;
+  line-clamp: 8;
+  max-height: calc(1.55em * 8);
+}
+
+/* Episodes grid (selected season only) */
+.episodes-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, 200px);
-  grid-auto-rows: 113px;
-  gap: 6px;
-  padding: 6px;
-  align-content: start;
-  justify-content: start;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+  padding: 0 30px 30px;
 }
 
-/* Even seasons: episodes align to the right (same side as poster) */
-.season-even .episodes-flow {
-  justify-content: end;
+.episodes-empty {
+  grid-column: 1 / -1;
+  padding: 30px 0;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 0.95rem;
 }
 
 /* Episode tile */
 .episode-tile {
   position: relative;
-  width: 200px;
-  height: 113px; /* 16:9 aspect ratio */
-  border-radius: 6px;
+  border-radius: 10px;
   overflow: hidden;
   cursor: pointer;
-  transition: z-index 0s 0.3s;
+  background: rgba(255, 255, 255, 0.04);
   outline: none;
-}
-
-html.mouse-active .episode-tile:hover,
-html:not(.mouse-active) .episode-tile.nav-focused {
-  z-index: 20;
-  transition: z-index 0s;
 }
 
 .episode-tile:focus {
@@ -1525,73 +1658,71 @@ html:not(.mouse-active) .episode-tile.nav-focused .tile-focus-outline rect {
   filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.8));
 }
 
-.tile-bg {
-  position: absolute;
-  inset: 0;
+/* Episode preview media area */
+.tile-media {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  transition: opacity 0.4s ease;
 }
 
-.tile-bg video {
+.tile-placeholder {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, #1f1f2e 0%, #141428 100%);
+}
+
+.tile-still {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
 }
 
-.tile-placeholder {
-  width: 100%;
-  height: 100%;
-  background: linear-gradient(135deg, #1f1f2e 0%, #141428 100%);
-}
-
-.tile-overlay {
-  display: none;
-}
-
-html.mouse-active .episode-tile:hover .tile-overlay {
-  opacity: 0.4;
-}
-
-/* Episode info */
-.tile-info {
+/* Videos stay hidden (and preload="none") until playback starts after the
+   season switch has settled; they fade in softly over the still image. */
+.tile-media video {
   position: absolute;
   inset: 0;
-  padding: 8px;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  opacity: 0;
+  transition: opacity 0.6s ease;
+}
+
+.tile-media video.is-playing {
+  opacity: 1;
+}
+
+/* Spoiler avoidance: episodes ahead of the cursor fade out completely,
+   including the synopsis (playback is stopped via the cursor watch). */
+.episode-tile--ahead .tile-media {
+  opacity: 0;
+}
+
+.episode-tile--ahead .tile-info {
+  opacity: 0;
+}
+
+.episode-tile--ahead .ep-overview {
+  opacity: 0;
+  visibility: hidden;
 }
 
 .ep-number {
-  font-size: 1.8rem;
+  position: absolute;
+  top: 8px;
+  left: 10px;
+  font-size: 1.6rem;
   font-weight: 900;
   color: white;
   text-shadow: 0 2px 10px rgba(0, 0, 0, 0.8);
   opacity: 0.9;
   line-height: 1;
-}
-
-.ep-details {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.ep-name {
-  font-size: 0.7rem;
-  font-weight: 600;
-  color: white;
-  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  line-height: 1.3;
-}
-
-.ep-rating {
-  font-size: 0.65rem;
-  color: #f9a825;
-  font-weight: 600;
-  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
+  pointer-events: none;
 }
 
 /* Play indicator */
@@ -1605,6 +1736,7 @@ html.mouse-active .episode-tile:hover .tile-overlay {
   opacity: 0;
   transition: all 0.3s ease;
   text-shadow: 0 4px 20px rgba(0, 0, 0, 0.8);
+  pointer-events: none;
 }
 
 html.mouse-active .episode-tile:hover .tile-play {
@@ -1612,17 +1744,48 @@ html.mouse-active .episode-tile:hover .tile-play {
   transform: translate(-50%, -50%) scale(1);
 }
 
+/* Episode text info */
+.tile-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px 12px;
+}
+
+.ep-name {
+  font-size: 0.95rem;
+  font-weight: 600;
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.ep-meta {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.65);
+  font-weight: 500;
+}
+
+.ep-overview {
+  margin: 2px 0 0;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.7);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  transition: opacity 0.4s ease;
+}
+
+.tile-info {
+  transition: opacity 0.4s ease;
+}
+
 /* Responsive */
 @media (max-width: 900px) {
-  .season-poster-strip {
-    width: 120px;
-  }
-
-  .episodes-flow {
-    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
-    grid-auto-rows: 70px;
-  }
-
   .hero-content {
     padding: 30px;
   }
@@ -1638,27 +1801,52 @@ html.mouse-active .episode-tile:hover .tile-play {
   }
 }
 
+@media (max-width: 900px) {
+  .season-info {
+    width: 240px;
+    left: calc(50% - var(--info-shift, 0px) + var(--poster-w, 230px) / 2 + 22px);
+  }
+
+  .season-info-name {
+    font-size: 1.35rem;
+  }
+}
+
 @media (max-width: 600px) {
-  .season-flow {
-    flex-direction: column !important;
+  .season-stage {
+    height: calc(var(--poster-w, 170px) * 1.5 + 170px);
+    margin-top: 18px;
   }
 
-  .season-poster-strip {
-    width: 100%;
-    height: 200px;
+  /* No room beside the center poster: info floats below it instead */
+  .season-info {
+    left: 0;
+    right: 0;
+    top: calc(var(--poster-w, 170px) * 1.5 + 16px);
+    transform: none;
+    width: auto;
+    padding: 0 20px;
+    text-align: center;
   }
 
-  .poster-container {
-    position: relative;
-    top: 0;
-    height: 100%;
-    max-height: none;
+  .season-info-line {
+    justify-content: center;
   }
 
-  .back-btn {
-    top: 10px;
-    left: 10px;
-    padding: 8px 14px;
+  .season-info-name {
+    font-size: 1.15rem;
+  }
+
+  .season-info-overview {
+    font-size: 0.8rem;
+    -webkit-line-clamp: 4;
+    line-clamp: 4;
+    max-height: calc(1.55em * 4);
+  }
+
+  .episodes-grid {
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    padding: 0 16px 24px;
   }
 
   .series-hero {

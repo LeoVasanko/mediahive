@@ -883,14 +883,6 @@ const ratingClass = computed(() => {
   return "rating-low"
 })
 
-const seasons = computed(() => {
-  if (props.item.type !== "series") return []
-  const series = props.item.data as Series
-  return series.seasons || []
-})
-
-const selectedSeasonIndex = ref<number>(0)
-
 const versionActionMenu = ref<{
   visible: boolean
   x: number
@@ -976,17 +968,6 @@ function handleMovieMenuKeydown(event: KeyboardEvent) {
     closeVersionActionMenu()
   }
 }
-
-// Select first season by default
-watch(
-  seasons,
-  (s) => {
-    if (s.length > 0 && selectedSeasonIndex.value >= s.length) {
-      selectedSeasonIndex.value = 0
-    }
-  },
-  { immediate: true },
-)
 
 function handlePlay(filePath: string | null) {
   if (filePath) {
