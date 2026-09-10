@@ -81,16 +81,62 @@ if sys.platform == "win32":
 
 
 @dataclass
-class _PlaybackEntry:
-    """Single resume position entry with timestamp."""
+class _EpisodeWatch:
+    """Per-episode watch progress within a series entry."""
 
     pos: int
     ts: datetime
+    done: bool = False
+
+    def to_dict(self) -> dict:
+        return {"pos": self.pos, "ts": self.ts, "done": self.done}
+
+    @staticmethod
+    def from_dict(data: dict) -> _EpisodeWatch | None:
+        if not isinstance(data, dict):
+            return None
+        pos = data.get("pos")
+        ts = data.get("ts")
+        if not isinstance(pos, int) or pos < 0:
+            return None
+        if isinstance(ts, str):
+            try:
+                ts = datetime.fromisoformat(ts)
+            except ValueError, TypeError:
+                return None
+        elif not isinstance(ts, datetime):
+            return None
+        return _EpisodeWatch(pos=pos, ts=ts, done=bool(data.get("done")))
+
+
+def _episode_watch_key(season: int, episode: int) -> str:
+    return f"S{season}E{episode}"
+
+
+@dataclass
+class _PlaybackEntry:
+    """Resume entry for one media slug.
+
+    season/episode form the series' single continue point (last watched
+    episode), None for movies. episodes holds per-episode watch progress
+    for series, keyed "S<season>E<episode>".
+    """
+
+    pos: int
+    ts: datetime
+    season: int | None = None
+    episode: int | None = None
+    episodes: dict[str, _EpisodeWatch] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
             "pos": self.pos,
             "ts": self.ts,
+            "season": self.season,
+            "episode": self.episode,
+            "episodes": {
+                key: watch.to_dict() for key, watch in sorted(self.episodes.items())
+            },
         }
 
     @staticmethod
@@ -110,7 +156,22 @@ class _PlaybackEntry:
             pass
         else:
             return None
-        return _PlaybackEntry(pos=pos, ts=ts)
+        season = data.get("season")
+        episode = data.get("episode")
+        episodes: dict[str, _EpisodeWatch] = {}
+        raw_episodes = data.get("episodes")
+        if isinstance(raw_episodes, dict):
+            for key, watch_data in raw_episodes.items():
+                watch = _EpisodeWatch.from_dict(watch_data)
+                if watch is not None:
+                    episodes[str(key)] = watch
+        return _PlaybackEntry(
+            pos=pos,
+            ts=ts,
+            season=season if isinstance(season, int) else None,
+            episode=episode if isinstance(episode, int) else None,
+            episodes=episodes,
+        )
 
 
 @dataclass
@@ -123,7 +184,8 @@ class _PlaybackRootSnapshot:
 class PlaybackStateCache:
     """Background cache for merged playback-state across all active roots.
 
-    Stores resume positions by movie slug with timestamps. When merging
+    Stores resume positions by media slug (movie id, or series id with a
+    season/episode continue point) with timestamps. When merging
     across roots, picks the most recent entry for each slug.
     """
 
@@ -156,7 +218,7 @@ class PlaybackStateCache:
         """Return merged resume entries keyed by slug (most recent wins)."""
         with self._lock:
             return {
-                slug: _PlaybackEntry(e.pos, e.ts)
+                slug: _PlaybackEntry(e.pos, e.ts, e.season, e.episode, dict(e.episodes))
                 for slug, e in self._merged_entries.items()
             }
 
@@ -166,15 +228,50 @@ class PlaybackStateCache:
         root_path: Path,
         slug: str,
         pos: int | None,
+        season: int | None = None,
+        episode: int | None = None,
+        *,
+        done_episode: tuple[int, int] | None = None,
     ) -> None:
-        """Read-modify-write one root file and refresh the in-memory cache immediately."""
+        """Read-modify-write one root file and refresh the in-memory cache immediately.
+
+        For series entries, updates both the series continue point (last
+        watched episode) and the per-episode watch map. done_episode marks a
+        completed episode as fully watched without touching the continue
+        point position semantics (used together with advancing the point).
+        """
         file_path = root_path / ".mediahive" / "playback-state.json"
         entries = self._read_resume_entries(file_path)
 
-        if pos is None:
+        if pos is None and done_episode is None:
             entries.pop(slug, None)
         else:
-            entries[slug] = _PlaybackEntry(pos=pos, ts=datetime.now())
+            now = datetime.now()
+            entry = entries.get(slug)
+            if entry is None:
+                entry = _PlaybackEntry(pos=pos or 0, ts=now)
+                entries[slug] = entry
+            if pos is not None:
+                entry.pos = pos
+                entry.ts = now
+                entry.season = season
+                entry.episode = episode
+                if season is not None and episode is not None and pos > 0:
+                    entry.episodes[_episode_watch_key(season, episode)] = _EpisodeWatch(
+                        pos=pos, ts=now
+                    )
+            elif done_episode is not None:
+                # Final episode completed: no continue point remains, but the
+                # per-episode watch history is kept for indicators.
+                entry.pos = 0
+                entry.ts = now
+                entry.season = None
+                entry.episode = None
+            if done_episode is not None:
+                done_season, done_ep = done_episode
+                entry.episodes[_episode_watch_key(done_season, done_ep)] = (
+                    _EpisodeWatch(pos=0, ts=now, done=True)
+                )
 
         self._write_resume_entries(file_path, entries)
 
@@ -203,7 +300,6 @@ class PlaybackStateCache:
             previous = self._roots
 
         next_roots: dict[str, _PlaybackRootSnapshot] = {}
-        merged: dict[str, _PlaybackEntry] = {}
 
         for root_id, ctx in contexts.items():
             file_path = ctx.root_path / ".mediahive" / "playback-state.json"
@@ -218,15 +314,9 @@ class PlaybackStateCache:
 
             next_roots[root_id] = snapshot
 
-            # Merge: for each slug, keep the entry with the most recent timestamp
-            for slug, entry in snapshot.entries.items():
-                existing = merged.get(slug)
-                if existing is None or entry.ts > existing.ts:
-                    merged[slug] = entry
-
         with self._lock:
             self._roots = next_roots
-            self._merged_entries = merged
+            self._merged_entries = self._build_merged_entries(next_roots)
 
     @staticmethod
     def _signature(path: Path) -> tuple[bool, int, int]:
@@ -280,12 +370,33 @@ class PlaybackStateCache:
     def _build_merged_entries(
         roots: dict[str, _PlaybackRootSnapshot],
     ) -> dict[str, _PlaybackEntry]:
+        """Merge resume entries across roots.
+
+        Newest continue point per slug, and newest watch state per episode
+        key within each slug.
+        """
         merged: dict[str, _PlaybackEntry] = {}
         for snapshot in roots.values():
             for slug, entry in snapshot.entries.items():
                 existing = merged.get(slug)
-                if existing is None or entry.ts > existing.ts:
-                    merged[slug] = entry
+                if existing is None:
+                    merged[slug] = _PlaybackEntry(
+                        entry.pos,
+                        entry.ts,
+                        entry.season,
+                        entry.episode,
+                        dict(entry.episodes),
+                    )
+                    continue
+                if entry.ts > existing.ts:
+                    existing.pos = entry.pos
+                    existing.ts = entry.ts
+                    existing.season = entry.season
+                    existing.episode = entry.episode
+                for key, watch in entry.episodes.items():
+                    current = existing.episodes.get(key)
+                    if current is None or watch.ts > current.ts:
+                        existing.episodes[key] = watch
         return merged
 
 
@@ -370,19 +481,193 @@ def _expand_torrent_playable_path(file_key: str, playable_file: str | None) -> s
     return f"{file_key}/{playable_file}"
 
 
-def _resolve_movie_slug_for_file_path(ctx, file_path: str) -> str | None:
+def _resolve_media_ref_for_file_path(
+    ctx, file_path: str
+) -> tuple[str, int | None, int | None] | None:
+    """Resolve a playable file path to (slug, season_number, episode_number).
+
+    Movies return (movie_id, None, None); series episode files return
+    (series_id, season_number, episode_number).
+    """
     target = _normalize_media_path_value(file_path)
     for movie_id, movie in ctx.store.movies.items():
         for file_key, torrent in movie.files.items():
             normalized_key = _normalize_media_path_value(file_key)
             if normalized_key == target:
-                return movie_id
+                return movie_id, None, None
             playable_path = _expand_torrent_playable_path(
                 file_key, torrent.playable_file
             )
             if _normalize_media_path_value(playable_path) == target:
-                return movie_id
+                return movie_id, None, None
+    for series_id, show in ctx.store.series.items():
+        for season in show.seasons:
+            for episode in season.episodes:
+                for file_key, torrent in episode.files.items():
+                    normalized_key = _normalize_media_path_value(file_key)
+                    if normalized_key == target:
+                        return series_id, season.season_number, episode.episode_number
+                    playable_path = _expand_torrent_playable_path(
+                        file_key, torrent.playable_file
+                    )
+                    if _normalize_media_path_value(playable_path) == target:
+                        return series_id, season.season_number, episode.episode_number
     return None
+
+
+def _next_episode_ref(
+    show, season_number: int, episode_number: int
+) -> tuple[int, int] | None:
+    """Return the (season_number, episode_number) following the given episode."""
+    for season_index, season in enumerate(show.seasons):
+        if season.season_number != season_number:
+            continue
+        for episode_index, episode in enumerate(season.episodes):
+            if episode.episode_number != episode_number:
+                continue
+            if episode_index + 1 < len(season.episodes):
+                return season.season_number, season.episodes[
+                    episode_index + 1
+                ].episode_number
+            if season_index + 1 < len(show.seasons):
+                next_season = show.seasons[season_index + 1]
+                if next_season.episodes:
+                    return next_season.season_number, next_season.episodes[
+                        0
+                    ].episode_number
+            return None
+    return None
+
+
+# --- Assumed playback tracking (player-agnostic fallback) ---
+#
+# Launching an external player returns immediately and no player API is
+# guaranteed, so for arbitrary players we cannot observe real progress.
+# Instead: when the user launches an item and the frontend then sees no
+# input activity, the item is assumed to be playing. The resume position is
+# written once, when frontend activity resumes (i.e. the user came back).
+# The MPC-BE tracker in the GUI overrides this: if a newer entry for the
+# slug was written while the session ran, the guess is discarded.
+
+ASSUMED_PLAYBACK_MIN_WATCH_S = 300
+
+
+@dataclass
+class _AssumedPlaybackSession:
+    root_id: str
+    slug: str
+    season: int | None
+    episode: int | None
+    base_pos_s: int
+    started_mono: float
+    started_wall: datetime
+    duration_s: int | None
+
+
+_assumed_playback: _AssumedPlaybackSession | None = None
+
+
+def _media_duration_seconds(
+    ctx, slug: str, season_number: int | None, episode_number: int | None
+) -> int | None:
+    """Best-known runtime in seconds (TMDb, minutes) for a media ref."""
+    minutes: int | None = None
+    if season_number is None:
+        movie = ctx.store.movies.get(slug)
+        if movie is not None and movie.info is not None:
+            minutes = movie.info.runtime
+    else:
+        show = ctx.store.series.get(slug)
+        if show is not None:
+            for season in show.seasons:
+                if season.season_number != season_number:
+                    continue
+                for episode in season.episodes:
+                    if episode.episode_number == episode_number:
+                        minutes = episode.runtime
+                        break
+                break
+    return minutes * 60 if minutes else None
+
+
+def _start_assumed_playback(ctx, root_id: str, file_path: str) -> None:
+    """Begin a guessed-watch session for a freshly launched file."""
+    global _assumed_playback
+    # Time between two launches counts as watching the previous item.
+    _finalize_assumed_playback()
+
+    ref = _resolve_media_ref_for_file_path(ctx, file_path)
+    if ref is None:
+        return
+    slug, season_number, episode_number = ref
+
+    entry = playback_state_cache.get_merged_entries().get(slug)
+    base_pos_s = 0
+    if entry is not None:
+        if season_number is None or (entry.season, entry.episode) == (
+            season_number,
+            episode_number,
+        ):
+            base_pos_s = entry.pos
+
+    _assumed_playback = _AssumedPlaybackSession(
+        root_id=root_id,
+        slug=slug,
+        season=season_number,
+        episode=episode_number,
+        base_pos_s=base_pos_s,
+        started_mono=time.monotonic(),
+        started_wall=datetime.now(),
+        duration_s=_media_duration_seconds(ctx, slug, season_number, episode_number),
+    )
+
+
+def _finalize_assumed_playback() -> bool:
+    """Close the guessed-watch session, writing the assumed position.
+
+    Returns True when a resume position was actually written.
+    """
+    global _assumed_playback
+    session = _assumed_playback
+    _assumed_playback = None
+    if session is None:
+        return False
+
+    elapsed_s = int(time.monotonic() - session.started_mono)
+    if elapsed_s < ASSUMED_PLAYBACK_MIN_WATCH_S:
+        return False
+    pos_s = session.base_pos_s + elapsed_s
+    if session.duration_s:
+        pos_s = min(pos_s, session.duration_s)
+    if pos_s <= 0:
+        return False
+
+    # A newer entry written while this session ran (e.g. the GUI's real
+    # MPC-BE tracker finalizing on player close) overrides the guess.
+    current = playback_state_cache.get_merged_entries().get(session.slug)
+    if current is not None and current.ts > session.started_wall:
+        return False
+
+    ctx = supervisor.get(session.root_id)
+    if ctx is None:
+        return False
+    playback_state_cache.update_resume_position(
+        session.root_id,
+        ctx.root_path,
+        session.slug,
+        pos_s,
+        session.season,
+        session.episode,
+    )
+    logger.info(
+        "Assumed playback: %s S%sE%s +%ds -> pos %ds",
+        session.slug,
+        session.season,
+        session.episode,
+        elapsed_s,
+        pos_s,
+    )
+    return True
 
 
 def _load_root_metadata(root_path: Path, meta_key: str):
@@ -745,6 +1030,7 @@ async def lifespan(_app: FastAPI):
     try:
         yield
     finally:
+        _finalize_assumed_playback()
         playback_state_cache.stop()
         await event_loop_lag_monitor.stop()
 
@@ -986,6 +1272,10 @@ async def play_media(root_id: str, request: Request, response: Response):
 
         launch_ms = (time.perf_counter() - launch_t0) * 1000.0
         total_ms = (time.perf_counter() - req_start) * 1000.0
+
+        # Player-agnostic fallback: assume the launched item is being watched
+        # until frontend activity resumes (real MPC-BE tracking overrides).
+        _start_assumed_playback(ctx, root_id, req.file_path)
         loop_lag_ms, loop_lag_max_ms = event_loop_lag_monitor.snapshot()
 
         if trace_id:
@@ -1097,6 +1387,16 @@ async def root_metadata(root_id: str, meta_key: str):
     return {"key": meta_key, "data": _load_root_metadata(ctx.root_path, meta_key)}
 
 
+@app.post("/api/activity")
+async def report_activity():
+    """Report user input activity in the frontend.
+
+    Ends any assumed-playback session: activity means the user is back at
+    the UI, so the launched item's guessed watch time is written out.
+    """
+    return {"status": "ok", "finalized": _finalize_assumed_playback()}
+
+
 @app.get("/api/meta/playback-state")
 async def merged_playback_state():
     """Return merged playback-state resume positions from in-memory cache.
@@ -1111,18 +1411,66 @@ async def merged_playback_state():
 
 @app.post("/api/meta/playback-state")
 async def write_playback_state(request: Request):
-    """Update one playback-state entry via backend-managed read-modify-write."""
+    """Update one playback-state entry via backend-managed read-modify-write.
+
+    A series episode played to completion (pos null) is marked fully watched
+    in the per-episode watch map and advances the series' single continue
+    point to the next episode (pos 0); finishing the final episode clears
+    the continue point but keeps the watch history.
+    """
     req = msgspec.json.decode(await request.body(), type=PlaybackStateUpdateRequest)
     ctx = _get_context(req.root_id)
-    slug = _resolve_movie_slug_for_file_path(ctx, req.file_path)
-    if slug is None:
+    ref = _resolve_media_ref_for_file_path(ctx, req.file_path)
+    if ref is None:
         raise HTTPException(
             status_code=404,
-            detail=f"Movie not found for file path: {req.file_path}",
+            detail=f"Media not found for file path: {req.file_path}",
         )
 
-    pos = None if req.pos is None or req.pos <= 0 else int(req.pos)
-    playback_state_cache.update_resume_position(req.root_id, ctx.root_path, slug, pos)
+    slug, season_number, episode_number = ref
+
+    if req.pos is None or req.pos <= 0:
+        if season_number is None:
+            playback_state_cache.update_resume_position(
+                req.root_id, ctx.root_path, slug, None
+            )
+            return {"status": "ok", "slug": slug, "pos": None}
+
+        show = ctx.store.series.get(slug)
+        next_ref = (
+            _next_episode_ref(show, season_number, episode_number)
+            if show is not None
+            else None
+        )
+        done = (season_number, episode_number)
+        if next_ref is None:
+            playback_state_cache.update_resume_position(
+                req.root_id, ctx.root_path, slug, None, done_episode=done
+            )
+            return {"status": "ok", "slug": slug, "pos": None}
+
+        next_season, next_episode = next_ref
+        playback_state_cache.update_resume_position(
+            req.root_id,
+            ctx.root_path,
+            slug,
+            0,
+            next_season,
+            next_episode,
+            done_episode=done,
+        )
+        return {
+            "status": "ok",
+            "slug": slug,
+            "pos": 0,
+            "season": next_season,
+            "episode": next_episode,
+        }
+
+    pos = int(req.pos)
+    playback_state_cache.update_resume_position(
+        req.root_id, ctx.root_path, slug, pos, season_number, episode_number
+    )
     return {"status": "ok", "slug": slug, "pos": pos}
 
 

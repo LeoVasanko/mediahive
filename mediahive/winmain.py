@@ -54,6 +54,9 @@ MPC_BE_STATE_RUNNING = 2
 MPC_BE_SEEK_BEGIN_COMMAND = 1085
 MPC_BE_RESUME_APPLY_THRESHOLD_MS = 15000
 MPC_BE_RESUME_CLEAR_MARGIN_MS = 15000
+# Watching (or presumably watching) less than this leaves no position data:
+# brief peeks and seeks back to re-view a scene are not true progress.
+MPC_BE_RESUME_MIN_WATCH_MS = 5 * 60 * 1000
 MPC_BE_PLAYBACK_STATE_FLUSH_SECONDS = 1.0
 VOLUME_MIN = 0.0
 VOLUME_MAX = 1.5
@@ -140,7 +143,20 @@ def _expand_playable_file(file_key: str, playable_file: str | None) -> str:
     return f"{file_key}/{playable_file}"
 
 
-def _fetch_resume_positions(backend_url: str) -> dict[str, int]:
+def _fetch_resume_positions(
+    backend_url: str,
+) -> tuple[
+    dict[str, tuple[int, int | None, int | None]],
+    dict[tuple[str, int, int], int],
+]:
+    """Fetch resume state from the backend.
+
+    Returns (continue_points, episode_positions): continue_points map a slug
+    to (pos_ms, season_number, episode_number) — season/episode set for the
+    series' single continue point, None for movies. episode_positions map
+    (slug, season, episode) to pos_ms for partially watched episodes;
+    fully watched episodes are absent.
+    """
     req = urllib.request.Request(
         url=f"{backend_url}/api/meta/playback-state",
         method="GET",
@@ -149,21 +165,45 @@ def _fetch_resume_positions(backend_url: str) -> dict[str, int]:
         with urllib.request.urlopen(req, timeout=2) as resp:
             raw = json.loads(resp.read().decode("utf-8"))
     except OSError, TimeoutError, urllib.error.URLError, json.JSONDecodeError:
-        return {}
+        return {}, {}
 
     data = raw.get("data") if isinstance(raw, dict) else None
     positions = data.get("resume_positions") if isinstance(data, dict) else None
     if not isinstance(positions, dict):
-        return {}
+        return {}, {}
 
-    cleaned: dict[str, int] = {}
+    cleaned: dict[str, tuple[int, int | None, int | None]] = {}
+    episode_positions: dict[tuple[str, int, int], int] = {}
     for slug, value in positions.items():
         if not isinstance(slug, str) or not isinstance(value, dict):
             continue
         pos = value.get("pos")
+        season = value.get("season")
+        episode = value.get("episode")
         if isinstance(pos, int) and pos > 0:
-            cleaned[slug] = pos * 1000
-    return cleaned
+            cleaned[slug] = (
+                pos * 1000,
+                season if isinstance(season, int) else None,
+                episode if isinstance(episode, int) else None,
+            )
+        elif pos == 0 and isinstance(season, int) and isinstance(episode, int):
+            # Series episode boundary marker (previous episode completed).
+            cleaned[slug] = (0, season, episode)
+
+        episodes = value.get("episodes")
+        if not isinstance(episodes, dict):
+            continue
+        for key, watch in episodes.items():
+            match = re.fullmatch(r"S(\d+)E(\d+)", str(key))
+            if not match or not isinstance(watch, dict):
+                continue
+            ep_pos = watch.get("pos")
+            if watch.get("done") or not isinstance(ep_pos, int) or ep_pos <= 0:
+                continue
+            episode_positions[slug, int(match.group(1)), int(match.group(2))] = (
+                ep_pos * 1000
+            )
+    return cleaned, episode_positions
 
 
 def _post_resume_position(
@@ -191,51 +231,105 @@ def _post_resume_position(
         return False
 
 
-def _load_movie_slug_map(index_path: Path) -> dict[str, str]:
+def _media_file_key(
+    mapping: dict[str, str], file_key: str, torrent: object, media_key: str
+) -> None:
+    """Map both the raw file key and its expanded playable path to a media key."""
+    mapping[_normalize_media_path(file_key)] = media_key
+    playable_file = torrent.get("playable_file") if isinstance(torrent, dict) else None
+    expanded = _expand_playable_file(
+        file_key, playable_file if isinstance(playable_file, str) else None
+    )
+    mapping[_normalize_media_path(expanded)] = media_key
+
+
+def _split_media_key(media_key: str) -> tuple[str, int | None, int | None]:
+    """Split a media key into (slug, season_number, episode_number)."""
+    slug, separator, ep_ref = media_key.partition("#")
+    if not separator:
+        return slug, None, None
+    match = re.fullmatch(r"S(\d+)E(\d+)", ep_ref)
+    if not match:
+        return slug, None, None
+    return slug, int(match.group(1)), int(match.group(2))
+
+
+def _load_media_key_map(index_path: Path) -> dict[str, str]:
+    """Map normalized playable file paths to media keys.
+
+    Movies map to their movie id; series episodes map to
+    "<series_id>#S<season>E<episode>" so episode switches are detected while
+    the backend keeps a single continue point per series.
+    """
     try:
         raw = json.loads(index_path.read_text(encoding="utf-8"))
     except OSError, TypeError, json.JSONDecodeError:
         return {}
 
-    movies = raw.get("movies") if isinstance(raw, dict) else None
-    if not isinstance(movies, dict):
+    if not isinstance(raw, dict):
         return {}
 
     mapping: dict[str, str] = {}
-    for movie_id, movie in movies.items():
-        if not isinstance(movie_id, str) or not isinstance(movie, dict):
-            continue
-        files = movie.get("files")
-        if not isinstance(files, dict):
-            continue
-        for file_key, torrent in files.items():
-            if not isinstance(file_key, str):
+
+    movies = raw.get("movies")
+    if isinstance(movies, dict):
+        for movie_id, movie in movies.items():
+            if not isinstance(movie_id, str) or not isinstance(movie, dict):
                 continue
-            normalized_key = _normalize_media_path(file_key)
-            mapping[normalized_key] = movie_id
-            playable_file = (
-                torrent.get("playable_file") if isinstance(torrent, dict) else None
-            )
-            expanded = _expand_playable_file(
-                file_key, playable_file if isinstance(playable_file, str) else None
-            )
-            mapping[_normalize_media_path(expanded)] = movie_id
+            files = movie.get("files")
+            if not isinstance(files, dict):
+                continue
+            for file_key, torrent in files.items():
+                if not isinstance(file_key, str):
+                    continue
+                _media_file_key(mapping, file_key, torrent, movie_id)
+
+    series = raw.get("series")
+    if isinstance(series, dict):
+        for series_id, show in series.items():
+            if not isinstance(series_id, str) or not isinstance(show, dict):
+                continue
+            seasons = show.get("seasons")
+            if not isinstance(seasons, list):
+                continue
+            for season in seasons:
+                if not isinstance(season, dict):
+                    continue
+                season_number = season.get("season_number")
+                episodes = season.get("episodes")
+                if not isinstance(season_number, int) or not isinstance(episodes, list):
+                    continue
+                for episode in episodes:
+                    if not isinstance(episode, dict):
+                        continue
+                    episode_number = episode.get("episode_number")
+                    files = episode.get("files")
+                    if not isinstance(episode_number, int) or not isinstance(
+                        files, dict
+                    ):
+                        continue
+                    media_key = f"{series_id}#S{season_number}E{episode_number}"
+                    for file_key, torrent in files.items():
+                        if not isinstance(file_key, str):
+                            continue
+                        _media_file_key(mapping, file_key, torrent, media_key)
+
     return mapping
 
 
 def _media_key_for_filepath(
     filepath: str, roots: dict[str, Path]
 ) -> tuple[str | None, str, str] | None:
-    """Resolve a filepath to a (movie_slug, root_id, relative_key) tuple."""
+    """Resolve a filepath to a (media_key, root_id, relative_key) tuple."""
     for root_id, root in roots.items():
         try:
             relative = Path(filepath).resolve().relative_to(root.resolve())
             relative_key = relative.as_posix()
             index_path = root / ".mediahive" / "index.json"
-            movie_slug = _load_movie_slug_map(index_path).get(
+            media_key = _load_media_key_map(index_path).get(
                 _normalize_media_path(relative_key)
             )
-            return movie_slug, root_id, relative_key
+            return media_key, root_id, relative_key
         except OSError, RuntimeError, ValueError:
             continue
     return None
@@ -348,7 +442,7 @@ def _start_gamepad_remote(
     status_miss_count = 0
 
     playback_state = _default_playback_state()
-    resume_positions = _fetch_resume_positions(backend_url)
+    resume_positions, episode_positions = _fetch_resume_positions(backend_url)
     tracked_media_key: str | None = None
     tracked_root_id: str | None = None
     tracked_relative_path = ""
@@ -400,18 +494,34 @@ def _start_gamepad_remote(
 
         position_ms = player_position_ms or 0
         duration_ms = player_duration_ms or 0
+        tracked_slug, tracked_season, tracked_episode = _split_media_key(
+            tracked_media_key
+        )
         if _should_clear_resume(position_ms, duration_ms):
-            resume_positions.pop(tracked_media_key, None)
+            resume_positions.pop(tracked_slug, None)
+            if tracked_season is not None and tracked_episode is not None:
+                episode_positions.pop(
+                    (tracked_slug, tracked_season, tracked_episode), None
+                )
             if tracked_root_id and tracked_relative_path:
                 _post_resume_position(
                     backend_url, tracked_root_id, tracked_relative_path, None
                 )
-        elif position_ms <= MPC_BE_RESUME_CLEAR_MARGIN_MS:
-            # Ignore brief starts; keep the previous saved resume position.
+        elif position_ms < MPC_BE_RESUME_MIN_WATCH_MS:
+            # Peeks and brief seeks are not true progress; keep the previous
+            # saved resume position.
             pass
         else:
             position_seconds = max(0, position_ms // 1000)
-            resume_positions[tracked_media_key] = position_ms
+            resume_positions[tracked_slug] = (
+                position_ms,
+                tracked_season,
+                tracked_episode,
+            )
+            if tracked_season is not None and tracked_episode is not None:
+                episode_positions[tracked_slug, tracked_season, tracked_episode] = (
+                    position_ms
+                )
             if tracked_root_id and tracked_relative_path:
                 _post_resume_position(
                     backend_url,
@@ -454,8 +564,36 @@ def _start_gamepad_remote(
         if resume_applied_for_key == tracked_media_key:
             return
 
-        saved_position = resume_positions.get(tracked_media_key)
-        if not isinstance(saved_position, int):
+        tracked_slug, tracked_season, tracked_episode = _split_media_key(
+            tracked_media_key
+        )
+        if tracked_season is not None and tracked_episode is not None:
+            # Series: the episode's own saved position wins; fall back to the
+            # series continue point when it points at this very episode.
+            saved_position = episode_positions.get((
+                tracked_slug,
+                tracked_season,
+                tracked_episode,
+            ))
+            if saved_position is None:
+                saved = resume_positions.get(tracked_slug)
+                if saved is None or (saved[1], saved[2]) != (
+                    tracked_season,
+                    tracked_episode,
+                ):
+                    # The series continue point belongs to a different episode.
+                    resume_applied_for_key = tracked_media_key
+                    return
+                saved_position = saved[0]
+        else:
+            saved = resume_positions.get(tracked_slug)
+            if saved is None:
+                resume_applied_for_key = tracked_media_key
+                return
+            saved_position = saved[0]
+
+        if saved_position <= 0:
+            # Episode boundary marker (previous episode completed): start at 0.
             resume_applied_for_key = tracked_media_key
             return
         if player_position_ms is None or player_duration_ms is None:
@@ -464,7 +602,11 @@ def _start_gamepad_remote(
             resume_applied_for_key = tracked_media_key
             return
         if _should_clear_resume(saved_position, player_duration_ms):
-            resume_positions.pop(tracked_media_key, None)
+            resume_positions.pop(tracked_slug, None)
+            if tracked_season is not None and tracked_episode is not None:
+                episode_positions.pop(
+                    (tracked_slug, tracked_season, tracked_episode), None
+                )
             resume_applied_for_key = tracked_media_key
             return
         if len(pending_requests) >= MPC_BE_MAX_INFLIGHT_REQUESTS:

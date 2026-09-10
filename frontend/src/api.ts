@@ -148,10 +148,25 @@ function splitAssetTypePath(assetPath: string): { assetType: string; relativePat
   return { assetType: assetType.toLowerCase(), relativePath: rest.join("/") }
 }
 
+/** Watch progress for one episode of a series. */
+export interface EpisodeWatchEntry {
+  pos: number
+  done: boolean
+}
+
+/** One stored continue point. season/episode are set for series, null for movies. */
+export interface ResumePositionEntry {
+  pos: number
+  season: number | null
+  episode: number | null
+  /** Per-episode watch progress for series, keyed "S<season>E<episode>". */
+  episodes?: Record<string, EpisodeWatchEntry>
+}
+
 /**
  * Fetch merged resume positions from all roots.
  */
-export async function fetchResumePositions(): Promise<Record<string, number>> {
+export async function fetchResumePositions(): Promise<Record<string, ResumePositionEntry>> {
   try {
     const response = await fetch("/api/meta/playback-state")
     if (!response.ok) return {}
@@ -160,18 +175,61 @@ export async function fetchResumePositions(): Promise<Record<string, number>> {
     if (!positions || typeof positions !== "object") {
       return {}
     }
-    const normalized: Record<string, number> = {}
+    const normalized: Record<string, ResumePositionEntry> = {}
     for (const [slug, value] of Object.entries(positions as Record<string, unknown>)) {
       if (!value || typeof value !== "object") continue
-      const pos = (value as { pos?: unknown }).pos
-      if (typeof pos === "number" && Number.isFinite(pos) && pos > 0) {
-        normalized[slug] = pos
+      const entry = value as { pos?: unknown; season?: unknown; episode?: unknown }
+      if (typeof entry.pos !== "number" || !Number.isFinite(entry.pos) || entry.pos < 0) {
+        continue
+      }
+      normalized[slug] = {
+        pos: entry.pos,
+        season: typeof entry.season === "number" ? entry.season : null,
+        episode: typeof entry.episode === "number" ? entry.episode : null,
+      }
+      const rawEpisodes = (entry as { episodes?: unknown }).episodes
+      if (rawEpisodes && typeof rawEpisodes === "object") {
+        const watches: Record<string, EpisodeWatchEntry> = {}
+        for (const [key, watch] of Object.entries(
+          rawEpisodes as Record<string, unknown>,
+        )) {
+          if (!watch || typeof watch !== "object") continue
+          const w = watch as { pos?: unknown; done?: unknown }
+          if (typeof w.pos !== "number" || !Number.isFinite(w.pos)) continue
+          watches[key] = { pos: w.pos, done: w.done === true }
+        }
+        if (Object.keys(watches).length > 0) {
+          normalized[slug].episodes = watches
+        }
       }
     }
     return normalized
   } catch {
     return {}
   }
+}
+
+/**
+ * Report that the user is actively interacting with the UI.
+ *
+ * Ends any server-side assumed-playback session (launched item is assumed
+ * watched while the UI sees no input). Throttled; fire-and-forget.
+ */
+let lastActivityReportAt = 0
+export function reportUserActivity(): void {
+  const now = Date.now()
+  if (now - lastActivityReportAt < 5000) return
+  lastActivityReportAt = now
+  void fetch("/api/activity", { method: "POST" })
+    .then(async (response) => {
+      if (!response.ok) return
+      const data = await response.json().catch(() => null)
+      if (data?.finalized) {
+        // An assumed-playback position was just written; let views refetch.
+        window.dispatchEvent(new Event("mediahive:resume-updated"))
+      }
+    })
+    .catch(() => {})
 }
 
 /**

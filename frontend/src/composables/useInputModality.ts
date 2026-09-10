@@ -1,4 +1,7 @@
+import { reportUserActivity } from "../api"
+
 type InputModality = "mouse" | "keyboard" | "gamepad"
+
 
 const MOUSE_IDLE_MS = 1400
 const MOUSE_INTENT_DISTANCE_PX = 28
@@ -90,6 +93,7 @@ function registerMouseIntentTravel(event: MouseEvent): boolean {
 }
 
 function handleMouseMove(event: MouseEvent) {
+  reportUserActivity()
   showPointerFromMotion()
 
   if (modality === "mouse") {
@@ -112,6 +116,7 @@ function handleMouseOver(event: MouseEvent) {
 }
 
 function handleMouseIntentAction(event: MouseEvent | WheelEvent) {
+  reportUserActivity()
   pointerVisible = true
   if (isMouseIntentTarget(event.target)) {
     activateMouseInput()
@@ -124,6 +129,7 @@ function handleMouseIntentAction(event: MouseEvent | WheelEvent) {
 
 function handleKeyboardActivity(event: KeyboardEvent) {
   if (event.metaKey || event.ctrlKey || event.altKey) return
+  reportUserActivity()
   activateNonMouseInput("keyboard")
 }
 

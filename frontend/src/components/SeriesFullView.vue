@@ -158,6 +158,14 @@
               />
             </video>
             <span class="ep-number">{{ episode.episode_number }}</span>
+            <span
+              v-if="episodeWatchIndicator(episode)"
+              class="ep-watch"
+              :title="
+                episodeWatchIndicator(episode) === '●' ? 'Watched' : 'Partially watched'
+              "
+              >{{ episodeWatchIndicator(episode) }}</span
+            >
             <div class="tile-play">▶</div>
           </div>
 
@@ -230,7 +238,7 @@
           `Episode ${episodeReleaseMenu.episode?.episode_number}`
         "
         :releases="episodeReleaseMenuReleases"
-        :has-resume-position="props.hasResumePosition"
+        :has-resume-position="hasEpisodeResumePosition"
         @play="handlePlayVersion"
         @open-folder="handleOpenFolderFromMenu"
         @close="closeEpisodeReleaseMenu"
@@ -241,8 +249,9 @@
 
 <script setup lang="ts">
 import { computed, ref, nextTick, watch, onMounted, onUnmounted } from "vue"
-import type { Series, Season, Episode, MovieUi } from "../types"
+import type { Series, Season, Episode, MovieUi, SeriesResumePoint } from "../types"
 import { getCoverUrl, getVideoPreviewUrl, getVideoSourceAttributes, isSafariBrowser } from "../api"
+import type { EpisodeWatchEntry } from "../api"
 import { navAttrs, setModalOpen } from "../composables/useKeyboardNavigation"
 import { useIdlePreviewPlayback } from "../composables/useIdlePreviewPlayback"
 import EpisodeReleaseMenu from "./EpisodeReleaseMenu.vue"
@@ -252,7 +261,8 @@ const props = defineProps<{
   series: Series & { root_id?: string | null }
   allMovies: MovieUi[]
   focusEpisode?: { seasonNumber: number; episodeNumber: number } | null
-  hasResumePosition: (filePath: string | null) => boolean
+  resumePoint?: SeriesResumePoint | null
+  resumeEpisodes?: Record<string, EpisodeWatchEntry> | null
   getRootName: (rootId: string | null | undefined) => string | null
 }>()
 
@@ -269,7 +279,7 @@ const linkedMoviesNavRow = ref(3)
 let navLayoutFrame: number | null = null
 
 function getInitialSeasonIndex(): number {
-  const seasonNumber = props.focusEpisode?.seasonNumber
+  const seasonNumber = props.focusEpisode?.seasonNumber ?? props.resumePoint?.seasonNumber
   if (typeof seasonNumber === "number") {
     const index = props.series.seasons.findIndex((s) => s.season_number === seasonNumber)
     if (index >= 0) return index
@@ -279,6 +289,10 @@ function getInitialSeasonIndex(): number {
 
 const selectedSeasonIndex = ref(getInitialSeasonIndex())
 
+// Tracks whether the user has deliberately navigated the season selector or
+// episode grid; a late-arriving resume point must not yank focus afterwards.
+const seasonUserInteracted = ref(false)
+
 const selectedSeason = computed<Season | null>(
   () => props.series.seasons[selectedSeasonIndex.value] || null,
 )
@@ -286,6 +300,7 @@ const selectedSeason = computed<Season | null>(
 function selectSeason(index: number) {
   if (index < 0 || index >= props.series.seasons.length) return
   if (selectedSeasonIndex.value === index) return
+  seasonUserInteracted.value = true
   selectedSeasonIndex.value = index
   episodeCursorIndex.value = null
   scheduleEpisodeMediaReady()
@@ -316,16 +331,80 @@ function scheduleEpisodeMediaReady() {
   }, EPISODE_MEDIA_SETTLE_MS)
 }
 
-// Spoiler avoidance: episodes ahead of the cursor (keyboard/gamepad focus, or
-// mouse hover via the focus it triggers) are dimmed with their synopsis hidden.
+// Spoiler avoidance: episodes past the visibility threshold are dimmed with
+// their synopsis hidden (playback is stopped via the cursor watch). The
+// threshold is the further of the cursor (keyboard/gamepad focus, or mouse
+// hover via the focus it triggers) and the series' continue point, so
+// already-watched episodes stay visible even when the cursor moves back.
 const episodeCursorIndex = ref<number | null>(null)
 
+// Global episode ordering across the series: seasons in list order,
+// episodes in list order within each season.
+function seasonEpisodeOffset(seasonIndex: number): number {
+  let total = 0
+  const seasons = props.series.seasons
+  for (let i = 0; i < seasonIndex && i < seasons.length; i += 1) {
+    total += seasons[i]?.episodes.length ?? 0
+  }
+  return total
+}
+
+const cursorGlobalIndex = computed(() =>
+  episodeCursorIndex.value === null
+    ? null
+    : seasonEpisodeOffset(selectedSeasonIndex.value) + episodeCursorIndex.value,
+)
+
+const resumePointGlobalIndex = computed(() => {
+  const point = props.resumePoint
+  if (!point) return null
+  const seasonIndex = props.series.seasons.findIndex(
+    (s) => s.season_number === point.seasonNumber,
+  )
+  if (seasonIndex < 0) return null
+  const episodeIndex = props.series.seasons[seasonIndex]?.episodes.findIndex(
+    (e) => e.episode_number === point.episodeNumber,
+  )
+  if (episodeIndex === undefined || episodeIndex < 0) return null
+  // The continue point itself stays visible; anything past it is hidden.
+  return seasonEpisodeOffset(seasonIndex) + episodeIndex
+})
+
 function isEpisodeAhead(episodeIndex: number): boolean {
-  return episodeCursorIndex.value !== null && episodeIndex > episodeCursorIndex.value
+  const threshold = Math.max(cursorGlobalIndex.value ?? -1, resumePointGlobalIndex.value ?? -1)
+  if (threshold < 0) return false
+  return seasonEpisodeOffset(selectedSeasonIndex.value) + episodeIndex > threshold
+}
+
+// Small watch-progress indicator per episode: quadrant circle chars, none
+// when there is no watch data; near the end counts as fully watched.
+function episodeWatchIndicator(episode: Episode): string | null {
+  const season = selectedSeason.value
+  const watches = props.resumeEpisodes
+  if (!season || !watches) return null
+  const watch = watches[`S${season.season_number}E${episode.episode_number}`]
+  if (!watch) return null
+  if (watch.done) return "●"
+  if (watch.pos <= 0) return null
+  const durationS = episode.runtime ? episode.runtime * 60 : null
+  if (!durationS) return "◔"
+  const fraction = watch.pos / durationS
+  if (fraction >= 0.95) return "●"
+  if (fraction >= 0.5) return "◕"
+  if (fraction >= 0.25) return "◑"
+  return "◔"
 }
 
 function handleEpisodeFocusIn(event: FocusEvent, episodeIndex: number) {
   episodeCursorIndex.value = episodeIndex
+  // Keyboard/gamepad navigation lands here without any mouse event, so this
+  // is where those paths claim audio. Programmatic focus on open is
+  // suppressed so the auto-focused resume episode stays silent.
+  if (suppressNextFocusAudio) {
+    suppressNextFocusAudio = false
+  } else {
+    setAudioOwner(`${episodeIndex}`)
+  }
   // Updating the cursor re-renders this tile's :class binding, and Vue's class
   // patch rewrites the whole class attribute, clobbering the "nav-focused"
   // class that the keyboard-navigation composable adds imperatively during
@@ -346,7 +425,14 @@ function getEpisodeStill(episode: Episode): string | undefined {
 }
 
 function handleVideoPlaying(event: Event) {
-  ;(event.target as HTMLVideoElement | null)?.classList.add("is-playing")
+  const video = event.target as HTMLVideoElement | null
+  video?.classList.add("is-playing")
+  // Deferred hover audio: if this tile was hovered before its video started
+  // (lazy mount), unmute/ramp now that playback is running.
+  const key = video?.dataset.previewKey
+  if (video && key && key === audioOwnerKey) {
+    rampEpisodeVolume(key, AUDIO_HOVER_TARGET_VOLUME)
+  }
 }
 
 // Poster browser stage: the selected season is the topmost item of the left
@@ -536,11 +622,28 @@ watch(
   { immediate: true },
 )
 
-// Focus on matched episode when provided
+// Focus target: an explicit episode (search match) wins; otherwise the
+// series' continue point takes us to the season/episode being watched.
+const episodeFocusTarget = computed(() => {
+  if (props.focusEpisode) return props.focusEpisode
+  const point = props.resumePoint
+  if (!point) return null
+  return { seasonNumber: point.seasonNumber, episodeNumber: point.episodeNumber }
+})
+
+// Focus on the target episode when provided. The resume-point fallback only
+// applies until the user navigates on their own, so late-arriving resume
+// data does not yank focus away.
 watch(
-  () => props.focusEpisode,
+  episodeFocusTarget,
   (ep) => {
     if (!ep) return
+    if (
+      !props.focusEpisode &&
+      (seasonUserInteracted.value || episodeCursorIndex.value !== null)
+    ) {
+      return
+    }
     const seasonIndex =
       props.series.seasons?.findIndex((s) => s.season_number === ep.seasonNumber) ?? -1
     if (seasonIndex < 0) return
@@ -560,6 +663,7 @@ watch(
         const element = seriesRootRef.value?.querySelector(selector) as HTMLElement | null
         if (element) {
           element.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" })
+          suppressNextFocusAudio = true
           element.focus()
         }
       }, 150)
@@ -587,6 +691,20 @@ const episodeReleaseMenuReleases = computed(() => {
   if (!episodeReleaseMenu.value.episode) return []
   return sortTorrentsByPreference(Object.values(episodeReleaseMenu.value.episode.files || {}))
 })
+
+// "Continue" label for the episode release menu: shown when the menu's
+// episode is the series' continue point with a real position to resume.
+function hasEpisodeResumePosition(_filePath: string | null): boolean {
+  const point = props.resumePoint
+  const episode = episodeReleaseMenu.value.episode
+  if (!point || point.positionSeconds <= 0 || !episode) return false
+  const seasonIndex = props.series.seasons.findIndex((s) => s.episodes.includes(episode))
+  if (seasonIndex < 0) return false
+  return (
+    props.series.seasons[seasonIndex]?.season_number === point.seasonNumber &&
+    episode.episode_number === point.episodeNumber
+  )
+}
 
 function normalizeMatchText(value: string | null | undefined): string {
   return (value || "")
@@ -806,8 +924,8 @@ function stopEpisodePreviews() {
   seasonStartupToken += 1
   const token = seasonStartupToken
   clearSeasonStartupTimers()
-  clearEpisodeHoverAudioIdleTimer()
-  hoveredEpisodeAudioKey = null
+  clearAudioIdleTimer()
+  audioOwnerKey = null
   for (const interval of volumeFadeIntervals.values()) {
     clearInterval(interval)
   }
@@ -844,10 +962,9 @@ function syncSeasonVideoPlayback() {
   seasonStartupToken += 1
   const token = seasonStartupToken
   clearSeasonStartupTimers()
-  for (const interval of volumeFadeIntervals.values()) {
-    clearInterval(interval)
-  }
-  volumeFadeIntervals.clear()
+  // Do NOT touch volumeFadeIntervals here: hover/focus audio ramps run
+  // independently of playback sync, and clearing them mid-fade leaves the
+  // previous tile stuck audible and the newly hovered one stuck silent.
 
   const videosToStart: Array<{ key: string; episodeIndex: number; video: HTMLVideoElement }> = []
   const videosToStop: Array<{ key: string; episodeIndex: number; video: HTMLVideoElement }> = []
@@ -948,11 +1065,20 @@ function setVideoRef(el: HTMLVideoElement | null, key: string) {
     el.dataset.previewKey = key
     getEpisodeVisibilityObserver().observe(el)
     syncSeasonVideoPlayback()
+    // A hover/focus that arrived before this video mounted still owns the audio.
+    if (audioOwnerKey === key && !el.paused && !el.ended) {
+      rampEpisodeVolume(key, AUDIO_HOVER_TARGET_VOLUME)
+    }
   } else {
     const timeoutId = seasonStartupTimers.get(key)
     if (timeoutId) {
       clearTimeout(timeoutId)
       seasonStartupTimers.delete(key)
+    }
+    const fadeInterval = volumeFadeIntervals.get(key)
+    if (fadeInterval) {
+      clearInterval(fadeInterval)
+      volumeFadeIntervals.delete(key)
     }
     const old = videoRefs.value.get(key)
     if (old) {
@@ -969,19 +1095,29 @@ const AUDIO_FADE_INTERVAL_MS = 40
 const AUDIO_IDLE_FADE_DELAY_MS = 1600
 const AUDIO_LEAVE_FADE_DELAY_MS = 350
 const AUDIO_HOVER_TARGET_VOLUME = 0.5
-let hoveredEpisodeAudioKey: string | null = null
-let hoverEpisodeAudioIdleTimer: ReturnType<typeof setTimeout> | null = null
+// Single audio owner: the episode tile currently pointed at (mouse hover or
+// keyboard/gamepad focus). Only this tile's video is unmuted; every other
+// mounted video is ramped to silence whenever the owner changes.
+let audioOwnerKey: string | null = null
+let audioIdleTimer: ReturnType<typeof setTimeout> | null = null
+// Set while a programmatic focus (season open / resume point) is in flight so
+// the resulting focusin does not grab audio the user never asked for.
+let suppressNextFocusAudio = false
 
-function clearEpisodeHoverAudioIdleTimer() {
-  if (hoverEpisodeAudioIdleTimer !== null) {
-    clearTimeout(hoverEpisodeAudioIdleTimer)
-    hoverEpisodeAudioIdleTimer = null
+function clearAudioIdleTimer() {
+  if (audioIdleTimer !== null) {
+    clearTimeout(audioIdleTimer)
+    audioIdleTimer = null
   }
 }
 
 function rampEpisodeVolume(key: string, targetVolume: number) {
   const video = videoRefs.value.get(key)
   if (!video) return
+  // Never touch a paused element: unmuting before play() would turn the
+  // start into audible autoplay, which browsers may block. The playing
+  // event applies pending hover audio once playback is running.
+  if (video.paused) return
 
   const existingInterval = volumeFadeIntervals.get(key)
   if (existingInterval) {
@@ -998,6 +1134,13 @@ function rampEpisodeVolume(key: string, targetVolume: number) {
   }
 
   const fadeInterval = setInterval(() => {
+    if (video.paused) {
+      // Playback stopped mid-fade (e.g. scrolled offscreen or spoiler fade):
+      // abandon the ramp so it cannot resurrect audio on a stopped video.
+      clearInterval(fadeInterval)
+      volumeFadeIntervals.delete(key)
+      return
+    }
     const delta = clampedTarget - video.volume
     if (Math.abs(delta) <= AUDIO_FADE_STEP) {
       video.volume = clampedTarget
@@ -1015,23 +1158,60 @@ function rampEpisodeVolume(key: string, targetVolume: number) {
   volumeFadeIntervals.set(key, fadeInterval)
 }
 
-function scheduleEpisodeHoverAudioIdleFade(
-  key: string,
-  delayMs: number = AUDIO_IDLE_FADE_DELAY_MS,
-) {
-  clearEpisodeHoverAudioIdleTimer()
-  hoverEpisodeAudioIdleTimer = setTimeout(() => {
+// Silence the current owner after a delay. If the owner is reassigned before
+// the timer fires, clearAudioIdleTimer() keeps the old tile audible — the new
+// owner's setAudioOwner() call ramps it down instead.
+function scheduleAudioIdleFade(delayMs: number = AUDIO_IDLE_FADE_DELAY_MS) {
+  const key = audioOwnerKey
+  clearAudioIdleTimer()
+  if (!key) return
+  audioIdleTimer = setTimeout(() => {
+    audioIdleTimer = null
+    if (audioOwnerKey !== key) return
+    audioOwnerKey = null
     rampEpisodeVolume(key, 0)
-    if (hoveredEpisodeAudioKey === key) {
-      hoveredEpisodeAudioKey = null
-    }
   }, delayMs)
+}
+
+function setAudioOwner(key: string | null) {
+  if (key === audioOwnerKey) {
+    // Same tile pointed at again (mousemove, repeat focus): just re-arm idle.
+    scheduleAudioIdleFade()
+    return
+  }
+  audioOwnerKey = key
+  videoRefs.value.forEach((_, k) => {
+    if (k !== key) {
+      rampEpisodeVolume(k, 0)
+    }
+  })
+  // No-op while the video is not mounted/playing yet (lazy mount); the
+  // playing event applies the pending audio once playback starts.
+  if (key) {
+    rampEpisodeVolume(key, AUDIO_HOVER_TARGET_VOLUME)
+  }
+  scheduleAudioIdleFade()
+}
+
+// Re-acquire audio for the currently pointed tile after an idle fade, and
+// re-arm the idle timer on any continued activity.
+function rearmAudioFromActivity() {
+  const pointedKey = episodeCursorIndex.value === null ? null : `${episodeCursorIndex.value}`
+  if (audioOwnerKey !== pointedKey) {
+    setAudioOwner(pointedKey)
+  } else if (pointedKey) {
+    scheduleAudioIdleFade()
+  }
 }
 
 function handleEpisodeHoverAudioMouseMove() {
   if (!document.documentElement.classList.contains("mouse-active")) return
-  if (!hoveredEpisodeAudioKey) return
-  scheduleEpisodeHoverAudioIdleFade(hoveredEpisodeAudioKey)
+  rearmAudioFromActivity()
+}
+
+function handleAudioKeyActivity() {
+  if (document.documentElement.classList.contains("mouse-active")) return
+  rearmAudioFromActivity()
 }
 
 // Handle hover-based audio fade in/out for episode videos
@@ -1047,27 +1227,15 @@ function handleEpisodeHover(
 
   if (!document.documentElement.classList.contains("mouse-active")) return
 
-  const video = videoRefs.value.get(key)
-  if (!video) return
-
   if (isEntering) {
     if (event?.currentTarget instanceof HTMLElement) {
       event.currentTarget.focus({ preventScroll: true })
     }
-    syncSeasonVideoPlayback()
-    hoveredEpisodeAudioKey = key
-    videoRefs.value.forEach((_, k) => {
-      if (k !== key) {
-        rampEpisodeVolume(k, 0)
-      }
-    })
-    rampEpisodeVolume(key, AUDIO_HOVER_TARGET_VOLUME)
-    scheduleEpisodeHoverAudioIdleFade(key)
-  } else {
-    if (hoveredEpisodeAudioKey === key) {
-      hoveredEpisodeAudioKey = null
-    }
-    scheduleEpisodeHoverAudioIdleFade(key, AUDIO_LEAVE_FADE_DELAY_MS)
+    setAudioOwner(key)
+  } else if (audioOwnerKey === key) {
+    // Keep the owner until the leave grace expires, so quick re-entry is
+    // seamless; scheduleAudioIdleFade drops ownership when it fires.
+    scheduleAudioIdleFade(AUDIO_LEAVE_FADE_DELAY_MS)
   }
 }
 
@@ -1190,6 +1358,7 @@ onMounted(() => {
   window.addEventListener("mediahive:gamepad-action", handleGamepadAction as EventListener)
   window.addEventListener("resize", handleStageResize, { passive: true })
   window.addEventListener("mousemove", handleEpisodeHoverAudioMouseMove, { passive: true })
+  window.addEventListener("keydown", handleAudioKeyActivity)
   nextTick(() => {
     measureStageWidth()
     scheduleEpisodeMediaReady()
@@ -1201,7 +1370,8 @@ onUnmounted(() => {
   window.removeEventListener("mediahive:gamepad-action", handleGamepadAction as EventListener)
   window.removeEventListener("resize", handleStageResize)
   window.removeEventListener("mousemove", handleEpisodeHoverAudioMouseMove)
-  clearEpisodeHoverAudioIdleTimer()
+  window.removeEventListener("keydown", handleAudioKeyActivity)
+  clearAudioIdleTimer()
   clearSeasonStartupTimers()
   if (episodeMediaReadyTimer !== null) {
     clearTimeout(episodeMediaReadyTimer)
@@ -1236,8 +1406,14 @@ watch(
   },
 )
 
-// Episodes ahead of the cursor are spoiler-faded; stop their playback too.
-watch(episodeCursorIndex, () => {
+// Episodes past the spoiler threshold (cursor or continue point) are faded;
+// stop their playback too.
+watch([episodeCursorIndex, resumePointGlobalIndex], () => {
+  if (episodeCursorIndex.value === null) {
+    // Cursor left the episode grid (season selector, season switch): no tile
+    // is pointed at, so audio must go silent regardless of how we got here.
+    setAudioOwner(null)
+  }
   syncSeasonVideoPlayback()
 })
 </script>
@@ -1723,8 +1899,9 @@ html:not(.mouse-active) .episode-tile.nav-focused .tile-focus-outline rect {
   opacity: 1;
 }
 
-/* Spoiler avoidance: episodes ahead of the cursor fade out completely,
-   including the synopsis (playback is stopped via the cursor watch). */
+/* Spoiler avoidance: episodes past the spoiler threshold (cursor or
+   continue point) fade out completely, including the synopsis (playback is
+   stopped via the threshold watch). */
 .episode-tile--ahead .tile-media {
   opacity: 0;
 }
@@ -1772,6 +1949,18 @@ html:not(.mouse-active) .episode-tile.nav-focused .tile-focus-outline rect {
   color: white;
   text-shadow: 0 2px 10px rgba(0, 0, 0, 0.8);
   opacity: 0.9;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.ep-watch {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  font-size: 0.85rem;
+  color: white;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.9);
+  opacity: 0.85;
   line-height: 1;
   pointer-events: none;
 }

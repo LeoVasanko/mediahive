@@ -177,6 +177,8 @@
             :all-movies="mediaIndex?.movies ?? []"
             :focus-episode="focusEpisode"
             :has-resume-position="hasResumePosition"
+            :get-resume-point="getResumePoint"
+            :get-resume-episodes="getResumeEpisodes"
             :get-root-name="getRootName"
             @close="closeDetail"
             @play="handlePlay"
@@ -201,6 +203,7 @@ import type {
   MediaItem,
   EpisodeWithSeries,
   TaskInfo,
+  SeriesResumePoint,
 } from "./types"
 import {
   playMedia,
@@ -208,6 +211,8 @@ import {
   isMpcBeReachable,
   fetchResumePositions,
   getPlayerStatus,
+  type ResumePositionEntry,
+  type EpisodeWatchEntry,
 } from "./api"
 import { useSettings } from "./composables/useSettings"
 import { useKeyboardNavigation, setActiveNavigationScope } from "./composables/useKeyboardNavigation"
@@ -497,7 +502,7 @@ const settings = useSettings()
 const searchResults = ref<MediaItem[]>([])
 const isSearching = ref(false)
 const mpcBeConnected = ref(false)
-const resumePositions = ref<Record<string, number>>({})
+const resumePositions = ref<Record<string, ResumePositionEntry>>({})
 const searchQuery = ref(getRouteSearchQuery())
 const searchReturnPath = ref<string | null>(null)
 const browsePanelRef = ref<HTMLElement | null>(null)
@@ -540,6 +545,10 @@ async function refreshResumePositions() {
   resumePositions.value = await fetchResumePositions()
 }
 
+function refreshResumePositionsAsEvent() {
+  void refreshResumePositions()
+}
+
 async function refreshPlayerStatus() {
   if (!isMpcFamilySelected()) {
     mpcBeConnected.value = false
@@ -555,7 +564,25 @@ async function refreshPlayerStatus() {
 
 function hasResumePosition(mediaId: string | null) {
   if (!mediaId) return false
-  return Number(resumePositions.value[mediaId] || 0) > 0
+  return (resumePositions.value[mediaId]?.pos || 0) > 0
+}
+
+function getResumePoint(mediaId: string | null): SeriesResumePoint | null {
+  if (!mediaId) return null
+  const entry = resumePositions.value[mediaId]
+  if (!entry || entry.season === null || entry.episode === null) return null
+  return {
+    seasonNumber: entry.season,
+    episodeNumber: entry.episode,
+    positionSeconds: entry.pos,
+  }
+}
+
+function getResumeEpisodes(
+  mediaId: string | null,
+): Record<string, EpisodeWatchEntry> | null {
+  if (!mediaId) return null
+  return resumePositions.value[mediaId]?.episodes ?? null
 }
 
 function startMpcBePolling() {
@@ -936,6 +963,7 @@ onMounted(() => {
   document.addEventListener("keydown", handleDetailAdjacentKey)
   window.addEventListener("mediahive:gamepad-action", onGamepadAction as EventListener)
   window.addEventListener("mediahive:gamepad-button", onRawGamepadButton as EventListener)
+  window.addEventListener("mediahive:resume-updated", refreshResumePositionsAsEvent)
 })
 
 onUnmounted(() => {
@@ -943,6 +971,7 @@ onUnmounted(() => {
   document.removeEventListener("keydown", handleDetailAdjacentKey)
   window.removeEventListener("mediahive:gamepad-action", onGamepadAction as EventListener)
   window.removeEventListener("mediahive:gamepad-button", onRawGamepadButton as EventListener)
+  window.removeEventListener("mediahive:resume-updated", refreshResumePositionsAsEvent)
   stopMpcBePolling()
 })
 

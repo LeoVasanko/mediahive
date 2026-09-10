@@ -5,7 +5,8 @@
     :series="item.data as Series"
     :all-movies="allMovies"
     :focus-episode="focusEpisode"
-    :has-resume-position="hasResumePosition"
+    :resume-point="getResumePoint(item.id)"
+    :resume-episodes="getResumeEpisodes(item.id)"
     :get-root-name="getRootName"
     @close="$emit('close')"
     @play="handlePlay"
@@ -233,7 +234,8 @@
 
 <script setup lang="ts">
 import { computed, ref, watch, onMounted, onUnmounted, nextTick } from "vue"
-import type { CastMember, MediaItem, Movie, MovieUi, Series, Torrent } from "../types"
+import type { CastMember, MediaItem, Movie, MovieUi, Series, SeriesResumePoint, Torrent } from "../types"
+import type { EpisodeWatchEntry } from "../api"
 import {
   getCoverUrl,
   getVideoPreviewUrl,
@@ -260,6 +262,8 @@ const props = defineProps<{
   allMovies: MovieUi[]
   focusEpisode?: { seasonNumber: number; episodeNumber: number } | null
   hasResumePosition: (mediaId: string | null) => boolean
+  getResumePoint: (mediaId: string | null) => SeriesResumePoint | null
+  getResumeEpisodes: (mediaId: string | null) => Record<string, EpisodeWatchEntry> | null
   getRootName: (rootId: string | null | undefined) => string | null
 }>()
 const emit = defineEmits<{

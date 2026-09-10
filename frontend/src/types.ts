@@ -109,6 +109,13 @@ export interface Series {
   seasons: Season[]
 }
 
+/** A series' single continue point (last watched position). */
+export interface SeriesResumePoint {
+  seasonNumber: number
+  episodeNumber: number
+  positionSeconds: number
+}
+
 export interface MovieUi extends Movie {
   id: string
   root_id: string | null
