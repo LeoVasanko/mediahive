@@ -174,6 +174,10 @@ def upload_asset(
 
 
 def main() -> None:
+    # Windows consoles default to cp1252, which can't encode ✓/✗
+    sys.stdout.reconfigure(errors="replace")
+    sys.stderr.reconfigure(errors="replace")
+
     parser = argparse.ArgumentParser(description="Publish a MediaHive release to Gitea")
     parser.add_argument(
         "--draft", action="store_true", help="Create as a draft release"
