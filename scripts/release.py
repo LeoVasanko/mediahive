@@ -9,8 +9,9 @@ Reads from [project.urls] Repository in pyproject.toml.
 Token: GITEA_TOKEN environment variable
 
 Steps:
-    1. Find clean-versioned platform artifacts in build/ and matching dist/ wheels/sdists
-    2. Abort if any dist files are missing for a found artifact version
+    1. Read the clean tag version via setuptools_scm, find platform artifacts
+       in build/ and matching dist/ wheels/sdists
+    2. Abort if any dist files are missing
     3. Create a Gitea release for each version (or reuse the existing one
        for the tag, skipping already-uploaded assets) and upload all assets
     4. Remind the user to run: uv publish
@@ -28,6 +29,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import httpx
+import setuptools_scm
 
 REPO_ROOT = Path(__file__).parent.parent
 
@@ -67,23 +69,27 @@ def load_token() -> str:
 # ZIP + dist helpers
 # ---------------------------------------------------------------------------
 
-# Matches MediaHive-1.2.3-win64-portable.zip, MediaHive-1.2.3-win64-setup.exe,
-# MediaHive-1.2.3-macos-setup.pkg, MediaHive-1.2.3-linux-setup.AppImage, etc.
-# Rejects dev/dirty versions like MediaHive-1.2.3.dev0+gabcd-win64-portable.zip
-_CLEAN_ARTIFACT_RE = re.compile(
-    r"^MediaHive-(\d+(?:\.\d+)*)-([A-Za-z0-9._-]+)\.(?:zip|dmg|exe|pkg|AppImage)$"
-)
+# Installer artifacts are versionless (MediaHive-win64-setup.exe,
+# MediaHive-macos-setup.pkg, MediaHive-linux-setup.AppImage,
+# MediaHive-win64-portable.zip) so /releases/download/latest/<name> links
+# stay valid. The version comes from setuptools_scm instead.
+_ARTIFACT_RE = re.compile(r"^MediaHive-(?!\d)[A-Za-z0-9._-]+\.(?:zip|dmg|exe|pkg|AppImage)$")
 
 
-def find_releasable_artifacts() -> list[tuple[Path, str, str]]:
-    """Return (path, version, platform_tag) for clean-versioned artifacts in build/."""
+def read_version() -> str:
+    """Read version via setuptools_scm, refusing dev/dirty versions."""
+    version = setuptools_scm.get_version(root=str(REPO_ROOT))
+    if not re.fullmatch(r"\d+(?:\.\d+)*", version):
+        raise RuntimeError(
+            f"Refusing to release non-clean version {version!r}. Tag a release first."
+        )
+    return version
+
+
+def find_releasable_artifacts() -> list[Path]:
+    """Return platform artifact paths in build/."""
     build_dir = REPO_ROOT / "build"
-    results = []
-    for p in sorted(build_dir.glob("MediaHive-*")):
-        m = _CLEAN_ARTIFACT_RE.match(p.name)
-        if m:
-            results.append((p, m.group(1), m.group(2)))
-    return results
+    return [p for p in sorted(build_dir.glob("MediaHive-*")) if _ARTIFACT_RE.match(p.name)]
 
 
 def find_dist_files(version: str) -> list[Path]:
@@ -244,46 +250,40 @@ def main() -> None:
     try:
         cfg = load_gitea_config()
         token = load_token()
+        version = read_version()
 
         artifacts = find_releasable_artifacts()
         if not artifacts:
             print(
-                "No clean-versioned platform artifacts found in build/.\n"
+                "No platform artifacts found in build/.\n"
                 "Run scripts/guibuild.py first.",
                 file=sys.stderr,
             )
             sys.exit(1)
 
         # Validate all dist files exist before touching Gitea
-        dist_files: dict[str, list[Path]] = {}
-        if not args.no_dist:
-            for _, version, _platform_tag in artifacts:
-                dist_files[version] = find_dist_files(version)
+        dist_files: list[Path] = [] if args.no_dist else find_dist_files(version)
 
         base_url = cfg["url"].rstrip("/")
         repo = cfg["repo"]
 
         with httpx.Client(headers=gitea_headers(token)) as client:
-            releases: dict[str, tuple[int, set[str]]] = {}
-            for artifact_path, version, platform_tag in artifacts:
-                print(f"\nReleasing {version} ...")
-                tag = f"v{version}"
-                if version not in releases:
-                    releases[version] = create_release(
-                        client, base_url, repo, tag, version, args.notes, args.draft
-                    )
-                    release_id, uploaded = releases[version]
-                    for path in dist_files.get(version, []):
-                        if path.name in uploaded:
-                            print(f"Skipping {path.name}, already on the release.")
-                            continue
-                        upload_asset(client, base_url, repo, release_id, path)
+            print(f"\nReleasing {version} ...")
+            tag = f"v{version}"
+            release_id, uploaded = create_release(
+                client, base_url, repo, tag, version, args.notes, args.draft
+            )
+            for path in dist_files:
+                if path.name in uploaded:
+                    print(f"Skipping {path.name}, already on the release.")
+                    continue
+                upload_asset(client, base_url, repo, release_id, path)
 
-                release_id, uploaded = releases[version]
+            for artifact_path in artifacts:
                 if artifact_path.name in uploaded:
                     print(f"Skipping {artifact_path.name}, already on the release.")
                     continue
-                print(f"Uploading platform artifact: {platform_tag}")
+                print(f"Uploading platform artifact: {artifact_path.name}")
                 upload_asset(client, base_url, repo, release_id, artifact_path)
                 uploaded.add(artifact_path.name)
                 for feed_file in find_velopack_feed_files():
@@ -292,7 +292,7 @@ def main() -> None:
                         continue
                     upload_asset(client, base_url, repo, release_id, feed_file)
                     uploaded.add(feed_file.name)
-                print(f"  ✓ {tag} published")
+            print(f"  ✓ {tag} published")
 
         print("\nDone. To publish to PyPI, run:")
         print("  uv publish")

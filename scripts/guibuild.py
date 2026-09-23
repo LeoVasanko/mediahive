@@ -88,9 +88,12 @@ def _platform() -> _Platform:
     return _Platform("linux", "linux", "linux-x64", "MediaHive", "mediahive.png", "MediaHive", ".AppImage")
 
 
-def setup_artifact_name(version: str) -> str:
+def setup_artifact_name() -> str:
+    """Versionless name so releases/download/latest/<name> links stay valid."""
     p = _platform()
-    return f"MediaHive-{version}-{p.tag}-setup{p.setup_ext}"
+    # Windows keeps the -setup suffix: a bare .exe isn't self-explanatory.
+    suffix = "-setup" if sys.platform == "win32" else ""
+    return f"MediaHive-{p.tag}{suffix}{p.setup_ext}"
 
 
 def fetch_ffmpeg() -> Path:
@@ -381,7 +384,7 @@ def build_velopack(version: str) -> Path:
         raise RuntimeError(f"vpk produced no *{plat.setup_ext} in {releases_dir}")
     if sys.platform == "darwin":
         force_macos_user_install(setup)
-    artifact = _REPO_ROOT / "build" / setup_artifact_name(version)
+    artifact = _REPO_ROOT / "build" / setup_artifact_name()
     artifact.unlink(missing_ok=True)
     setup.rename(artifact)
     rename_feed_package(releases_dir, version, plat.channel)
@@ -509,7 +512,7 @@ def build_executable() -> None:
         raise RuntimeError(f"PyInstaller failed with exit code {result.returncode}")
 
 
-def create_portable_zip(version: str) -> Path:
+def create_portable_zip() -> Path:
     """Create the Windows portable ZIP of the build/MediaHive folder.
 
     Velopack-less plain-folder distribution for users who cannot or do not
@@ -520,7 +523,7 @@ def create_portable_zip(version: str) -> Path:
     if not dist_folder.exists():
         raise FileNotFoundError(f"Distribution folder not found: {dist_folder}")
 
-    zip_path = _REPO_ROOT / "build" / f"MediaHive-{version}-win64-portable.zip"
+    zip_path = _REPO_ROOT / "build" / "MediaHive-win64-portable.zip"
     print(f"Creating {zip_path}...")
     shutil.make_archive(
         str(zip_path.with_suffix("")),  # removes .zip so make_archive can add it
@@ -553,7 +556,7 @@ def main() -> None:
 
         artifacts = [build_velopack(version)]
         if sys.platform == "win32":
-            artifacts.append(create_portable_zip(version))
+            artifacts.append(create_portable_zip())
 
         for artifact_path in artifacts:
             print(f"✓ Built successfully: {artifact_path}")
