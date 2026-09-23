@@ -37,10 +37,9 @@ from fastapi.responses import (
     Response,
     StreamingResponse,
 )
-from fastapi_vue import Frontend
+from fastapi_vue import Frontend, env
 
-from mediahive.__main__ import DEVMODE
-from mediahive.config import load_config, log_dir
+from mediahive.config import config, load_config, log_dir
 from mediahive.hivescan.images import close_image_client
 from mediahive.hivescan.scanner import RootScanner
 from mediahive.hivescan.tmdb_client import close_http_client
@@ -974,23 +973,14 @@ async def _activate_all_roots() -> None:
     """
     desired: dict[str, str] = {}
 
-    # 1. CLI roots via MEDIAHIVE_ROOTS (JSON dict)
-    env_roots_raw = os.environ.get("MEDIAHIVE_ROOTS")
-    env_roots: dict[str, str] | None = None
-    if env_roots_raw:
-        try:
-            parsed = json.loads(env_roots_raw)
-            if isinstance(parsed, dict):
-                env_roots = parsed
-        except Exception:
-            logger.exception("Failed to parse MEDIAHIVE_ROOTS")
-
+    # 1. CLI roots (teleported via fastapi-vue's env config) take precedence
     # 2. Persisted config roots (used only when CLI roots are not provided)
-    cfg = load_config()
-    if env_roots is not None:
-        desired.update(env_roots)
-    elif cfg.roots:
-        desired.update(cfg.roots)
+    if config.roots:
+        desired.update(config.roots)
+    else:
+        cfg = load_config()
+        if cfg.roots:
+            desired.update(cfg.roots)
 
     if not desired:
         logger.info("No roots configured; waiting for PUT /api/config/roots")
@@ -1056,7 +1046,7 @@ async def lifespan(_app: FastAPI):
             await close_image_client()
 
 
-app = FastAPI(title="MediaHive Server", lifespan=lifespan, debug=DEVMODE)
+app = FastAPI(title="MediaHive Server", lifespan=lifespan, debug=env.dev)
 
 # Allow CORS for development
 app.add_middleware(

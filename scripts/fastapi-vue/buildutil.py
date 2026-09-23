@@ -10,20 +10,27 @@ from pathlib import Path
 MIN_NODE_VERSION = 20
 
 
-class _PrefixFormatter(logging.Formatter):
-    """Formatter that adds prefix based on log level."""
+class _Formatter(logging.Formatter):
+    """Prefix formatter, intentionally different from fastapi_vue.logging.
+
+    INFO and below pass through unprefixed so messages can use their own
+    markings (>>>, ###); WARNING and above get an emoji prefix.
+    """
 
     def format(self, record: logging.LogRecord) -> str:
+        if record.levelno >= logging.ERROR:
+            return f"🛑 {record.getMessage()}"
         if record.levelno >= logging.WARNING:
-            return f"⚠️  {record.getMessage()}"
+            return f"💣 {record.getMessage()}"
         return record.getMessage()
 
 
 _handler = logging.StreamHandler()
-_handler.setFormatter(_PrefixFormatter())
+_handler.setFormatter(_Formatter())
 logger = logging.getLogger("fastapi-vue")
 logger.addHandler(_handler)
 logger.setLevel(logging.INFO)
+logger.propagate = False  # own handler; do not double-print via a configured root
 
 
 def _check_node_version(node_path: str) -> None:

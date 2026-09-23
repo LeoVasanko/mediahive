@@ -13,12 +13,18 @@ from pathlib import Path
 
 import msgspec
 import msgspec.toml
+from fastapi_vue import env
 from platformdirs import user_config_path, user_log_path
 
 
 class Config(msgspec.Struct, omit_defaults=True):
-    media_folder: str | None = None
     roots: dict[str, str] | None = None
+
+
+# Runtime config shared between the CLI entrypoint and the server process via
+# fastapi-vue's env teleport (MEDIAHIVE_CONFIG). Values set here take
+# precedence over the persisted config file.
+config = env(Config)
 
 
 def config_dir() -> Path:
@@ -37,25 +43,11 @@ def config_path() -> Path:
     return config_dir() / "config.toml"
 
 
-def _migrate_legacy_media_folder(cfg: Config) -> Config:
-    """If roots is empty but media_folder exists, seed roots with it."""
-    if cfg.roots:
-        return cfg
-    if not cfg.media_folder:
-        return cfg
-    path = Path(cfg.media_folder)
-    name = path.name or path.anchor.strip("/\\").lower() or "media"
-    # Resolve collisions simply by using the basename; if user had weird layout
-    # they can rename via the UI later.
-    return msgspec.structs.replace(cfg, roots={name: cfg.media_folder})
-
-
 def load_config() -> Config:
     path = config_path()
     if path.exists():
         try:
-            cfg = msgspec.toml.decode(path.read_bytes(), type=Config)
-            return _migrate_legacy_media_folder(cfg)
+            return msgspec.toml.decode(path.read_bytes(), type=Config)
         except OSError, msgspec.DecodeError, msgspec.ValidationError:
             return Config()
     return Config()

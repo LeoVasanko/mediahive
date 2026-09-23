@@ -24,15 +24,20 @@ import urllib.request
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 
+# Must be set before fastapi_vue env bindings are created (mediahive.config);
+# this module is the PyInstaller entry point and may run without __main__.
+os.environ.setdefault("FASTAPI_VUE", "MEDIAHIVE")
+
 import msgspec.structs
 import uvicorn
 import velopack
 import webview
+from fastapi_vue import env
 from fastapi_vue.logging import patch_log_config
 from fastapi_vue.startupbox import print_box
 from tracerite.html import html_traceback
 
-from mediahive.config import load_config, log_dir, save_config
+from mediahive.config import config, load_config, log_dir, save_config
 from mediahive.volume_control import get_volume, set_volume, volume_max
 
 logger = logging.getLogger("mediahive.winmain")
@@ -1202,10 +1207,6 @@ def winmain() -> None:
         initial_roots[name] = p.as_posix()
     elif cfg.roots:
         initial_roots = cfg.roots
-    elif cfg.media_folder:
-        p = _normalize_media_root_input(cfg.media_folder)
-        name = p.name or "media"
-        initial_roots[name] = p.as_posix()
 
     if not initial_roots:
         folder = _run_initial_setup()
@@ -1219,8 +1220,9 @@ def winmain() -> None:
     if cfg.roots != initial_roots:
         save_config(msgspec.structs.replace(cfg, roots=initial_roots))
 
-    # Pass roots to the server via env (validation deferred to server startup)
-    os.environ["MEDIAHIVE_ROOTS"] = json.dumps(initial_roots)
+    # Pass roots to the in-process server via the shared env config
+    # (validation deferred to server startup)
+    config.roots = initial_roots
 
     backend_port = _reserve_backend_port()
     backend_url = f"http://{BACKEND_HOST}:{backend_port}"
@@ -1238,7 +1240,13 @@ def winmain() -> None:
     # log config wires up its access-log middleware, emoji level prefixes and
     # tracerite tracebacks (colors are auto-disabled when stderr is not a tty,
     # e.g. redirected to the log file in frozen builds).
-    config = uvicorn.Config(
+    log_config = patch_log_config(uvicorn.config.LOGGING_CONFIG)
+    # fastapi-vue routes the root logger at INFO in dev / WARNING in prod;
+    # keep our own loggers visible in production too.
+    log_config.setdefault("loggers", {})["mediahive"] = {
+        "level": "DEBUG" if env.dev else "INFO"
+    }
+    uvicorn_config = uvicorn.Config(
         "mediahive.server:app",
         host=BACKEND_HOST,
         port=backend_port,
@@ -1246,9 +1254,9 @@ def winmain() -> None:
         server_header=False,
         timeout_graceful_shutdown=0,
         access_log=False,  # fastapi-vue's middleware replaces uvicorn's
-        log_config=patch_log_config(uvicorn.config.LOGGING_CONFIG),
+        log_config=log_config,
     )
-    server = uvicorn.Server(config)
+    server = uvicorn.Server(uvicorn_config)
     backend_thread = threading.Thread(
         target=server.run, daemon=True, name="mediahive-backend"
     )

@@ -1,12 +1,17 @@
 """Hivescan CLI entrypoint."""
 
+import os
+
+# Must be set before fastapi_vue env bindings are created (mediahive.config).
+os.environ.setdefault("FASTAPI_VUE", "MEDIAHIVE")
+
 import argparse
 import asyncio
-import json
 import logging
-import os
 import sys
 from pathlib import Path
+
+from mediahive.config import config
 
 
 def _configure_windows_event_loop_policy() -> None:
@@ -55,11 +60,9 @@ The server exposes a unified endpoint:
 
     args = parser.parse_args()
 
-    # Defer filesystem validation to the server; pass raw path via env.
+    # Defer filesystem validation to the server; pass raw path via env config.
     media_root = Path(args.media_folder).expanduser()
-    os.environ["MEDIAHIVE_ROOTS"] = json.dumps({
-        media_root.name or "media": media_root.as_posix()
-    })
+    config.roots = {media_root.name or "media": media_root.as_posix()}
 
     logging.basicConfig(
         level=logging.INFO,

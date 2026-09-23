@@ -32,7 +32,7 @@ All media paths are scoped to a **root**, identified by a friendly `root_id`
 - `GET /api/assets/{root_id}/{asset_type}/{asset_path:path}` is constrained to `<root>/.mediahive/{asset_type}` where `asset_type` is one of `movies`, `series`, `people`.
 - `GET /api/meta/{root_id}/{meta_key}` supports metadata keys currently limited to `playback-state` and `scanignore`.
 - `GET /api/player/status` returns `{ "remote": true|false }`.
-- Roots may also be provided at startup via the `MEDIAHIVE_ROOTS` environment variable (JSON dict of name → path), which overrides the persisted configuration.
+- Roots may also be provided at startup via CLI arguments (`mediahive /path/to/media ...`), which are passed to the server through fastapi-vue's env config (`mediahive.config.config`) and override the persisted configuration.
 - Assumed playback: after `POST /api/play/{root_id}` the launched item is assumed to be playing while the frontend reports no input activity. On the next `POST /api/activity` the guessed position (`resume base + elapsed`, capped at the TMDb runtime) is written once; watches under 5 minutes are discarded (a peek is not progress). A resume entry written by another tracker (e.g. the GUI's MPC-BE tracker) during the session overrides the guess. The MPC-BE tracker likewise ignores sessions shorter than 5 minutes.
 
 ## WebSocket

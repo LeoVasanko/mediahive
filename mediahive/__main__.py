@@ -1,16 +1,20 @@
 """MediaHive CLI entrypoint."""
 
+import os
+
+# Must be set before fastapi_vue env bindings are created (mediahive.config).
+os.environ["FASTAPI_VUE"] = "MEDIAHIVE"
+
 import argparse
 import asyncio
-import json
-import os
 import sys
 from pathlib import Path
 
-from fastapi_vue import server
+from fastapi_vue import env, server
+
+from mediahive.config import config
 
 DEFAULT_PORT = 8420
-DEVMODE = os.getenv("MEDIAHIVE_DEV") == "1"
 
 
 def _configure_windows_event_loop_policy() -> None:
@@ -140,10 +144,11 @@ def main() -> None:
                 name = f"{base_name}{suffix}"
                 suffix += 1
             roots[name] = p.as_posix()
-        os.environ["MEDIAHIVE_ROOTS"] = json.dumps(roots)
+        # Teleported to the server process by fastapi-vue's server.run().
+        config.roots = roots
 
     if (
-        DEVMODE
+        env.dev
         and sys.platform == "win32"
         and os.environ.get("MEDIAHIVE_DEV_CHILD") != "1"
     ):
@@ -156,7 +161,12 @@ def main() -> None:
         default_port=DEFAULT_PORT,
         server_header=False,
         loop="none" if sys.platform == "win32" else "auto",
-        reload=Path(__file__).parent if DEVMODE and sys.platform != "win32" else False,
+        reload=Path(__file__).parent if env.dev and sys.platform != "win32" else False,
+        # fastapi-vue routes the root logger at INFO in dev / WARNING in prod;
+        # keep our own loggers visible in production too.
+        log_config={
+            "loggers": {"mediahive": {"level": "DEBUG" if env.dev else "INFO"}}
+        },
     )
 
 
