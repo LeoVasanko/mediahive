@@ -16,17 +16,18 @@ const LANGUAGE_TO_COUNTRY: Record<string, string> = {
   // Spanish (including LATAM variants collapsed to Spain flag)
   es: "ES",
   spa: "ES",
+  esp: "ES",
   esl: "ES",
   spl: "ES",
   "es-es": "ES",
   "es-419": "ES",
   "spa-la": "ES",
 
-  // Portuguese
+  // Portuguese (Brazilian variant collapses to Portugal flag)
   pt: "PT",
   por: "PT",
   "pt-pt": "PT",
-  "pt-br": "BR",
+  "pt-br": "PT",
 
   // Major European languages
   fr: "FR",
@@ -49,7 +50,7 @@ const LANGUAGE_TO_COUNTRY: Record<string, string> = {
   fi: "FI",
   fin: "FI",
   pl: "PL",
-  पोल: "PL",
+  pol: "PL",
   cs: "CZ",
   ces: "CZ",
   cze: "CZ",
@@ -121,6 +122,113 @@ const LANGUAGE_TO_COUNTRY: Record<string, string> = {
   eu: "ES",
   baq: "ES",
   eus: "ES",
+  gl: "ES",
+  glg: "ES",
+
+  // Additional ISO 639-2 codes (bibliographic + terminology)
+  mk: "MK",
+  mkd: "MK",
+  mac: "MK",
+  et: "EE",
+  est: "EE",
+  lv: "LV",
+  lav: "LV",
+  lt: "LT",
+  lit: "LT",
+  is: "IS",
+  isl: "IS",
+  ice: "IS",
+  ga: "IE",
+  gle: "IE",
+  cy: "GB",
+  cym: "GB",
+  wel: "GB",
+  gd: "GB",
+  gla: "GB",
+  mt: "MT",
+  mlt: "MT",
+  sq: "AL",
+  sqi: "AL",
+  alb: "AL",
+  be: "BY",
+  bel: "BY",
+  bs: "BA",
+  bos: "BA",
+  scc: "RS",
+  scr: "HR",
+  nb: "NO",
+  nob: "NO",
+  nn: "NO",
+  nno: "NO",
+  kk: "KZ",
+  kaz: "KZ",
+  az: "AZ",
+  aze: "AZ",
+  hy: "AM",
+  hye: "AM",
+  arm: "AM",
+  ka: "GE",
+  kat: "GE",
+  geo: "GE",
+  uz: "UZ",
+  uzb: "UZ",
+  tk: "TM",
+  tuk: "TM",
+  tg: "TJ",
+  tgk: "TJ",
+  ky: "KG",
+  kir: "KG",
+  mn: "MN",
+  mon: "MN",
+  bo: "CN",
+  bod: "CN",
+  tib: "CN",
+  my: "MM",
+  mya: "MM",
+  bur: "MM",
+  km: "KH",
+  khm: "KH",
+  lo: "LA",
+  lao: "LA",
+  si: "LK",
+  sin: "LK",
+  ne: "NP",
+  nep: "NP",
+  bn: "BD",
+  ben: "BD",
+  ta: "IN",
+  tam: "IN",
+  te: "IN",
+  tel: "IN",
+  kn: "IN",
+  kan: "IN",
+  ml: "IN",
+  mal: "IN",
+  mr: "IN",
+  mar: "IN",
+  gu: "IN",
+  guj: "IN",
+  pa: "IN",
+  pan: "IN",
+  tl: "PH",
+  tgl: "PH",
+  fil: "PH",
+  af: "ZA",
+  afr: "ZA",
+  am: "ET",
+  amh: "ET",
+  so: "SO",
+  som: "SO",
+  ha: "NG",
+  hau: "NG",
+  yo: "NG",
+  yor: "NG",
+  ig: "NG",
+  ibo: "NG",
+  ku: "TR",
+  kur: "TR",
+  ps: "AF",
+  pus: "AF",
 }
 
 function normalizeLanguageCode(code: string): string {
@@ -265,9 +373,13 @@ export function mapLanguageToCountry(code: string): string | null {
   const direct = LANGUAGE_TO_COUNTRY[normalized]
   if (direct) return direct
 
-  // region-tag style code like en-us / pt-br / es-mx
+  // region-tag style code like en-us / pt-br / es-mx: variants collapse to
+  // the base language's host-country flag; only fall back to the region
+  // itself when the base language is unmapped.
   const hyphenParts = normalized.split("-")
   if (hyphenParts.length >= 2) {
+    const base = LANGUAGE_TO_COUNTRY[hyphenParts[0]]
+    if (base) return base
     const region = hyphenParts[hyphenParts.length - 1]
     if (/^[a-z]{2}$/i.test(region)) {
       return region.toUpperCase()
@@ -341,10 +453,15 @@ export function buildLanguageFlags(codes: string[] | null | undefined): {
 const LANGUAGE_NAME_OVERRIDES: Record<string, string> = {
   eng: "English",
   spa: "Spanish",
+  esp: "Spanish",
   "spa-la": "Spanish",
+  "es-419": "Spanish",
   esl: "Spanish",
   spl: "Spanish",
   por: "Portuguese",
+  "pt-br": "Portuguese",
+  nob: "Norwegian",
+  nno: "Norwegian",
   fre: "French",
   fra: "French",
   ger: "German",
@@ -429,6 +546,53 @@ function summarizeLanguageCodes(codes: string[] | null | undefined): string {
   }
 
   return names.join(", ")
+}
+
+const REGION_NAME_OVERRIDES: Record<string, string> = {
+  GB: "UK",
+  US: "US",
+}
+
+function toRegionName(countryCode: string): string {
+  const override = REGION_NAME_OVERRIDES[countryCode]
+  if (override) return override
+  const display = new Intl.DisplayNames(["en"], { type: "region" })
+  return display.of(countryCode) ?? countryCode
+}
+
+export function formatLanguageFlagTitle(
+  entry: LanguageFlagEntry,
+  externalCodes?: string[] | null,
+): string {
+  const names: string[] = []
+  const variants: string[] = []
+  const external = new Set(
+    (externalCodes ?? []).map((c) => resolveLanguageIdentifier(c)),
+  )
+  let hasExternal = false
+  for (const code of entry.sourceCodes) {
+    const normalized = resolveLanguageIdentifier(code)
+    const base = normalized.split("-", 1)[0]
+    const name = toLanguageName(base)
+    if (!names.includes(name)) names.push(name)
+    // Explicit region tags (en-us, es-419) become parenthesized variants;
+    // plain codes contribute their host country.
+    const suffix = normalized.split("-").pop() ?? ""
+    const region = /^[a-z]{2}$|^\d{3}$/i.test(suffix) && normalized.includes("-")
+      ? suffix.toUpperCase()
+      : mapLanguageToCountry(code)
+    const regionName = region ? toRegionName(region) : null
+    const variant = external.has(normalized)
+      ? regionName
+        ? `${regionName} srt`
+        : "srt"
+      : regionName
+    if (variant && !variants.includes(variant)) variants.push(variant)
+    if (external.has(normalized)) hasExternal = true
+  }
+  const title = names.join(" / ")
+  if (variants.length > 1 || hasExternal) return `${title} (${variants.join(", ")})`
+  return title
 }
 
 export function formatAudioSubtitleSummary(

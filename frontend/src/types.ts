@@ -53,6 +53,7 @@ export interface Torrent {
   audio: string | null
   audio_languages: string[] | null
   subtitle_languages: string[] | null
+  external_subtitle_languages?: string[] | null
   hdr?: boolean
   dovi?: boolean
   atmos?: boolean

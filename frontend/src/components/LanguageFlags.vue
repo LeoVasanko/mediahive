@@ -6,7 +6,7 @@
         v-for="entry in flagEntries"
         :key="entry.countryCode"
         class="language-flag"
-        :title="`${entry.countryCode}: ${entry.sourceCodes.join(', ')}`"
+        :title="formatLanguageFlagTitle(entry, externalCodes)"
         v-html="entry.svg"
       ></span>
       <span
@@ -22,11 +22,12 @@
 
 <script setup lang="ts">
 import { computed } from "vue"
-import { buildLanguageFlags } from "../utils/languageFlags"
+import { buildLanguageFlags, formatLanguageFlagTitle } from "../utils/languageFlags"
 
 const props = defineProps<{
   label?: string
   codes: string[] | null | undefined
+  externalCodes?: string[] | null
   compact?: boolean
 }>()
 

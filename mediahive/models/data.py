@@ -26,6 +26,7 @@ class Torrent(msgspec.Struct, omit_defaults=True):
     audio: str | None = None
     audio_languages: list[str] | None = None
     subtitle_languages: list[str] | None = None
+    external_subtitle_languages: list[str] | None = None
     hdr: bool = False
     dovi: bool = False
     atmos: bool = False

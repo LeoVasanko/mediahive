@@ -44,6 +44,7 @@
         <LanguageFlags
           class="language-flags-subs"
           :codes="torrent.subtitle_languages"
+          :external-codes="torrent.external_subtitle_languages"
           :compact="compactFlags"
         />
       </div>

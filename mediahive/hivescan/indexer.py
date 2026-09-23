@@ -16,6 +16,7 @@ from mediahive.hivescan.models import ContentType, ParsedContent
 from mediahive.hivescan.scanning import (
     find_cover_image,
     find_episode_files,
+    find_external_subtitle_languages,
     find_metadata_probe_file,
     find_playable_file,
 )
@@ -61,6 +62,18 @@ def _infer_hdr10plus(*values: str | None) -> bool:
     return bool(_HDR10PLUS_RE.search(text))
 
 
+def _merge_subtitle_languages(
+    probed: list[str] | None,
+    external: list[str],
+) -> list[str] | None:
+    """Union embedded subtitle languages with sidecar-subtitle languages."""
+    merged = list(probed or [])
+    for lang in external:
+        if lang not in merged:
+            merged.append(lang)
+    return merged or None
+
+
 def _compact_playable_file(file_key: str, playable_file: str | None) -> str | None:
     """Store playable paths compactly relative to the file key when possible."""
     if not playable_file:
@@ -99,6 +112,7 @@ async def _build_torrent_info(
     probe_target = await find_metadata_probe_file(playable_file)
     if probe_target:
         probe_info = await probe_media_info(str(probe_target))
+    external_subs = await find_external_subtitle_languages(playable_file)
 
     if item.content_hash and item.content_hash.size == 0:
         item.content_hash.size = await asyncio.to_thread(
@@ -125,7 +139,11 @@ async def _build_torrent_info(
         codec=item.codec,
         audio=item.audio,
         audio_languages=probe_info.audio_languages if probe_info else None,
-        subtitle_languages=probe_info.subtitle_languages if probe_info else None,
+        subtitle_languages=_merge_subtitle_languages(
+            probe_info.subtitle_languages if probe_info else None,
+            external_subs,
+        ),
+        external_subtitle_languages=external_subs or None,
         hdr=probe_info.hdr if probe_info else False,
         dovi=probe_info.dovi if probe_info else False,
         atmos=probe_info.atmos if probe_info else False,
@@ -207,12 +225,16 @@ async def _collect_episode_files(
                 all_episode_files[key] = []
             for file_path, file_size in files:
                 probe = await get_probe(file_path)
+                external_subs = await find_external_subtitle_languages(file_path)
                 all_episode_files[key].append({
                     "path": file_path,
                     "size": file_size,
                     "probed_resolution": probe.resolution,
                     "audio_languages": probe.audio_languages,
-                    "subtitle_languages": probe.subtitle_languages,
+                    "subtitle_languages": _merge_subtitle_languages(
+                        probe.subtitle_languages, external_subs
+                    ),
+                    "external_subtitle_languages": external_subs or None,
                     "hdr": probe.hdr,
                     "dovi": probe.dovi,
                     "atmos": probe.atmos,
@@ -255,12 +277,18 @@ async def _collect_episode_files(
                                     item.content_hash.path,
                                 )
                             size = item.content_hash.size if item.content_hash else 0
+                            external_subs = await find_external_subtitle_languages(
+                                playable
+                            )
                             all_episode_files[key].append({
                                 "path": playable,
                                 "size": size,
                                 "probed_resolution": probe.resolution,
                                 "audio_languages": probe.audio_languages,
-                                "subtitle_languages": probe.subtitle_languages,
+                                "subtitle_languages": _merge_subtitle_languages(
+                                    probe.subtitle_languages, external_subs
+                                ),
+                                "external_subtitle_languages": external_subs or None,
                                 "hdr": probe.hdr,
                                 "dovi": probe.dovi,
                                 "atmos": probe.atmos,
@@ -343,6 +371,7 @@ def _build_episodes_data(
                 audio=f.get("audio"),
                 audio_languages=f.get("audio_languages"),
                 subtitle_languages=f.get("subtitle_languages"),
+                external_subtitle_languages=f.get("external_subtitle_languages"),
                 hdr=bool(f.get("hdr")),
                 dovi=bool(f.get("dovi")),
                 atmos=bool(f.get("atmos")),

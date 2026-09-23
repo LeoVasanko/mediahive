@@ -28,6 +28,23 @@ VIDEO_EXTENSIONS = {
     ".m2ts",
 }
 
+# External subtitle file extensions
+SUBTITLE_EXTENSIONS = {".srt", ".ass", ".ssa", ".vtt", ".sub"}
+
+# Non-language tokens that may follow the language in a sidecar filename
+_SUBTITLE_FLAG_TOKENS = {"forced", "sdh", "cc", "hi", "dhi", "commentary", "signs"}
+
+# ISO 639-1 -> ISO 639-2/B for common sidecar language tags, so they merge
+# with the codes ffmpeg reports for embedded tracks.
+_ISO_639_1_TO_639_2 = {
+    "ar": "ara", "cs": "ces", "da": "dan", "de": "deu", "el": "ell",
+    "en": "eng", "es": "esp", "fi": "fin", "fr": "fra", "he": "heb",
+    "hi": "hin", "hu": "hun", "id": "ind", "it": "ita", "ja": "jpn",
+    "ko": "kor", "nl": "nld", "no": "nor", "pl": "pol", "pt": "por",
+    "ru": "rus", "sv": "swe", "th": "tha", "tr": "tur", "uk": "ukr",
+    "vi": "vie", "zh": "zho",
+}
+
 # Caches for expensive operations.  These are per-scan only: the scanner
 # clears them at the start of every scan.  Caching across scans is wrong —
 # an empty result recorded before a download finished (or during a transient
@@ -320,6 +337,56 @@ async def find_playable_file(path: Path) -> str | None:
     result = video_files[0][0]
     _playable_file_cache[cache_key] = result
     return result
+
+
+def _sidecar_subtitle_language(video_stem: str, filename: str) -> str | None:
+    """Language tag from a sidecar subtitle name like `<stem>.esp.srt`, if any."""
+    if not filename.startswith(video_stem + "."):
+        return None
+    suffix = Path(filename).suffix.lower()
+    if suffix not in SUBTITLE_EXTENSIONS:
+        return None
+    middle = filename[len(video_stem) + 1 : -len(suffix)]
+    tokens = [t for t in middle.split(".") if t]
+    while tokens and tokens[-1].lower() in _SUBTITLE_FLAG_TOKENS:
+        tokens.pop()
+    if not tokens:
+        return None
+    code = tokens[-1].lower()
+    if not code.isalpha() or not 2 <= len(code) <= 3:
+        return None
+    code = _ISO_639_1_TO_639_2.get(code, code)
+    return None if code == "und" else code
+
+
+def _scan_external_subtitle_languages(video_path: Path) -> list[str]:
+    languages: list[str] = []
+    with os.scandir(video_path.parent) as entries:
+        for entry in entries:
+            if not entry.is_file(follow_symlinks=False):
+                continue
+            lang = _sidecar_subtitle_language(video_path.stem, entry.name)
+            if lang and lang not in languages:
+                languages.append(lang)
+    return languages
+
+
+async def find_external_subtitle_languages(video_path: str | None) -> list[str]:
+    """Languages of external subtitle files sitting next to a video file.
+
+    Matches sidecars named `<stem>.<lang>.<ext>` (e.g. `Movie.esp.srt` ->
+    ``esp``), optionally with flags like ``forced``/``sdh`` after the language.
+    Bare `<stem>.<ext>` files carry no language tag and are ignored.
+    """
+    if not video_path or "://" in video_path or video_path.startswith("concat:"):
+        return []
+    path = Path(video_path)
+    if path.suffix.lower() not in VIDEO_EXTENSIONS:
+        return []
+    try:
+        return await asyncio.to_thread(_scan_external_subtitle_languages, path)
+    except OSError, PermissionError:
+        return []
 
 
 async def find_metadata_probe_file(playable_path: str | None) -> str | None:
