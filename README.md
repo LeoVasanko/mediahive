@@ -1,4 +1,4 @@
-![MediaHive](docs/mediahive.avif)
+![MediaHive](https://git.zi.fi/LeoVasanko/mediahive/media/branch/main/docs/mediahive.avif)
 
 # MediaHive
 
