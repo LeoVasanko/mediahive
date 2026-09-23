@@ -43,6 +43,15 @@ jobs:
           GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
         run: uv run scripts/release.py
 
+      # Wheel/sdist are platform-independent; the linux job also pushes them
+      # to PyPI. Token is the PYPI_TOKEN repository secret.
+      - name: Publish to PyPI
+        if: matrix.os == 'linux'
+        shell: ${{ matrix.shell }}
+        env:
+          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
+        run: uv publish
+
       - name: Attach platform artifact to the Gitea release
         if: matrix.os != 'linux'
         shell: ${{ matrix.shell }}
