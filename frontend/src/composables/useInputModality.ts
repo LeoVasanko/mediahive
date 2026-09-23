@@ -6,6 +6,7 @@ type InputModality = "mouse" | "keyboard" | "gamepad"
 const MOUSE_IDLE_MS = 1400
 const MOUSE_INTENT_DISTANCE_PX = 28
 const MOUSE_INTENT_WINDOW_MS = 700
+const MOUSE_OVER_INTENT_RECENCY_MS = 500
 const MOUSE_INTENT_SELECTOR = [
   "[data-nav-focusable]",
   "button",
@@ -28,6 +29,7 @@ let mouseIdleTimer: number | null = null
 let pointerVisible = false
 let mouseTravelPx = 0
 let lastMouseMoveAt = 0
+let lastAnyMouseMoveAt = 0
 
 function clearMouseIdleTimer() {
   if (mouseIdleTimer !== null) {
@@ -95,6 +97,7 @@ function registerMouseIntentTravel(event: MouseEvent): boolean {
 function handleMouseMove(event: MouseEvent) {
   reportUserActivity()
   showPointerFromMotion()
+  lastAnyMouseMoveAt = performance.now()
 
   if (modality === "mouse") {
     applyInputState(true)
@@ -110,6 +113,13 @@ function handleMouseMove(event: MouseEvent) {
 function handleMouseOver(event: MouseEvent) {
   if (modality === "mouse") return
   if (!isMouseIntentTarget(event.target)) return
+
+  // Browsers fire mouseover/mouseenter when scrolling or re-rendering moves
+  // content under a stationary cursor (e.g. sideways season browsing while
+  // the pointer happens to rest over the episode grid). Without recent real
+  // pointer motion this is not mouse intent — activating mouse input here
+  // would let hover handlers steal keyboard/gamepad focus.
+  if (performance.now() - lastAnyMouseMoveAt > MOUSE_OVER_INTENT_RECENCY_MS) return
 
   // Entering an interactive target indicates likely mouse intent.
   activateMouseInput()

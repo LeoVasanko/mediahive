@@ -548,6 +548,9 @@ function getEpisodeNavAttrs(seasonIndex: number, episodeIndex: number) {
     ...navAttrs(coords.row, coords.col),
     "data-season-index": seasonIndex,
     "data-episode-index": episodeIndex,
+    // Entering the episode grid from above (the season selector) always
+    // lands on the first episode instead of the visually closest tile.
+    ...(episodeIndex === 0 ? { "data-nav-entry-col-from-above": "0" } : {}),
   }
 }
 

@@ -36,6 +36,10 @@ const FOCUSABLE_ATTR = "data-nav-focusable"
 const ROW_ATTR = "data-nav-row"
 const COL_ATTR = "data-nav-col"
 const ENTRY_COL_ATTR = "data-nav-entry-col"
+// Like ENTRY_COL_ATTR, but only applies when entering the row from above
+// (ArrowDown). Lets a row declare a fixed landing column for downward entry
+// without hijacking upward or horizontal moves.
+const ENTRY_COL_FROM_ABOVE_ATTR = "data-nav-entry-col-from-above"
 const SYNC_SCROLL_ROW_ATTR = "data-sync-scroll-row"
 const SYNC_SCROLL_GROUP_ATTR = "data-sync-scroll-group"
 const DEFAULT_SYNC_SCROLL_GROUP = "browse"
@@ -672,8 +676,23 @@ function findNextElement(
       desiredCol.value = currentCol
     }
 
-    const entryTarget = findElementAt(targetRow, targetCol, true)
     const targetRowElements = byRow.get(targetRow) ?? []
+
+    if (direction === "down") {
+      for (const el of targetRowElements) {
+        const fromAboveCol = el.element.getAttribute(ENTRY_COL_FROM_ABOVE_ATTR)
+        if (fromAboveCol === null) continue
+        const fromAboveTarget = targetRowElements.find(
+          (e) => e.col === parseInt(fromAboveCol, 10),
+        )
+        if (fromAboveTarget) {
+          desiredCol.value = fromAboveTarget.col
+          return fromAboveTarget.element
+        }
+      }
+    }
+
+    const entryTarget = findElementAt(targetRow, targetCol, true)
     const hasEntryOverride = targetRowElements.some((el) => el.element.hasAttribute(ENTRY_COL_ATTR))
     if (hasEntryOverride) {
       return entryTarget?.element || null
