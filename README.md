@@ -10,14 +10,7 @@ Netflix style browsing of your local media archive. Supports keyboard, mouse and
 - **macOS**: [Installer](https://git.zi.fi/LeoVasanko/mediahive/releases/download/latest/MediaHive-macos.pkg)
 - **Linux**: [AppImage](https://git.zi.fi/LeoVasanko/mediahive/releases/download/latest/MediaHive-linux.AppImage)
 
-### Linux
-
-```
-wget https://git.zi.fi/LeoVasanko/mediahive/releases/download/latest/MediaHive-linux.AppImage
-chmod +x MediaHive-linux.AppImage && ./MediaHive-linux.AppImage
-```
-
-You may also run without installing via
+You may also run or install with [UV](https://docs.astral.sh/uv/getting-started/installation/):
 
 ```
 uvx --from mediahive[gui] mediahive
