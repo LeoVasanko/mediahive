@@ -1,0 +1,51 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+# Runner host prerequisites: git, uv, node/npm, .NET SDK.
+jobs:
+  gui-build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos
+            shell: bash
+          - os: windows
+            shell: cmd
+          - os: linux
+            shell: bash
+    runs-on: ${{ matrix.os }}
+    steps:
+      # Plain git clone: full history so setuptools_scm sees tags, and both
+      # shells work. Windows uses cmd: bash resolves to WSL (refuses SYSTEM
+      # accounts) and powershell hits the script execution policy under SYSTEM.
+      - name: Checkout
+        shell: ${{ matrix.shell }}
+        run: |
+          git clone "${{ gitea.server_url }}/${{ gitea.repository }}.git" .
+          git checkout -f "${{ gitea.sha }}"
+
+      - name: Build GUI app and dist packages
+        shell: ${{ matrix.shell }}
+        run: uv run --extra gui scripts/guibuild.py
+
+      # Every platform converges on the one release for the tag; release.py
+      # reuses an existing release and skips already-uploaded assets.
+      # Only the linux job publishes the wheel/sdist (identical across platforms).
+      - name: Create Gitea release and upload assets
+        if: matrix.os == 'linux'
+        shell: ${{ matrix.shell }}
+        env:
+          GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
+        run: uv run scripts/release.py
+
+      - name: Attach platform artifact to the Gitea release
+        if: matrix.os != 'linux'
+        shell: ${{ matrix.shell }}
+        env:
+          GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
+        run: uv run scripts/release.py --no-dist

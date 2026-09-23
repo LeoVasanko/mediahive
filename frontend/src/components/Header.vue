@@ -29,7 +29,9 @@
         <!-- Detail mode: show current category + Details -->
         <template v-else>
           <button class="header-nav-item" v-bind="navAttrs(navRow, 0)" @focus="goToCategory">
-            {{ currentView === "search" ? "Search" : currentView === "movies" ? "Movies" : "Series" }}
+            {{
+              currentView === "search" ? "Search" : currentView === "movies" ? "Movies" : "Series"
+            }}
           </button>
           <button class="header-nav-item active" v-bind="navAttrs(navRow, 1, 1)">Details</button>
         </template>
@@ -208,7 +210,9 @@
 
           <section class="settings-section">
             <h2 class="settings-section-title">Preferred Format</h2>
-            <p class="settings-section-desc">Preferred format when multiple versions are available.</p>
+            <p class="settings-section-desc">
+              Preferred format when multiple versions are available.
+            </p>
 
             <div class="format-grid">
               <div class="format-row format-row-stack">
@@ -295,6 +299,16 @@
               </div>
             </div>
           </section>
+
+          <section class="settings-section">
+            <h2 class="settings-section-title">Diagnostics</h2>
+            <p class="settings-section-desc">Application log for troubleshooting.</p>
+
+            <div class="diag-log-header">
+              <span class="diag-label">Application log</span>
+            </div>
+            <pre ref="logEl" class="diag-log" @scroll="onLogScroll">{{ appLog }}</pre>
+          </section>
         </div>
       </div>
     </div>
@@ -302,7 +316,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, computed, onMounted, onUnmounted } from "vue"
+import { ref, watch, computed, onMounted, onUnmounted, nextTick } from "vue"
 import { useRouter, useRoute } from "vue-router"
 import { navAttrs } from "../composables/useKeyboardNavigation"
 import logoUrl from "../assets/mediahive.webp"
@@ -409,6 +423,41 @@ async function refreshPlayers() {
   }
 }
 
+const appLog = ref("")
+const logEl = ref<HTMLElement | null>(null)
+let logSocket: WebSocket | null = null
+let pinnedToBottom = true
+
+function onLogScroll() {
+  const el = logEl.value
+  if (!el) return
+  pinnedToBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48
+}
+
+function connectLogSocket() {
+  if (logSocket) return
+  const proto = location.protocol === "https:" ? "wss" : "ws"
+  const ws = new WebSocket(`${proto}://${location.host}/api/log/ws`)
+  logSocket = ws
+  pinnedToBottom = true
+  ws.onmessage = async (ev) => {
+    appLog.value = String(ev.data)
+    await nextTick()
+    const el = logEl.value
+    if (el && pinnedToBottom) el.scrollTop = el.scrollHeight
+  }
+  ws.onclose = () => {
+    if (logSocket === ws) logSocket = null
+    if (showSettings.value) setTimeout(connectLogSocket, 3000)
+  }
+}
+
+function disconnectLogSocket() {
+  const ws = logSocket
+  logSocket = null
+  ws?.close()
+}
+
 async function removeRoot(rootId: string) {
   const filtered = roots.value.filter((r) => r.root_id !== rootId)
   const newRoots = Object.fromEntries(filtered.map((r) => [r.root_id, r.path]))
@@ -438,6 +487,9 @@ async function addRoot() {
 watch(showSettings, (visible) => {
   if (visible) {
     void refreshPlayers()
+    connectLogSocket()
+  } else {
+    disconnectLogSocket()
   }
 })
 
@@ -551,6 +603,7 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener("keydown", handleKeydown)
   window.removeEventListener("mediahive:gamepad-action", onGamepadAction)
+  disconnectLogSocket()
 })
 </script>
 
@@ -867,5 +920,32 @@ onUnmounted(() => {
   margin: 4px 0 0;
   font-size: 0.8rem;
   color: #22c55e;
+}
+
+.diag-label {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.diag-log-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.diag-log {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 0.75rem;
+  white-space: pre-wrap;
+  word-break: break-all;
+  width: 100%;
+  max-height: 320px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  color: var(--text-secondary);
 }
 </style>

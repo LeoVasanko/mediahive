@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import ctypes
+import importlib.metadata
 import json
 import logging
 import mimetypes
@@ -30,11 +31,16 @@ import aiofiles
 import msgspec
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.responses import (
+    FileResponse,
+    PlainTextResponse,
+    Response,
+    StreamingResponse,
+)
 from fastapi_vue import Frontend
 
 from mediahive.__main__ import DEVMODE
-from mediahive.config import load_config
+from mediahive.config import load_config, log_dir
 from mediahive.hivescan.images import close_image_client
 from mediahive.hivescan.scanner import RootScanner
 from mediahive.hivescan.tmdb_client import close_http_client
@@ -1071,6 +1077,74 @@ app.add_middleware(
 async def health_check():
     """Health check endpoint."""
     return {"status": "ok"}
+
+
+@app.get("/api/version")
+async def get_version():
+    """Return the installed MediaHive package version."""
+    try:
+        version = importlib.metadata.version("mediahive")
+    except importlib.metadata.PackageNotFoundError:
+        version = "dev"
+    return {"version": version}
+
+
+def _read_log() -> str:
+    """Return the full application log file."""
+    path = log_dir() / "mediahive.log"
+    if not path.exists():
+        return ""
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+@app.get("/api/log")
+async def get_log():
+    """Return the full application log file."""
+    return PlainTextResponse(_read_log())
+
+
+@app.websocket("/api/log/ws")
+async def ws_log(ws: WebSocket) -> None:
+    """Stream the application log: full log on connect and on every change."""
+    await ws.accept()
+    last_sent: str | None = None
+    try:
+        while True:
+            current = _read_log()
+            if current != last_sent:
+                last_sent = current
+                await ws.send_text(current)
+            await asyncio.sleep(1.0)
+    except WebSocketDisconnect, OSError, RuntimeError:
+        pass
+
+
+@app.post("/api/client-log", status_code=204)
+async def post_client_log(request: Request):
+    """Append a client-side (webview) error report to client-errors.log."""
+    try:
+        payload = msgspec.json.decode(await request.body())
+    except msgspec.DecodeError:
+        payload = {}
+    message = str(payload.get("message") or "")
+    stack = payload.get("stack")
+    source = payload.get("source")
+    try:
+        dirpath = log_dir()
+        dirpath.mkdir(parents=True, exist_ok=True)
+        with (dirpath / "client-errors.log").open("a", encoding="utf-8") as f:
+            timestamp = datetime.now().isoformat(timespec="seconds")
+            f.write(f"[{timestamp}] {message}\n")
+            if source:
+                f.write(f"  source: {source}\n")
+            if stack:
+                f.write(f"  stack: {stack}\n")
+    except OSError:
+        pass
+    return Response(status_code=204)
 
 
 @app.get("/api/config")

@@ -1,17 +1,19 @@
 r"""Platform-appropriate config persistence for MediaHive.
 
-Config file location:
-  Windows:  %APPDATA%\mediahive\config.toml
-  macOS:    ~/Library/Application Support/mediahive/config.toml
-  Linux:    $XDG_CONFIG_HOME/mediahive/config.toml  (~/.config/mediahive/config.toml)
+Locations (via platformdirs):
+  Config — Windows: %LOCALAPPDATA%\mediahive\config.toml
+           macOS:   ~/Library/Application Support/mediahive/config.toml
+           Linux:   $XDG_CONFIG_HOME/mediahive/config.toml
+  Logs   — Windows: %LOCALAPPDATA%\mediahive\mediahive.log
+           macOS:   ~/Library/Logs/mediahive/mediahive.log
+           Linux:   $XDG_STATE_HOME/mediahive/mediahive.log
 """
 
-import os
-import sys
 from pathlib import Path
 
 import msgspec
 import msgspec.toml
+from platformdirs import user_config_path, user_log_path
 
 
 class Config(msgspec.Struct, omit_defaults=True):
@@ -20,13 +22,15 @@ class Config(msgspec.Struct, omit_defaults=True):
 
 
 def config_dir() -> Path:
-    if sys.platform == "win32":
-        base = Path(os.environ.get("APPDATA") or Path.home())
-    elif sys.platform == "darwin":
-        base = Path.home() / "Library" / "Application Support"
-    else:
-        base = Path(os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config"))
-    return base / "mediahive"
+    # appauthor=False: avoid the doubled %LOCALAPPDATA%\mediahive\mediahive.
+    # roaming=False: config is machine-specific state, not something to sync
+    # across a domain profile.
+    return user_config_path("mediahive", appauthor=False, roaming=False)
+
+
+def log_dir() -> Path:
+    # opinion=False: no extra Logs/ subdir; mediahive.log sits beside config.
+    return user_log_path("mediahive", appauthor=False, opinion=False)
 
 
 def config_path() -> Path:

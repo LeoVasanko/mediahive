@@ -1,0 +1,7 @@
+Welcome to the MediaHive installer.
+
+During installation and on first launch, macOS may ask you to allow
+permissions (for example, access to your media folders or the local
+network). Please allow these so MediaHive can find and play your media.
+
+Click Continue to begin.

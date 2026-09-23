@@ -5,7 +5,7 @@
 #     pyinstaller --noconfirm --clean scripts/MediaHive.spec
 #
 # Or use the build script (recommended—handles versioning and packaging):
-#   uv run scripts/winbuild.py
+#   uv run scripts/guibuild.py
 
 import sys
 import mediahive.winmain
@@ -20,7 +20,15 @@ _frontend_build = _pkg / "frontend-build"
 _logo_webp = _pkg / "assets" / "mediahive.webp"
 _icon_win = _pkg / "assets" / "mediahive.ico"
 _icon_mac = _pkg / "assets" / "mediahive.icns"
-_tools_dir = Path(SPECPATH).parent / "build" / "ffmpeg"
+# ffmpeg staging lives in the persistent build cache (same logic as
+# scripts/guibuild.py); fall back to the legacy build/ffmpeg location.
+from platformdirs import user_cache_path
+
+_tools_dir = (
+    user_cache_path("mediahive-build", appauthor=False, opinion=False) / "ffmpeg"
+)
+if not _tools_dir.exists():
+    _tools_dir = Path(SPECPATH).parent / "build" / "ffmpeg"
 _tool_names = ["ffmpeg.exe"] if sys.platform == "win32" else ["ffmpeg"]
 
 _binaries = []
@@ -80,11 +88,12 @@ if sys.platform == "darwin":
             # pywebview Qt backend selected dynamically via webview.start(gui="qt")
             "webview.platforms.qt",
             "qtpy",
-            "PyQt5",
-            "PyQt5.QtCore",
-            "PyQt5.QtGui",
-            "PyQt5.QtWidgets",
-            "PyQt5.QtWebEngineWidgets",
+            "PyQt6",
+            "PyQt6.QtCore",
+            "PyQt6.QtGui",
+            "PyQt6.QtWidgets",
+            "PyQt6.QtWebEngineCore",
+            "PyQt6.QtWebEngineWidgets",
         ]
     )
 
@@ -123,6 +132,11 @@ exe = EXE(
     windowed=True,
 )
 
+# UPX breaks .NET assemblies: packing Python.Runtime.dll strips/corrupts its
+# CLR metadata and pythonnet then fails with "Failed to resolve
+# Python.Runtime.Loader.Initialize from .../Python.Runtime.dll".
+_upx_exclude = ["Python.Runtime.dll"] if sys.platform == "win32" else []
+
 coll = COLLECT(
     exe,
     a.binaries,
@@ -130,7 +144,7 @@ coll = COLLECT(
     a.datas,
     strip=False,
     upx=True,
-    upx_exclude=[],
+    upx_exclude=_upx_exclude,
     name="MediaHive",
 )
 

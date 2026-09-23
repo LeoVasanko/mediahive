@@ -4,12 +4,13 @@
 
 Netflix style browsing of your local media archive. Supports keyboard, mouse and gamepad navigation. Uses your favorite movie player.
 
-**[Windows and Mac portable ZIP downloads](https://git.zi.fi/LeoVasanko/mediahive/releases)**
+**[Windows, Mac and Linux downloads](https://git.zi.fi/LeoVasanko/mediahive/releases)**
 
 ## Getting Started
 
-- Windows and macOS: Download the portable ZIP from the releases page, extract it anywhere, and run `MediaHive`.
-- Linux and other platforms: Install [UV](https://docs.astral.sh/uv/getting-started/installation/) and run directly with `uvx --from mediahive[gui] mediahive`.
+- Windows: Download `*-win64-setup.exe` from the releases page and run it (no admin needed; auto-updates included). A `-win64-portable.zip` is also available.
+- macOS: Download `*-macos-setup.pkg` and install (auto-updates included).
+- Linux: Download the `.AppImage`, `chmod +x` it, and run. Alternatively install [UV](https://docs.astral.sh/uv/getting-started/installation/) and run directly with `uvx --from mediahive[gui] mediahive`.
 
 ## What It Does
 

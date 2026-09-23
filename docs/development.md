@@ -1,6 +1,6 @@
 # Development
 
-This document covers the developer-facing ways to run MediaHive locally. The main [README.md](../README.md) covers end-user startup across platforms (portable ZIPs on Windows/macOS, `uvx --from mediahive[gui] mediahive` on Linux/other).
+This document covers the developer-facing ways to run MediaHive locally. The main [README.md](../README.md) covers end-user startup across platforms (installer/AppImage downloads, `uvx --from mediahive[gui] mediahive` on Linux/other).
 
 ## Requirements
 
@@ -44,8 +44,8 @@ This launches the same pywebview-based desktop flow used by the Windows build.
 
 The helper scripts are directly executable via their `uv run` shebang (on Windows, run them with `uv run scripts/<name>.py`):
 
-- `./scripts/guibuild.py` builds the PyInstaller desktop app and a versioned portable ZIP under `build/`.
-- `./scripts/release.py` publishes a release to the Gitea releases page.
+- `./scripts/guibuild.py` builds the PyInstaller desktop app and packages it with Velopack under `build/`: per-user `Setup.exe` (Windows), `.pkg` installer (macOS), `.AppImage` (Linux), plus the update feed in `build/velopack/`. On Windows it also creates a `-win64-portable.zip` (no auto-updates). Requires node/npm and the .NET SDK (>= 10 runtime) installed on the build host; `vpk` and ffmpeg are downloaded once into a persistent user cache (`~/.cache/mediahive-build`, `%LOCALAPPDATA%\mediahive-build` on Windows).
+- `./scripts/release.py` publishes a release to the Gitea releases page, uploading the platform artifacts and the Velopack update feed files — installed apps auto-update from the latest release.
 
 Python packaging builds the frontend automatically through the hatch build hook `scripts/fastapi-vue/buildhook.py` (see `pyproject.toml`), so wheels and sdists always ship a fresh `mediahive/frontend-build`.
 

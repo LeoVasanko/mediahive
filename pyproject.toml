@@ -13,6 +13,7 @@ dependencies = [
     "httpx[http2]>=0.28.1",
     "msgspec>=0.19",
     "parse-torrent-title>=2.8.1",
+    "platformdirs>=4.0",
     "tomli-w>=1.2.0",
     "uvicorn[standard]>=0.40.0",
 ]
@@ -50,10 +51,11 @@ parse-torrent-title = { git = "https://github.com/platelminto/parse-torrent-titl
 
 [project.optional-dependencies]
 gui = [
+    # pywebview's qt extra is Qt6-only (QtPy + PyQt6 + PyQt6-WebEngine);
+    # Qt5 would come from its separate qt5 extra, which we do not use.
     "pywebview[qt]>=6.2.1; platform_system != 'Windows'",
     "pywebview>=6.2.1; platform_system == 'Windows'",
-    "qtpy>=2.4.1; platform_system == 'Darwin'",
-    "PyQt5>=5.15.11; platform_system == 'Darwin'",
+    "velopack>=1.2",
     "pythonnet>=3.1.0rc0; platform_system == 'Windows' and python_version >= '3.14'",
     "pyinstaller>=6.0",
 ]

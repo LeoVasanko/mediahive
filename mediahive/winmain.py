@@ -26,9 +26,13 @@ from pathlib import Path
 
 import msgspec.structs
 import uvicorn
+import velopack
 import webview
+from fastapi_vue.logging import patch_log_config
+from fastapi_vue.startupbox import print_box
+from tracerite.html import html_traceback
 
-from mediahive.config import load_config, save_config
+from mediahive.config import load_config, log_dir, save_config
 from mediahive.volume_control import get_volume, set_volume, volume_max
 
 logger = logging.getLogger("mediahive.winmain")
@@ -39,6 +43,7 @@ HEALTH_TIMEOUT = 2  # seconds
 BACKEND_HEALTH_REQUEST_TIMEOUT = 2  # seconds
 BACKEND_HEALTH_POLL_SECONDS = 0.25
 MPC_BE_URL = "http://127.0.0.1:13579"
+VELOPACK_REPO_URL = "https://git.zi.fi/LeoVasanko/mediahive"
 GAMEPAD_REPEAT_SECONDS = 0.008
 GAMEPAD_POLL_SECONDS = 0.008
 MPC_BE_FRAME_REPEAT_SECONDS = 0.016
@@ -871,18 +876,16 @@ def _wait_for_previous_instance(log_path: Path, timeout: float = 15.0):
 
 
 def _setup_logging() -> Path:
-    """Redirect stdout/stderr and configure logging to a file in %APPDATA%/mediahive/.
+    """Redirect stdout/stderr and configure logging to a file in the platform log dir.
 
     In a PyInstaller --windowed build there is no console, so any print() or
     unhandled exception traceback would be lost.  This ensures everything ends
     up in a persistent log file the user can send for bug reports.
     Returns the path to the log file.
     """
-    from mediahive.config import config_dir
-
-    log_dir = config_dir()
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_path = log_dir / "mediahive.log"
+    log_directory = log_dir()
+    log_directory.mkdir(parents=True, exist_ok=True)
+    log_path = log_directory / "mediahive.log"
 
     try:
         log_file = _rotate_and_open_log(log_path)
@@ -899,7 +902,7 @@ def _setup_logging() -> Path:
             log_file = _wait_for_previous_instance(log_path)
         if log_file is None:
             # Never fail startup over logging: fall back to a per-process file.
-            log_path = log_dir / f"mediahive-{os.getpid()}.log"
+            log_path = log_directory / f"mediahive-{os.getpid()}.log"
             with contextlib.suppress(OSError):
                 fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
                 log_file = os.fdopen(fd, "w", encoding="utf-8", buffering=1)
@@ -958,26 +961,53 @@ def _show_fatal_error(exc: BaseException) -> None:
     Frozen --windowed builds otherwise surface crashes only as PyInstaller's
     plain-text error dialog (or nothing at all).
     """
-    try:
-        from tracerite.html import html_traceback
-
-        fragment = str(html_traceback(exc))
-    except Exception:  # noqa: BLE001 - error reporting must never raise
-        return
+    fragment = str(html_traceback(exc))
     page = (
         "<!DOCTYPE html><html><head><meta charset='utf-8'>"
         "<title>MediaHive — Error</title></head>"
         f"<body style='margin:1.5rem'>{fragment}</body></html>"
     )
+    webview.create_window("MediaHive — Error", html=page, width=1100, height=750)
+    webview.start(icon=_icon_path(), **_webview_start_kwargs())
+
+
+def _velopack_startup() -> None:
+    """Handle Velopack install/update/uninstall hooks and pending updates.
+
+    Must be the first thing at startup: when Velopack launches the app with
+    --veloapp-* hook arguments (during install/update/uninstall), run()
+    executes the hook and exits the process, so the GUI never starts.
+    Applies downloaded-but-pending updates. No-op in development and
+    portable-ZIP runs.
+    """
+    velopack.App().run()
+
+
+def _check_for_updates() -> None:
+    """Download available updates in the background.
+
+    Downloaded updates are applied automatically by Velopack on the next app
+    start (via _velopack_startup), so the running session is never
+    interrupted. Not a Velopack install (dev/portable) and network failures
+    are expected and skipped quietly.
+    """
     try:
-        webview.create_window("MediaHive — Error", html=page, width=1100, height=750)
-        webview.start(icon=_icon_path(), **_webview_start_kwargs())
-    except Exception:
-        logger.exception("Could not display the error window")
+        mgr = velopack.UpdateManager(velopack.GiteaSource(VELOPACK_REPO_URL))
+        info = mgr.check_for_updates()
+        if info is None:
+            logger.info("Velopack: no update available")
+            return
+        version = info.TargetFullRelease.Version
+        logger.info("Velopack: downloading update %s", version)
+        mgr.download_updates(info)
+        logger.info("Velopack: update %s staged, applies on next launch", version)
+    except (RuntimeError, OSError) as exc:
+        logger.info("Velopack update check skipped: %s", exc)
 
 
 def gui_main() -> None:
     """Run the GUI, rendering fatal exceptions as a TraceRite HTML window."""
+    _velopack_startup()
     try:
         winmain()
     except Exception as exc:
@@ -1126,8 +1156,26 @@ def _configure_windows_event_loop_policy() -> None:
     asyncio.set_event_loop_policy(policy_cls())
 
 
+def _strip_mark_of_the_web() -> None:
+    """Remove Zone.Identifier streams from bundled DLLs (frozen Windows only).
+
+    Files extracted from a downloaded ZIP carry the Mark-of-the-Web, and the
+    .NET Framework CLR refuses to load such assemblies — pythonnet then fails
+    with "Failed to resolve Python.Runtime.Loader.Initialize from
+    .../Python.Runtime.dll". Strip the mark from the bundled DLLs before
+    pywebview loads the CLR.
+    """
+    if not getattr(sys, "frozen", False) or sys.platform != "win32":
+        return
+    meipass = Path(sys._MEIPASS)  # type: ignore[attr-defined]
+    for dll in meipass.rglob("*.dll"):
+        with contextlib.suppress(OSError):
+            Path(f"{dll}:Zone.Identifier").unlink()
+
+
 def winmain() -> None:
     _configure_windows_event_loop_policy()
+    _strip_mark_of_the_web()
 
     parser = argparse.ArgumentParser(description="MediaHive")
     parser.add_argument(
@@ -1180,8 +1228,6 @@ def winmain() -> None:
 
     # Startup banner, same as fastapi-vue's server.run() prints in CLI mode.
     # Goes to stderr, which frozen builds redirect to the log file.
-    from fastapi_vue.startupbox import print_box
-
     try:
         version = importlib.metadata.version("mediahive")
     except importlib.metadata.PackageNotFoundError:
@@ -1192,8 +1238,6 @@ def winmain() -> None:
     # log config wires up its access-log middleware, emoji level prefixes and
     # tracerite tracebacks (colors are auto-disabled when stderr is not a tty,
     # e.g. redirected to the log file in frozen builds).
-    from fastapi_vue.logging import patch_log_config
-
     config = uvicorn.Config(
         "mediahive.server:app",
         host=BACKEND_HOST,
@@ -1227,6 +1271,10 @@ def winmain() -> None:
     if not _wait_for_backend(timeout=HEALTH_TIMEOUT):
         server.should_exit = True
         raise RuntimeError(f"Backend did not become ready within {HEALTH_TIMEOUT}s")
+
+    threading.Thread(
+        target=_check_for_updates, daemon=True, name="mediahive-update-check"
+    ).start()
 
     api = JsApi()
     logger.info("Configured pywebview backend: %s", _selected_webview_backend())

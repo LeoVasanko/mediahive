@@ -190,9 +190,7 @@ export async function fetchResumePositions(): Promise<Record<string, ResumePosit
       const rawEpisodes = (entry as { episodes?: unknown }).episodes
       if (rawEpisodes && typeof rawEpisodes === "object") {
         const watches: Record<string, EpisodeWatchEntry> = {}
-        for (const [key, watch] of Object.entries(
-          rawEpisodes as Record<string, unknown>,
-        )) {
+        for (const [key, watch] of Object.entries(rawEpisodes as Record<string, unknown>)) {
           if (!watch || typeof watch !== "object") continue
           const w = watch as { pos?: unknown; done?: unknown }
           if (typeof w.pos !== "number" || !Number.isFinite(w.pos)) continue
