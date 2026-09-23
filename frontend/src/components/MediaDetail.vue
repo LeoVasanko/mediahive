@@ -2,6 +2,7 @@
   <!-- Full screen view for series -->
   <SeriesFullView
     v-if="item.type === 'series'"
+    :key="item.id"
     :series="item.data as Series"
     :all-movies="allMovies"
     :focus-episode="focusEpisode"

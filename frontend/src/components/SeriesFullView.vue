@@ -112,7 +112,7 @@
       <div class="episodes-grid">
         <div
           v-for="(episode, eIndex) in selectedSeason?.episodes || []"
-          :key="`${selectedSeasonIndex}-${episode.episode_number}`"
+          :key="`${seriesIdentity}-${selectedSeasonIndex}-${episode.episode_number}`"
           class="episode-tile"
           :class="{ 'episode-tile--ahead': isEpisodeAhead(eIndex) }"
           v-bind="getEpisodeNavAttrs(selectedSeasonIndex, eIndex)"
@@ -258,7 +258,7 @@ import EpisodeReleaseMenu from "./EpisodeReleaseMenu.vue"
 import { sortTorrentsByPreference } from "../composables/useSettings"
 
 const props = defineProps<{
-  series: Series & { root_id?: string | null }
+  series: Series & { id?: string; root_id?: string | null }
   allMovies: MovieUi[]
   focusEpisode?: { seasonNumber: number; episodeNumber: number } | null
   resumePoint?: SeriesResumePoint | null
@@ -296,6 +296,15 @@ const seasonUserInteracted = ref(false)
 const selectedSeason = computed<Season | null>(
   () => props.series.seasons[selectedSeasonIndex.value] || null,
 )
+
+// Stable identity of the displayed series. Episode tiles carry it in their
+// :key so swapping to another series remounts the tiles (and their <video>
+// elements) instead of patching <source> children — which browsers ignore,
+// leaving the previous series' preview reels playing.
+const seriesIdentity = computed(() => {
+  const s = props.series
+  return s.id ?? `${s.root_id ?? ""}:${s.title ?? ""}`
+})
 
 function selectSeason(index: number) {
   if (index < 0 || index >= props.series.seasons.length) return
@@ -1408,6 +1417,17 @@ watch(
     syncSeasonVideoPlayback()
   },
 )
+
+// Series swapped under a reused component instance: tiles remount via the
+// :key, but per-episode state keyed by episode index alone (audio owner,
+// cursor, startup timers) survives — reset it so the old series' playback
+// and audio don't bleed into the new one.
+watch(seriesIdentity, () => {
+  episodeCursorIndex.value = null
+  setAudioOwner(null)
+  stopEpisodePreviews()
+  scheduleEpisodeMediaReady()
+})
 
 // Episodes past the spoiler threshold (cursor or continue point) are faded;
 // stop their playback too.
