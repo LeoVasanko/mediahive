@@ -1,5 +1,8 @@
 <template>
-  <header class="header" :class="[`header-${position}`]">
+  <header class="header" :class="[`header-${position}`, { 'header--gui': isDesktopApp }]">
+    <button v-if="isDesktopApp" class="app-exit-btn" title="Exit MediaHive" @click="exitApp">
+      ✕
+    </button>
     <div class="header-left">
       <RouterLink to="/" class="header-logo-link" aria-label="Go to front page">
         <img :src="logoUrl" alt="MediaHive" class="header-logo" />
@@ -447,6 +450,11 @@ function _onPywebviewReady() {
 window.addEventListener("pywebviewready", _onPywebviewReady, { once: true })
 onUnmounted(() => window.removeEventListener("pywebviewready", _onPywebviewReady))
 
+function exitApp() {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  void (window as any).pywebview?.api?.exit_app()
+}
+
 const showSettings = useSettingsOpen()
 const roots = computed(() => props.roots)
 
@@ -718,6 +726,17 @@ function focusSearchInput() {
 }
 
 function handleKeydown(e: KeyboardEvent) {
+  // Fullscreen toggle works even while typing (Alt+Enter / F11 are never text input).
+  if (
+    isDesktopApp.value &&
+    (e.key === "F11" || (e.key === "Enter" && e.altKey && !e.ctrlKey && !e.metaKey))
+  ) {
+    e.preventDefault()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    void (window as any).pywebview?.api?.toggle_fullscreen()
+    return
+  }
+
   const target = e.target as HTMLElement | null
   const isTypingTarget = Boolean(
     target &&
@@ -749,6 +768,29 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.app-exit-btn {
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 3000;
+  width: 2.875rem;
+  height: 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: #fff;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity 0.15s;
+}
+
+.app-exit-btn:hover {
+  opacity: 1;
+}
 .player-indicator {
   display: inline-flex;
   align-items: center;

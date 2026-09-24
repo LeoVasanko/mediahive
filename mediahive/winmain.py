@@ -1022,6 +1022,16 @@ class JsApi:
         result = self._window.create_file_dialog(webview.FOLDER_DIALOG)
         return result[0] if result else None
 
+    def exit_app(self) -> None:
+        """Close the window, shutting the app down (like the OS close button)."""
+        if self._window:
+            self._window.destroy()
+
+    def toggle_fullscreen(self) -> None:
+        """Switch between fullscreen and windowed mode in place."""
+        if self._window:
+            self._window.toggle_fullscreen()
+
     def set_volume(self, x: float) -> None:
         """Set system master volume from slider position ``x`` (0.0 .. 1.5)."""
         # Clamp to the platform's maximum so the slider never exceeds what
