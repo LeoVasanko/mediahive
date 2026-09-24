@@ -55,3 +55,5 @@ MediaHive opens files with the OS default player, but one specific player may be
 ## Background
 
 This project started as a personal project that I have used for browsing my warez for some time now. It is still in early development, but I have just now made it public for a wider audience.
+
+![Series view](https://git.zi.fi/LeoVasanko/mediahive/media/branch/main/docs/seriesview.avif)
