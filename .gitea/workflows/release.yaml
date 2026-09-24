@@ -29,9 +29,11 @@ jobs:
           git clone "${{ gitea.server_url }}/${{ gitea.repository }}.git" .
           git checkout -f "${{ gitea.sha }}"
 
+      # guibuild.py carries its own inline (PEP 723) deps — mediahive[gui]
+      # from the local checkout — so no project sync or --extra is needed.
       - name: Build GUI app and dist packages
         shell: ${{ matrix.shell }}
-        run: uv run --extra gui scripts/guibuild.py
+        run: uv run scripts/guibuild.py
 
       # Every platform converges on the one release for the tag; release.py
       # reuses an existing release and skips already-uploaded assets.
@@ -43,18 +45,33 @@ jobs:
           GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
         run: uv run scripts/release.py
 
-      # Wheel/sdist are platform-independent; the linux job also pushes them
-      # to PyPI. Token is the PYPI_TOKEN repository secret.
-      - name: Publish to PyPI
-        if: matrix.os == 'linux'
-        shell: ${{ matrix.shell }}
-        env:
-          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
-        run: uv publish
-
       - name: Attach platform artifact to the Gitea release
         if: matrix.os != 'linux'
         shell: ${{ matrix.shell }}
         env:
           GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
         run: uv run scripts/release.py --no-dist
+
+  # Publish the Python package to PyPI only once every platform's GUI build
+  # has succeeded. Jobs don't share a workspace, so the platform-independent
+  # wheel/sdist are rebuilt here (same tag version) instead of being passed
+  # around as artifacts.
+  publish-pypi:
+    needs: gui-build
+    runs-on: linux
+    steps:
+      - name: Checkout
+        shell: bash
+        run: |
+          git clone "${{ gitea.server_url }}/${{ gitea.repository }}.git" .
+          git checkout -f "${{ gitea.sha }}"
+
+      - name: Build wheel and sdist
+        shell: bash
+        run: uv build
+
+      - name: Publish to PyPI
+        shell: bash
+        env:
+          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
+        run: uv publish

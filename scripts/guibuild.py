@@ -1,11 +1,20 @@
 #!/usr/bin/env -S uv run
+# /// script
+# requires-python = ">=3.14"
+# dependencies = [
+#     "mediahive[gui]",
+# ]
+#
+# [tool.uv.sources]
+# mediahive = { path = "../" }
+# ///
 """Build the desktop GUI application and package it with Velopack.
 
 Usage:
     uv run scripts/guibuild.py
 
-This runs in the project environment where dependencies
-are available via pyproject.toml.
+Self-contained: inline script dependencies above make uv resolve the
+package (with the gui extra) plus this script's own direct imports.
 
 This script:
     1. Reads the version from pyproject.toml
