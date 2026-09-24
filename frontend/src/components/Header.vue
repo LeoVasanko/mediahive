@@ -91,35 +91,42 @@
         </svg>
       </button>
 
-      <!-- Floating settings window -->
+      <!-- Floating settings/log overlay -->
       <div v-if="showSettings" class="settings-view" @click.self="closeSettings">
-        <div class="settings-window">
-          <div class="settings-header">
-            <button class="settings-back" @click="closeSettings">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="24"
-                height="24"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <path d="M19 12H5M12 19l-7-7 7-7" />
-              </svg>
-              <span>Back</span>
-            </button>
+        <!-- Floating log window (left side) -->
+        <div v-if="showLog" ref="logWindowEl" class="log-window" :style="logDragStyle">
+          <div class="dialog-header" @pointerdown="onLogDragStart">
+            <h1 class="settings-title">Application log</h1>
+            <div class="log-actions">
+              <button class="log-copy-btn" title="Copy entire log" @click="copyLog">
+                {{ logCopied ? "Copied" : "Copy" }}
+              </button>
+              <button class="dialog-close" title="Close log" @click="closeLog">✕</button>
+            </div>
+          </div>
+          <pre ref="logEl" class="diag-log" @scroll="onLogScroll">{{ appLog }}</pre>
+        </div>
+
+        <!-- Floating settings window (right side) -->
+        <div ref="settingsWindowEl" class="settings-window" :style="settingsDragStyle">
+          <div class="dialog-header" @pointerdown="onSettingsDragStart">
             <h1 class="settings-title">Settings</h1>
-            <div class="settings-header-spacer"></div>
+            <button class="dialog-close" title="Close settings" @click="closeSettings">✕</button>
           </div>
 
           <div class="settings-scroll">
-            <div class="settings-body" :class="{ 'settings-body--no-log': !hasLog }">
-              <section class="settings-section settings-update">
+            <div class="settings-body">
+              <section class="settings-section">
                 <div class="update-row">
                   <span class="update-version"> MediaHive {{ updateStatus?.version ?? "…" }} </span>
+                  <button
+                    v-if="isDesktopApp"
+                    class="log-open-btn"
+                    title="View application log"
+                    @click="openLog"
+                  >
+                    Log
+                  </button>
                   <label class="update-auto">
                     <input
                       type="checkbox"
@@ -336,11 +343,6 @@
                   </button>
                 </div>
               </section>
-
-              <section v-if="hasLog" class="settings-section settings-diag">
-                <h2 class="settings-section-title">Application log</h2>
-                <pre ref="logEl" class="diag-log" @scroll="onLogScroll">{{ appLog }}</pre>
-              </section>
             </div>
           </div>
 
@@ -486,7 +488,67 @@ function openSettings() {
 
 function closeSettings() {
   showSettings.value = false
+  showLog.value = false
 }
+
+const showLog = ref(false)
+
+function openLog() {
+  showLog.value = true
+}
+
+function closeLog() {
+  showLog.value = false
+}
+
+// Draggable floating windows: pointer drag on the dialog header repositions
+// the window by switching it to fixed positioning at the dragged offset.
+function useDraggable() {
+  const el = ref<HTMLElement | null>(null)
+  const pos = ref<{ x: number; y: number } | null>(null)
+
+  function onDragStart(e: PointerEvent) {
+    if ((e.target as HTMLElement).closest("button")) return
+    const rect = el.value?.getBoundingClientRect()
+    if (!rect) return
+    e.preventDefault()
+    const grabX = e.clientX - rect.left
+    const grabY = e.clientY - rect.top
+    pos.value = { x: rect.left, y: rect.top }
+    const onMove = (ev: PointerEvent) => {
+      pos.value = {
+        x: Math.min(Math.max(ev.clientX - grabX, 0), window.innerWidth - 80),
+        y: Math.min(Math.max(ev.clientY - grabY, 0), window.innerHeight - 40),
+      }
+    }
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove)
+      window.removeEventListener("pointerup", onUp)
+    }
+    window.addEventListener("pointermove", onMove)
+    window.addEventListener("pointerup", onUp)
+  }
+
+  const dragStyle = computed(() =>
+    pos.value
+      ? {
+          position: "fixed" as const,
+          left: `${pos.value.x}px`,
+          top: `${pos.value.y}px`,
+          margin: "0",
+        }
+      : undefined,
+  )
+
+  return { el, dragStyle, onDragStart }
+}
+
+const {
+  el: settingsWindowEl,
+  dragStyle: settingsDragStyle,
+  onDragStart: onSettingsDragStart,
+} = useDraggable()
+const { el: logWindowEl, dragStyle: logDragStyle, onDragStart: onLogDragStart } = useDraggable()
 
 function setPreferredResolution(value: ResolutionPreference) {
   settings.preferredResolution = value
@@ -557,7 +619,6 @@ async function restartToUpdate() {
 }
 
 const appLog = ref("")
-const hasLog = ref(false)
 const logEl = ref<HTMLElement | null>(null)
 let logSocket: WebSocket | null = null
 let pinnedToBottom = true
@@ -568,22 +629,48 @@ function onLogScroll() {
   pinnedToBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48
 }
 
+async function applyLogText(text: string) {
+  appLog.value = text
+  await nextTick()
+  const el = logEl.value
+  if (el && pinnedToBottom) el.scrollTop = el.scrollHeight
+}
+
+const logCopied = ref(false)
+let logCopiedTimer: number | null = null
+
+async function copyLog() {
+  const text = appLog.value
+  try {
+    await navigator.clipboard.writeText(text)
+  } catch {
+    // Fallback for contexts where the async clipboard API is unavailable.
+    const ta = document.createElement("textarea")
+    ta.value = text
+    ta.style.position = "fixed"
+    ta.style.opacity = "0"
+    document.body.appendChild(ta)
+    ta.select()
+    document.execCommand("copy")
+    ta.remove()
+  }
+  logCopied.value = true
+  if (logCopiedTimer !== null) window.clearTimeout(logCopiedTimer)
+  logCopiedTimer = window.setTimeout(() => (logCopied.value = false), 1500)
+}
+
 function connectLogSocket() {
   if (logSocket) return
   const proto = location.protocol === "https:" ? "wss" : "ws"
   const ws = new WebSocket(`${proto}://${location.host}/api/log/ws`)
   logSocket = ws
   pinnedToBottom = true
-  ws.onmessage = async (ev) => {
-    appLog.value = String(ev.data)
-    hasLog.value = appLog.value.length > 0
-    await nextTick()
-    const el = logEl.value
-    if (el && pinnedToBottom) el.scrollTop = el.scrollHeight
+  ws.onmessage = (ev) => {
+    void applyLogText(String(ev.data))
   }
   ws.onclose = () => {
     if (logSocket === ws) logSocket = null
-    if (showSettings.value) setTimeout(connectLogSocket, 3000)
+    if (showLog.value) setTimeout(connectLogSocket, 3000)
   }
 }
 
@@ -636,6 +723,14 @@ watch(showSettings, (visible) => {
   if (visible) {
     void refreshPlayers()
     void refreshUpdateStatus()
+  } else {
+    showLog.value = false
+    disconnectLogSocket()
+  }
+})
+
+watch(showLog, (visible) => {
+  if (visible) {
     connectLogSocket()
   } else {
     disconnectLogSocket()
@@ -823,12 +918,29 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  gap: 2.5rem;
+  padding-left: 5vw;
   padding-right: 15vw;
 }
 
 .settings-window {
   width: fit-content;
   max-width: 94vw;
+  height: min(85vh, 56.25rem);
+  flex: 0 0 auto;
+  background: var(--bg-primary);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 0.75rem;
+  box-shadow: 0 1.5rem 4rem rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.log-window {
+  flex: 1 1 auto;
+  min-width: 20rem;
+  max-width: 75rem;
   height: min(85vh, 56.25rem);
   background: var(--bg-primary);
   border: 1px solid rgba(255, 255, 255, 0.12);
@@ -842,52 +954,65 @@ onUnmounted(() => {
 @media (max-width: 43.75rem) {
   .settings-view {
     justify-content: center;
+    padding-left: 0;
     padding-right: 0;
   }
 
-  .settings-window {
+  .settings-window,
+  .log-window {
     width: 100vw;
     max-width: none;
     height: 100vh;
     border: none;
     border-radius: 0;
   }
+
+  .log-window {
+    position: absolute;
+    inset: 0;
+  }
 }
 
-.settings-header {
+.dialog-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 1rem;
   padding: 16px 24px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   flex-shrink: 0;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
 }
 
-.settings-back {
+.dialog-header:active {
+  cursor: grabbing;
+}
+
+.dialog-close {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  justify-content: center;
   background: none;
   border: none;
-  color: var(--text-secondary);
-  font-size: 0.9rem;
+  color: #fff;
+  font-size: 1rem;
+  line-height: 1;
   cursor: pointer;
-  padding: 8px 0;
-  transition: color 0.2s;
+  opacity: 0.7;
+  transition: opacity 0.15s;
+  padding: 4px;
 }
 
-.settings-back:hover {
-  color: var(--text-primary);
+.dialog-close:hover {
+  opacity: 1;
 }
 
 .settings-title {
   font-size: 1.1rem;
   font-weight: 600;
   margin: 0;
-}
-
-.settings-header-spacer {
-  width: 80px;
 }
 
 .settings-scroll {
@@ -898,45 +1023,8 @@ onUnmounted(() => {
 .settings-body {
   margin: 0 auto;
   padding: 2rem 1.5rem;
-  display: grid;
-  grid-template-columns: minmax(23.75rem, 28.75rem) minmax(20rem, 37.5rem);
-  column-gap: 3rem;
-  align-items: stretch;
-}
-
-.settings-body > .settings-section {
-  grid-column: 1;
-  min-width: 0;
-}
-
-.settings-body > .settings-update {
-  grid-column: 1 / -1;
-  grid-row: 1;
-}
-
-.settings-body > .settings-diag {
-  grid-column: 2;
-  grid-row: 2 / span 3;
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.settings-body--no-log {
-  grid-template-columns: minmax(23.75rem, 35rem);
-}
-
-@media (max-width: 56.25rem) {
-  .settings-body,
-  .settings-body--no-log {
-    grid-template-columns: minmax(0, 35rem);
-  }
-
-  .settings-body > .settings-section,
-  .settings-body > .settings-diag {
-    grid-column: 1;
-    grid-row: auto;
-  }
+  width: 32rem;
+  max-width: 100%;
 }
 
 .settings-section {
@@ -1233,25 +1321,57 @@ onUnmounted(() => {
 .diag-log {
   font-family: ui-monospace, Menlo, Consolas, monospace;
   font-size: 0.75rem;
-  white-space: pre-wrap;
-  word-break: break-all;
-  width: 100%;
+  white-space: pre;
   flex: 1;
-  min-height: 15rem;
-  max-height: none;
-  overflow-y: auto;
+  min-height: 0;
+  overflow: auto;
   margin: 0;
-  padding: 0.625rem;
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 0.5rem;
+  padding: 0.625rem 1.5rem 1.5rem;
   color: var(--text-secondary);
+  user-select: text;
+  cursor: text;
 }
 
-@media (max-width: 56.25rem) {
-  .diag-log {
-    flex: none;
-    max-height: 60vh;
-  }
+.log-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.log-copy-btn {
+  padding: 0.125rem 0.5rem;
+  background: none;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 0.375rem;
+  color: var(--text-muted, var(--text-secondary));
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition:
+    color 0.2s,
+    border-color 0.2s;
+}
+
+.log-copy-btn:hover {
+  color: var(--text-primary);
+  border-color: rgba(255, 255, 255, 0.35);
+}
+
+.log-open-btn {
+  padding: 0.125rem 0.5rem;
+  background: none;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 0.375rem;
+  color: var(--text-muted, var(--text-secondary));
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition:
+    color 0.2s,
+    border-color 0.2s;
+}
+
+.log-open-btn:hover {
+  color: var(--text-primary);
+  border-color: rgba(255, 255, 255, 0.35);
 }
 
 /* Library activity footer strip */
