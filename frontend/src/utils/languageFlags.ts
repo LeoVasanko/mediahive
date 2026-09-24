@@ -566,9 +566,7 @@ export function formatLanguageFlagTitle(
 ): string {
   const names: string[] = []
   const variants: string[] = []
-  const external = new Set(
-    (externalCodes ?? []).map((c) => resolveLanguageIdentifier(c)),
-  )
+  const external = new Set((externalCodes ?? []).map((c) => resolveLanguageIdentifier(c)))
   let hasExternal = false
   for (const code of entry.sourceCodes) {
     const normalized = resolveLanguageIdentifier(code)
@@ -578,9 +576,10 @@ export function formatLanguageFlagTitle(
     // Explicit region tags (en-us, es-419) become parenthesized variants;
     // plain codes contribute their host country.
     const suffix = normalized.split("-").pop() ?? ""
-    const region = /^[a-z]{2}$|^\d{3}$/i.test(suffix) && normalized.includes("-")
-      ? suffix.toUpperCase()
-      : mapLanguageToCountry(code)
+    const region =
+      /^[a-z]{2}$|^\d{3}$/i.test(suffix) && normalized.includes("-")
+        ? suffix.toUpperCase()
+        : mapLanguageToCountry(code)
     const regionName = region ? toRegionName(region) : null
     const variant = external.has(normalized)
       ? regionName

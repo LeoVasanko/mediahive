@@ -17,9 +17,9 @@ const STORAGE_KEY = "MediaHive"
 const RESOLUTION_PRIORITY: Record<string, number> = {
   "8K": 5,
   "4K": 4,
-  "FHD": 3,
-  "HD": 2,
-  "SD": 1,
+  FHD: 3,
+  HD: 2,
+  SD: 1,
 }
 
 // Max resolution priority allowed for each preference level
@@ -59,7 +59,13 @@ function loadSettings(): MediaHiveSettings {
   } catch {
     // ignore parse errors
   }
-  return { preferredResolution: "rmax", preferredHdr: "none", playerId: "default", playerCustomCmd: null, playerMpcPort: null }
+  return {
+    preferredResolution: "rmax",
+    preferredHdr: "none",
+    playerId: "default",
+    playerCustomCmd: null,
+    playerMpcPort: null,
+  }
 }
 
 const settings = reactive<MediaHiveSettings>(loadSettings())

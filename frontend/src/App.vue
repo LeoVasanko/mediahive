@@ -11,12 +11,19 @@
           <span>Library activity</span>
           <span v-if="!wsConnected" class="activity-connection">Reconnecting...</span>
         </div>
-        <div v-for="root in progressRoots" :key="root.rootId" class="activity-root" :class="root.toneClass">
+        <div
+          v-for="root in progressRoots"
+          :key="root.rootId"
+          class="activity-root"
+          :class="root.toneClass"
+        >
           <div class="activity-root-title">{{ root.rootLabel }}</div>
           <div v-if="root.scanTarget" class="activity-root-target">{{ root.scanTarget }}</div>
           <div class="activity-phase-row">
             <span class="activity-phase">{{ root.phaseLabel }}</span>
-            <span v-if="root.progressLabel" class="activity-progress-label">{{ root.progressLabel }}</span>
+            <span v-if="root.progressLabel" class="activity-progress-label">{{
+              root.progressLabel
+            }}</span>
           </div>
           <div class="activity-bar" :class="{ 'activity-bar-indeterminate': !root.isDeterminate }">
             <div
@@ -215,7 +222,10 @@ import {
   type EpisodeWatchEntry,
 } from "./api"
 import { useSettings } from "./composables/useSettings"
-import { useKeyboardNavigation, setActiveNavigationScope } from "./composables/useKeyboardNavigation"
+import {
+  useKeyboardNavigation,
+  setActiveNavigationScope,
+} from "./composables/useKeyboardNavigation"
 import type { SyncedRowScrollSnapshot } from "./composables/useKeyboardNavigation"
 import { useMediaWebSocket } from "./composables/useMediaWebSocket"
 import Header from "./components/Header.vue"
@@ -380,7 +390,8 @@ function describeRootProgress(
     }
   } else if (showreelCount > 0) {
     phaseLabel = "Generating previews"
-    phaseDetail = showreelCount === 1 ? "Building 1 preview reel" : `Building ${showreelCount} preview reels`
+    phaseDetail =
+      showreelCount === 1 ? "Building 1 preview reel" : `Building ${showreelCount} preview reels`
   } else if (otherRunningCount > 0) {
     phaseLabel = "Finalizing updates"
     phaseDetail = "Applying library changes"
@@ -472,7 +483,11 @@ watch(
       const key = `${task.root_id}:${task.id}`
       nextSeen.set(key, task.status)
       const previousStatus = seenTaskStates.get(key)
-      if (task.id.startsWith("scan-") && task.status === "completed" && previousStatus !== "completed") {
+      if (
+        task.id.startsWith("scan-") &&
+        task.status === "completed" &&
+        previousStatus !== "completed"
+      ) {
         const detail = (task.detail || "").trim()
         const doneMatch = detail.match(/^Done\s+[\u2014-]\s+(\d+)\s+movies,\s+(\d+)\s+series$/i)
         if (doneMatch) {
@@ -480,7 +495,9 @@ watch(
           const series = Number(doneMatch[2] || "0")
           if (movies > 0 || series > 0) {
             const rootName = getRootName(task.root_id) || task.root_id
-            showLibraryUpdateToast(`Library updated in ${rootName}: ${movies} movies, ${series} series`)
+            showLibraryUpdateToast(
+              `Library updated in ${rootName}: ${movies} movies, ${series} series`,
+            )
           }
         }
       }
@@ -578,9 +595,7 @@ function getResumePoint(mediaId: string | null): SeriesResumePoint | null {
   }
 }
 
-function getResumeEpisodes(
-  mediaId: string | null,
-): Record<string, EpisodeWatchEntry> | null {
+function getResumeEpisodes(mediaId: string | null): Record<string, EpisodeWatchEntry> | null {
   if (!mediaId) return null
   return resumePositions.value[mediaId]?.episodes ?? null
 }
@@ -675,7 +690,9 @@ function showAdjacentDetail(offset: -1 | 1): boolean {
   const sequence = getDetailAdjacentSequence(current)
   if (sequence.length < 2) return false
 
-  const currentIndex = sequence.findIndex((item) => item.id === current.id && item.type === current.type)
+  const currentIndex = sequence.findIndex(
+    (item) => item.id === current.id && item.type === current.type,
+  )
   if (currentIndex < 0) return false
 
   const nextIndex = currentIndex + offset
@@ -771,7 +788,10 @@ function restoreBrowseFocus(path: string) {
   }, 100)
 }
 
-function getSearchExitTargetFromFocusedCard(): { path: "/movies" | "/series"; itemId: string } | null {
+function getSearchExitTargetFromFocusedCard(): {
+  path: "/movies" | "/series"
+  itemId: string
+} | null {
   const active = document.activeElement as HTMLElement | null
   const focusedCard = active?.closest("[data-item-id]") as HTMLElement | null
   if (!focusedCard) return null
@@ -832,9 +852,7 @@ function clearSearch(options: { preferBack?: boolean; targetPath?: string } = {}
       ? normalizeHistoryPath(window.history.state.back)
       : ""
   const canRestoreWithBack =
-    options.preferBack !== false &&
-    searchReturnPath.value === targetPath &&
-    backPath === targetPath
+    options.preferBack !== false && searchReturnPath.value === targetPath && backPath === targetPath
 
   searchReturnPath.value = null
 
@@ -1105,14 +1123,18 @@ function showDetail(item: MediaItem) {
       handlePlay(playableFile)
     } else {
       const searchPath = searchQuery.value ? getSearchPath(searchQuery.value) : null
-      router.push({ path: `/series/${epData.series.id}`, state: searchPath ? { searchPath } : undefined })
+      router.push({
+        path: `/series/${epData.series.id}`,
+        state: searchPath ? { searchPath } : undefined,
+      })
     }
   } else {
     const detailSearchPath = getDetailSearchPath()
-    const searchPath = searchQuery.value
-      ? getSearchPath(searchQuery.value)
-      : detailSearchPath
-    router.push({ path: `/${item.type}/${item.id}`, state: searchPath ? { searchPath } : undefined })
+    const searchPath = searchQuery.value ? getSearchPath(searchQuery.value) : detailSearchPath
+    router.push({
+      path: `/${item.type}/${item.id}`,
+      state: searchPath ? { searchPath } : undefined,
+    })
   }
 }
 
@@ -1133,9 +1155,7 @@ function handleActorSearch(actorName: string) {
 
 function handleSelectMovieFromDetail(movieId: string) {
   const detailSearchPath = getDetailSearchPath()
-  const searchPath = searchQuery.value
-    ? getSearchPath(searchQuery.value)
-    : detailSearchPath
+  const searchPath = searchQuery.value ? getSearchPath(searchQuery.value) : detailSearchPath
   router.push({ path: `/movies/${movieId}`, state: searchPath ? { searchPath } : undefined })
 }
 
@@ -1174,7 +1194,9 @@ function focusDetailEntryTarget(item: MediaItem): boolean {
     return true
   }
 
-  const firstFocusable = detailPanel.querySelector('[data-nav-focusable="true"]') as HTMLElement | null
+  const firstFocusable = detailPanel.querySelector(
+    '[data-nav-focusable="true"]',
+  ) as HTMLElement | null
   if (firstFocusable) {
     focusElement(firstFocusable)
     return true

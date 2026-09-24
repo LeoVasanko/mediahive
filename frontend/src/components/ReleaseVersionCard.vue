@@ -336,7 +336,12 @@ const hdr10PlusPattern = /hdr10\+|hdr10plus/i
 
 const hasHdr10Plus = computed(() => {
   if (props.torrent.hdr10plus) return true
-  const text = [props.torrent.title, props.torrent.quality, props.torrent.codec, props.torrent.audio]
+  const text = [
+    props.torrent.title,
+    props.torrent.quality,
+    props.torrent.codec,
+    props.torrent.audio,
+  ]
     .filter(Boolean)
     .join(" ")
   return hdr10PlusPattern.test(text)

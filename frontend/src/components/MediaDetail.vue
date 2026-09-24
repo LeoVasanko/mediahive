@@ -186,7 +186,11 @@
             v-if="item.type === 'movies' && collectionMovies.length > 1"
             class="similar-movies-section"
           >
-            <div class="similar-movies-grid" data-sync-scroll-row="true" data-sync-scroll-group="similar">
+            <div
+              class="similar-movies-grid"
+              data-sync-scroll-row="true"
+              data-sync-scroll-group="similar"
+            >
               <a
                 v-for="(movie, collectionIndex) in collectionMovies"
                 :key="movie.localId"
@@ -235,7 +239,15 @@
 
 <script setup lang="ts">
 import { computed, ref, watch, onMounted, onUnmounted, nextTick } from "vue"
-import type { CastMember, MediaItem, Movie, MovieUi, Series, SeriesResumePoint, Torrent } from "../types"
+import type {
+  CastMember,
+  MediaItem,
+  Movie,
+  MovieUi,
+  Series,
+  SeriesResumePoint,
+  Torrent,
+} from "../types"
 import type { EpisodeWatchEntry } from "../api"
 import {
   getCoverUrl,
@@ -316,7 +328,9 @@ function getReleaseAtRow(row: number): HTMLElement | null {
 }
 
 function getLastReleaseRowBefore(castRow: number): number | null {
-  const releases = Array.from(document.querySelectorAll<HTMLElement>('[data-nav-release-item="true"]'))
+  const releases = Array.from(
+    document.querySelectorAll<HTMLElement>('[data-nav-release-item="true"]'),
+  )
   let best: number | null = null
   for (const release of releases) {
     const row = parseInt(release.getAttribute("data-nav-row") || "", 10)
@@ -343,11 +357,7 @@ function registerMovieOutOfBoundsShortcut() {
       return null
     }
 
-    if (
-      direction === "left" &&
-      current.hasAttribute("data-nav-cast-item") &&
-      currentCol === 0
-    ) {
+    if (direction === "left" && current.hasAttribute("data-nav-cast-item") && currentCol === 0) {
       const targetRow = lastReleaseShortcutRow ?? getLastReleaseRowBefore(currentRow)
       if (targetRow === null) return null
       return getReleaseAtRow(targetRow)
@@ -756,23 +766,8 @@ const castNavRow = computed(() => {
   return hasDesktopSimilarShortcut ? 4 + movieVersions.value.length : 2 + movieVersions.value.length
 })
 
-const collectionMovies = computed((): Array<{
-  title: string
-  localId: string
-  coverPath: string | null
-  rootId: string | null
-  year: string | null
-  hyphenLang: string | null
-  isCurrent: boolean
-}> => {
-  if (props.item.type !== "movies") return []
-
-  const movie = props.item.data as Movie
-  const collectionName = movie.info?.collection?.trim()
-  if (!collectionName) return []
-  const normalizedCollectionName = collectionName.toLowerCase()
-
-  const matches: Array<{
+const collectionMovies = computed(
+  (): Array<{
     title: string
     localId: string
     coverPath: string | null
@@ -780,60 +775,77 @@ const collectionMovies = computed((): Array<{
     year: string | null
     hyphenLang: string | null
     isCurrent: boolean
-  }> = []
+  }> => {
+    if (props.item.type !== "movies") return []
 
-  let hasCurrentInMatches = false
+    const movie = props.item.data as Movie
+    const collectionName = movie.info?.collection?.trim()
+    if (!collectionName) return []
+    const normalizedCollectionName = collectionName.toLowerCase()
 
-  for (const libraryMovie of props.allMovies || []) {
-    const otherCollectionName = libraryMovie.info?.collection?.trim().toLowerCase()
-    if (otherCollectionName !== normalizedCollectionName) continue
+    const matches: Array<{
+      title: string
+      localId: string
+      coverPath: string | null
+      rootId: string | null
+      year: string | null
+      hyphenLang: string | null
+      isCurrent: boolean
+    }> = []
 
-    const title = libraryMovie.title || libraryMovie.info?.title
-    if (!title) continue
+    let hasCurrentInMatches = false
 
-    const isCurrent = libraryMovie.id === props.item.id
-    if (isCurrent) hasCurrentInMatches = true
+    for (const libraryMovie of props.allMovies || []) {
+      const otherCollectionName = libraryMovie.info?.collection?.trim().toLowerCase()
+      if (otherCollectionName !== normalizedCollectionName) continue
 
-    matches.push({
-      title,
-      localId: libraryMovie.id,
-      coverPath: libraryMovie.cover_path || null,
-      rootId: libraryMovie.root_id || null,
-      year: libraryMovie.year
-        ? String(libraryMovie.year)
-        : libraryMovie.info?.release_date?.slice(0, 4) || null,
-      hyphenLang: normalizeHyphenationLang(libraryMovie.info?.original_language),
-      isCurrent,
-    })
-  }
+      const title = libraryMovie.title || libraryMovie.info?.title
+      if (!title) continue
 
-  if (!hasCurrentInMatches) {
-    matches.push({
-      title: props.item.title || (props.item.data as Movie).info?.title || "Current movie",
-      localId: props.item.id,
-      coverPath: props.item.cover_path || null,
-      rootId: props.item.root_id || null,
-      year: props.item.year
-        ? String(props.item.year)
-        : (props.item.data as Movie).info?.release_date?.slice(0, 4) || null,
-      hyphenLang: normalizeHyphenationLang((props.item.data as Movie).info?.original_language),
-      isCurrent: true,
-    })
-  }
+      const isCurrent = libraryMovie.id === props.item.id
+      if (isCurrent) hasCurrentInMatches = true
 
-  return matches
-    .sort((a, b) => {
-      const yearA = parseInt(a.year || "", 10)
-      const yearB = parseInt(b.year || "", 10)
-      const hasYearA = Number.isFinite(yearA)
-      const hasYearB = Number.isFinite(yearB)
+      matches.push({
+        title,
+        localId: libraryMovie.id,
+        coverPath: libraryMovie.cover_path || null,
+        rootId: libraryMovie.root_id || null,
+        year: libraryMovie.year
+          ? String(libraryMovie.year)
+          : libraryMovie.info?.release_date?.slice(0, 4) || null,
+        hyphenLang: normalizeHyphenationLang(libraryMovie.info?.original_language),
+        isCurrent,
+      })
+    }
 
-      if (hasYearA && hasYearB && yearA !== yearB) return yearA - yearB
-      if (hasYearA !== hasYearB) return hasYearA ? -1 : 1
-      return a.title.localeCompare(b.title)
-    })
-    .slice(0, 24)
-})
+    if (!hasCurrentInMatches) {
+      matches.push({
+        title: props.item.title || (props.item.data as Movie).info?.title || "Current movie",
+        localId: props.item.id,
+        coverPath: props.item.cover_path || null,
+        rootId: props.item.root_id || null,
+        year: props.item.year
+          ? String(props.item.year)
+          : (props.item.data as Movie).info?.release_date?.slice(0, 4) || null,
+        hyphenLang: normalizeHyphenationLang((props.item.data as Movie).info?.original_language),
+        isCurrent: true,
+      })
+    }
+
+    return matches
+      .sort((a, b) => {
+        const yearA = parseInt(a.year || "", 10)
+        const yearB = parseInt(b.year || "", 10)
+        const hasYearA = Number.isFinite(yearA)
+        const hasYearB = Number.isFinite(yearB)
+
+        if (hasYearA && hasYearB && yearA !== yearB) return yearA - yearB
+        if (hasYearA !== hasYearB) return hasYearA ? -1 : 1
+        return a.title.localeCompare(b.title)
+      })
+      .slice(0, 24)
+  },
+)
 
 function normalizeHyphenationLang(language: string | null | undefined): string | null {
   if (!language) return null

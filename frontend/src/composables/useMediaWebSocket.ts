@@ -159,10 +159,7 @@ export function useMediaWebSocket() {
     return { ...normalizeSeries(series, rootId, people), id, root_id: rootId }
   }
 
-  function normalizeCastMember(
-    member: unknown,
-    people: Map<number, Person>,
-  ): CastMember {
+  function normalizeCastMember(member: unknown, people: Map<number, Person>): CastMember {
     if (!Array.isArray(member)) {
       return {
         name: "",
@@ -346,7 +343,10 @@ export function useMediaWebSocket() {
     }
   }
 
-  function mergeItemsByHash<T extends MovieUi | SeriesUi>(items: T[], mergeFn: (a: T, b: T) => T): T[] {
+  function mergeItemsByHash<T extends MovieUi | SeriesUi>(
+    items: T[],
+    mergeFn: (a: T, b: T) => T,
+  ): T[] {
     const map = new Map<string, T[]>()
     for (const item of items) {
       const hash = getContentHash(item.id)
@@ -436,7 +436,14 @@ export function useMediaWebSocket() {
     connected.value = wsRef.value?.readyState === WebSocket.OPEN
   }
 
-  function applyRootInit(rootId: string, rootData: { movies: Record<string, Movie>; series: Record<string, Series>; people?: Record<string, unknown> }) {
+  function applyRootInit(
+    rootId: string,
+    rootData: {
+      movies: Record<string, Movie>
+      series: Record<string, Series>
+      people?: Record<string, unknown>
+    },
+  ) {
     const state = ensureRootState(rootId)
 
     state.peopleMap.clear()
@@ -502,7 +509,10 @@ export function useMediaWebSocket() {
             const parsed = Number(id)
             const normalized = normalizePerson(person)
             if (Number.isFinite(parsed)) {
-              state.peopleMap.set(parsed, normalized || { name: "", profile_path: null, gender: null })
+              state.peopleMap.set(
+                parsed,
+                normalized || { name: "", profile_path: null, gender: null },
+              )
             }
           }
         }

@@ -594,13 +594,7 @@ function activateItem(item: MediaItem) {
 
 function handleItemClick(event: MouseEvent, item: MediaItem) {
   // Let modified clicks navigate natively
-  if (
-    event.button !== 0 ||
-    event.ctrlKey ||
-    event.metaKey ||
-    event.shiftKey ||
-    event.altKey
-  ) {
+  if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) {
     return
   }
   event.preventDefault()

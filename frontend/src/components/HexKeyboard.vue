@@ -1,7 +1,13 @@
 <template>
   <Teleport to="body">
     <Transition name="hex-keyboard-fade">
-      <div v-if="visible" ref="keyboardRef" class="hex-keyboard" @click.stop @keydown="handleKeyDown">
+      <div
+        v-if="visible"
+        ref="keyboardRef"
+        class="hex-keyboard"
+        @click.stop
+        @keydown="handleKeyDown"
+      >
         <div ref="gridRef" class="hex-keyboard-grid">
           <div
             v-for="(row, rowIndex) in rows"
@@ -26,7 +32,9 @@
               tabindex="-1"
               @click="handleKeyClick(key)"
             >
-              <span class="hex-key-label" :class="{ 'hex-key-label-large': key.id === 'sp' }">{{ key.label }}</span>
+              <span class="hex-key-label" :class="{ 'hex-key-label-large': key.id === 'sp' }">{{
+                key.label
+              }}</span>
             </button>
           </div>
           <!-- Green focus outline rendered separately on top -->
@@ -174,11 +182,16 @@ function getCoord(index: number): { row: number; col: number } {
 
 function getRowRange(row: number): { start: number; count: number } {
   switch (row) {
-    case 0: return { start: ROW_0_START, count: ROW_0_COUNT }
-    case 1: return { start: ROW_1_START, count: ROW_1_COUNT }
-    case 2: return { start: ROW_2_START, count: ROW_2_COUNT }
-    case 3: return { start: ROW_3_START, count: ROW_3_COUNT }
-    default: return { start: 0, count: 0 }
+    case 0:
+      return { start: ROW_0_START, count: ROW_0_COUNT }
+    case 1:
+      return { start: ROW_1_START, count: ROW_1_COUNT }
+    case 2:
+      return { start: ROW_2_START, count: ROW_2_COUNT }
+    case 3:
+      return { start: ROW_3_START, count: ROW_3_COUNT }
+    default:
+      return { start: 0, count: 0 }
   }
 }
 
@@ -247,10 +260,7 @@ function close() {
   emit("close")
 }
 
-function findNext(
-  currentIdx: number,
-  direction: "up" | "down" | "left" | "right",
-): number | null {
+function findNext(currentIdx: number, direction: "up" | "down" | "left" | "right"): number | null {
   const current = getCoord(currentIdx)
 
   if (direction === "left") {
@@ -510,10 +520,18 @@ onUnmounted(() => {
 }
 
 /* Row horizontal offsets for honeycomb staggering */
-.hex-keyboard-row-0 { margin-left: 0; }
-.hex-keyboard-row-1 { margin-left: calc(var(--key-w) * 0.5); }
-.hex-keyboard-row-2 { margin-left: calc(var(--key-w) * 1.0); }
-.hex-keyboard-row-3 { margin-left: calc(var(--key-w) * 1.5); }
+.hex-keyboard-row-0 {
+  margin-left: 0;
+}
+.hex-keyboard-row-1 {
+  margin-left: calc(var(--key-w) * 0.5);
+}
+.hex-keyboard-row-2 {
+  margin-left: calc(var(--key-w) * 1);
+}
+.hex-keyboard-row-3 {
+  margin-left: calc(var(--key-w) * 1.5);
+}
 
 .hex-key {
   position: relative;
@@ -529,7 +547,9 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
-  transition: transform 0.15s ease, color 0.3s ease;
+  transition:
+    transform 0.15s ease,
+    color 0.3s ease;
   outline: none;
   transform: scale(0.97);
 }
@@ -538,7 +558,8 @@ onUnmounted(() => {
 .hex-key-row-0 {
   background: linear-gradient(180deg, #626b7bd0 0%, #3a3f4ad0 100%);
 }
-.hex-key-row-1, .hex-key-row-3 {
+.hex-key-row-1,
+.hex-key-row-3 {
   background: linear-gradient(180deg, #2a3343d0 0%, #2c3242d0 100%);
 }
 .hex-key-row-2 {
@@ -553,8 +574,12 @@ onUnmounted(() => {
 }
 
 @keyframes hex-label-fade {
-  0% { color: #22c55e; }
-  100% { color: #ffffff; }
+  0% {
+    color: #22c55e;
+  }
+  100% {
+    color: #ffffff;
+  }
 }
 
 /* Special key backgrounds override row gradients */
@@ -600,8 +625,13 @@ onUnmounted(() => {
 }
 
 @keyframes hex-outline-blink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
 }
 
 /* Transition */

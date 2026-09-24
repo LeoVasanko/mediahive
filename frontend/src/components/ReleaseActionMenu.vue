@@ -84,7 +84,7 @@ const disabled = computed(() => !props.filePath)
 function getFocusableElements(): HTMLElement[] {
   if (!menuRef.value) return []
   return Array.from(
-    menuRef.value.querySelectorAll<HTMLElement>(".version-action-item:not(:disabled)")
+    menuRef.value.querySelectorAll<HTMLElement>(".version-action-item:not(:disabled)"),
   )
 }
 

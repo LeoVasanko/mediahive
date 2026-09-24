@@ -96,7 +96,9 @@
                   formatDate(selectedSeason.air_date)
                 }}</span>
                 <span
-                  >{{ selectedSeason.episode_count ?? selectedSeason.episodes.length }}
+                  >{{
+                    selectedSeason.episode_count ?? selectedSeason.episodes.length
+                  }}
                   Episodes</span
                 >
               </div>
@@ -161,9 +163,7 @@
             <span
               v-if="episodeWatchIndicator(episode)"
               class="ep-watch"
-              :title="
-                episodeWatchIndicator(episode) === '●' ? 'Watched' : 'Partially watched'
-              "
+              :title="episodeWatchIndicator(episode) === '●' ? 'Watched' : 'Partially watched'"
               >{{ episodeWatchIndicator(episode) }}</span
             >
             <div class="tile-play">▶</div>
@@ -367,9 +367,7 @@ const cursorGlobalIndex = computed(() =>
 const resumePointGlobalIndex = computed(() => {
   const point = props.resumePoint
   if (!point) return null
-  const seasonIndex = props.series.seasons.findIndex(
-    (s) => s.season_number === point.seasonNumber,
-  )
+  const seasonIndex = props.series.seasons.findIndex((s) => s.season_number === point.seasonNumber)
   if (seasonIndex < 0) return null
   const episodeIndex = props.series.seasons[seasonIndex]?.episodes.findIndex(
     (e) => e.episode_number === point.episodeNumber,
@@ -650,10 +648,7 @@ watch(
   episodeFocusTarget,
   (ep) => {
     if (!ep) return
-    if (
-      !props.focusEpisode &&
-      (seasonUserInteracted.value || episodeCursorIndex.value !== null)
-    ) {
+    if (!props.focusEpisode && (seasonUserInteracted.value || episodeCursorIndex.value !== null)) {
       return
     }
     const seasonIndex =
@@ -1956,7 +1951,12 @@ html:not(.mouse-active) .episode-tile.nav-focused .tile-focus-outline rect {
       rgba(255, 255, 255, 0.025) 30%,
       rgba(255, 255, 255, 0) 55%
     ),
-    linear-gradient(to bottom, rgba(20, 20, 28, 0.5) 0%, rgba(0, 0, 0, 0) 40%, rgba(0, 0, 0, 0.45) 100%);
+    linear-gradient(
+      to bottom,
+      rgba(20, 20, 28, 0.5) 0%,
+      rgba(0, 0, 0, 0) 40%,
+      rgba(0, 0, 0, 0.45) 100%
+    );
 }
 
 .episode-tile--ahead::after {

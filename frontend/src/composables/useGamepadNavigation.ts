@@ -110,7 +110,9 @@ function getDigitalRepeatIntervalMs(holdMs: number): number {
 
 function getAnalogRepeatIntervalMs(intensity: number): number {
   const normalized = Math.min(Math.max(intensity, 0), 1)
-  return Math.round(ANALOG_REPEAT_MAX_MS - (ANALOG_REPEAT_MAX_MS - ANALOG_REPEAT_MIN_MS) * normalized)
+  return Math.round(
+    ANALOG_REPEAT_MAX_MS - (ANALOG_REPEAT_MAX_MS - ANALOG_REPEAT_MIN_MS) * normalized,
+  )
 }
 
 function normalizeAxisIntensity(rawValue: number): number {

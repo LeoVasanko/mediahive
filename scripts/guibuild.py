@@ -82,10 +82,34 @@ class _Platform(NamedTuple):
 
 def _platform() -> _Platform:
     if sys.platform == "win32":
-        return _Platform("win64", "win", "win-x64", "MediaHive", "mediahive.ico", "MediaHive.exe", ".exe")
+        return _Platform(
+            "win64",
+            "win",
+            "win-x64",
+            "MediaHive",
+            "mediahive.ico",
+            "MediaHive.exe",
+            ".exe",
+        )
     if sys.platform == "darwin":
-        return _Platform("macos", "osx", "osx-arm64", "MediaHive.app", "mediahive.icns", "MediaHive", ".pkg")
-    return _Platform("linux", "linux", "linux-x64", "MediaHive", "mediahive.png", "MediaHive", ".AppImage")
+        return _Platform(
+            "macos",
+            "osx",
+            "osx-arm64",
+            "MediaHive.app",
+            "mediahive.icns",
+            "MediaHive",
+            ".pkg",
+        )
+    return _Platform(
+        "linux",
+        "linux",
+        "linux-x64",
+        "MediaHive",
+        "mediahive.png",
+        "MediaHive",
+        ".AppImage",
+    )
 
 
 def setup_artifact_name() -> str:
@@ -253,7 +277,7 @@ def _dotnet_runtime_major(exe: Path) -> int | None:
         result = subprocess.run(
             [str(exe), "--list-runtimes"], capture_output=True, text=True, timeout=30
         )
-    except (OSError, subprocess.TimeoutExpired):
+    except OSError, subprocess.TimeoutExpired:
         return None
     if result.returncode != 0:
         return None
@@ -455,20 +479,26 @@ def force_macos_user_install(pkg: Path) -> None:
     components = list(expanded.glob("*.pkg"))
     if len(components) != 1:
         contents = sorted(p.name for p in expanded.iterdir())
-        raise RuntimeError(f"Unexpected pkg layout: components={components} in {contents}")
+        raise RuntimeError(
+            f"Unexpected pkg layout: components={components} in {contents}"
+        )
     component = components[0]
     if component.is_dir():
         comp_dir = component
     else:
         comp_dir = expanded / (component.stem + "-component")
-        subprocess.run(["pkgutil", "--expand", str(component), str(comp_dir)], check=True)
+        subprocess.run(
+            ["pkgutil", "--expand", str(component), str(comp_dir)], check=True
+        )
     postinstall = comp_dir / "Scripts" / "postinstall"
     script = postinstall.read_text()
     if 'sudo -u "$USER" ' not in script:
         raise RuntimeError("Unexpected postinstall script: sudo prefix not found")
     postinstall.write_text(script.replace('sudo -u "$USER" ', ""))
     if comp_dir is not component:
-        subprocess.run(["pkgutil", "--flatten", str(comp_dir), str(component)], check=True)
+        subprocess.run(
+            ["pkgutil", "--flatten", str(comp_dir), str(component)], check=True
+        )
         shutil.rmtree(comp_dir)
 
     subprocess.run(["pkgutil", "--flatten", str(expanded), str(pkg)], check=True)

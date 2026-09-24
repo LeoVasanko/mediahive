@@ -103,7 +103,10 @@ function measureGlobalMetrics(group: string): boolean {
     const rowStyle = window.getComputedStyle(row)
     const paddingLeft = parseFloat(rowStyle.paddingLeft || "0")
     const viewportWidth = row.clientWidth
-    const deadzoneInset = Math.max(paddingLeft, (viewportWidth - cardWidth) * SYNC_SCROLL_DEADZONE_RATIO)
+    const deadzoneInset = Math.max(
+      paddingLeft,
+      (viewportWidth - cardWidth) * SYNC_SCROLL_DEADZONE_RATIO,
+    )
     const leftDeadzoneRaw = rowStyle.getPropertyValue(SYNC_SCROLL_LEFT_DEADZONE_VAR).trim()
     const leftDeadzone = Number.isFinite(parseFloat(leftDeadzoneRaw))
       ? Math.max(0, parseFloat(leftDeadzoneRaw))
@@ -175,10 +178,7 @@ function getRowMaxScroll(row: HTMLElement): number {
   if (n === 0) return 0
   const lastCol = n - 1
   const lastItemLeft = m.paddingLeft + lastCol * m.stride
-  const maxVisibleLeft = Math.max(
-    m.paddingLeft,
-    m.viewportWidth - m.cardWidth - m.rightDeadzone,
-  )
+  const maxVisibleLeft = Math.max(m.paddingLeft, m.viewportWidth - m.cardWidth - m.rightDeadzone)
   return Math.max(0, lastItemLeft - maxVisibleLeft)
 }
 
@@ -280,14 +280,8 @@ function updateSyncedRowTarget(anchorCol: number, anchorRow: HTMLElement | null 
   if (!m) return
 
   const itemLeft = m.paddingLeft + anchorCol * m.stride
-  const leftVisibleLimit = Math.max(
-    m.paddingLeft,
-    m.leftDeadzone,
-  )
-  const rightVisibleLimit = Math.max(
-    m.paddingLeft,
-    m.viewportWidth - m.cardWidth - m.rightDeadzone,
-  )
+  const leftVisibleLimit = Math.max(m.paddingLeft, m.leftDeadzone)
+  const rightVisibleLimit = Math.max(m.paddingLeft, m.viewportWidth - m.cardWidth - m.rightDeadzone)
 
   // Keep focus inside the deadzone: no scroll while the focused item remains
   // between left and right limits.
@@ -354,7 +348,9 @@ function getLocalSyncedRowCol(
   element: HTMLElement,
   requestedCol: number,
 ): number {
-  const cards = Array.from(anchorRow.querySelectorAll<HTMLElement>(`.media-card[${FOCUSABLE_ATTR}]`))
+  const cards = Array.from(
+    anchorRow.querySelectorAll<HTMLElement>(`.media-card[${FOCUSABLE_ATTR}]`),
+  )
   if (cards.length === 0) return Math.max(0, requestedCol)
 
   const cardCols = cards
@@ -466,9 +462,7 @@ function ensureElementVisibleVertically(element: HTMLElement) {
 // Element finding / navigation (unchanged logic, uses getMetrics() now)
 // ---------------------------------------------------------------------------
 
-function resolveOutOfBoundsNavigation(
-  context: OutOfBoundsNavigationContext,
-): HTMLElement | null {
+function resolveOutOfBoundsNavigation(context: OutOfBoundsNavigationContext): HTMLElement | null {
   const handlers = Array.from(outOfBoundsHandlers)
   for (let i = handlers.length - 1; i >= 0; i--) {
     const result = handlers[i]?.(context)
@@ -623,10 +617,7 @@ function findElementClosestToLogicalViewportX(
   return nearest
 }
 
-function findNextElement(
-  current: HTMLElement,
-  direction: NavDirection,
-): HTMLElement | null {
+function findNextElement(current: HTMLElement, direction: NavDirection): HTMLElement | null {
   const currentRow = parseInt(current.getAttribute(ROW_ATTR) || "0", 10)
   const currentCol = parseInt(current.getAttribute(COL_ATTR) || "0", 10)
   const byRow = getElementsByRow()
@@ -682,9 +673,7 @@ function findNextElement(
       for (const el of targetRowElements) {
         const fromAboveCol = el.element.getAttribute(ENTRY_COL_FROM_ABOVE_ATTR)
         if (fromAboveCol === null) continue
-        const fromAboveTarget = targetRowElements.find(
-          (e) => e.col === parseInt(fromAboveCol, 10),
-        )
+        const fromAboveTarget = targetRowElements.find((e) => e.col === parseInt(fromAboveCol, 10))
         if (fromAboveTarget) {
           desiredCol.value = fromAboveTarget.col
           return fromAboveTarget.element

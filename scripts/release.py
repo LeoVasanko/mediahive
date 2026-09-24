@@ -73,7 +73,9 @@ def load_token() -> str:
 # MediaHive-macos-setup.pkg, MediaHive-linux-setup.AppImage,
 # MediaHive-win64-portable.zip) so /releases/download/latest/<name> links
 # stay valid. The version comes from setuptools_scm instead.
-_ARTIFACT_RE = re.compile(r"^MediaHive-(?!\d)[A-Za-z0-9._-]+\.(?:zip|dmg|exe|pkg|AppImage)$")
+_ARTIFACT_RE = re.compile(
+    r"^MediaHive-(?!\d)[A-Za-z0-9._-]+\.(?:zip|dmg|exe|pkg|AppImage)$"
+)
 
 
 def read_version() -> str:
@@ -89,7 +91,9 @@ def read_version() -> str:
 def find_releasable_artifacts() -> list[Path]:
     """Return platform artifact paths in build/."""
     build_dir = REPO_ROOT / "build"
-    return [p for p in sorted(build_dir.glob("MediaHive-*")) if _ARTIFACT_RE.match(p.name)]
+    return [
+        p for p in sorted(build_dir.glob("MediaHive-*")) if _ARTIFACT_RE.match(p.name)
+    ]
 
 
 def find_dist_files(version: str) -> list[Path]:

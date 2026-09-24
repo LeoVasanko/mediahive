@@ -65,11 +65,7 @@ function getPlayLabel(filePath: string | null | undefined): string {
 
 function getFocusableElements(): HTMLElement[] {
   if (!menuRef.value) return []
-  return Array.from(
-    menuRef.value.querySelectorAll<HTMLElement>(
-      '.ctx-btn:not(:disabled)'
-    )
-  )
+  return Array.from(menuRef.value.querySelectorAll<HTMLElement>(".ctx-btn:not(:disabled)"))
 }
 
 function focusNext(delta: number) {
@@ -130,9 +126,7 @@ watch(
     await nextTick()
     clampToViewport()
     // Focus first action button for keyboard navigation
-    const firstBtn = menuRef.value?.querySelector(
-      ".ctx-btn:not(:disabled)",
-    ) as HTMLElement | null
+    const firstBtn = menuRef.value?.querySelector(".ctx-btn:not(:disabled)") as HTMLElement | null
     firstBtn?.focus()
   },
   { immediate: true },

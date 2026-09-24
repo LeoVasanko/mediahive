@@ -2,7 +2,6 @@ import { reportUserActivity } from "../api"
 
 type InputModality = "mouse" | "keyboard" | "gamepad"
 
-
 const MOUSE_IDLE_MS = 1400
 const MOUSE_INTENT_DISTANCE_PX = 28
 const MOUSE_INTENT_WINDOW_MS = 700

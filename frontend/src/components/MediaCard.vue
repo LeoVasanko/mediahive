@@ -80,7 +80,9 @@
         </div>
         <div v-else-if="subtitle" class="media-card-detail">{{ subtitle }}</div>
         <div v-if="directorAndCast" class="media-card-detail person-list">
-          <span v-if="director" class="director-name person-token">{{ formatPersonLabel(director) }}</span>
+          <span v-if="director" class="director-name person-token">{{
+            formatPersonLabel(director)
+          }}</span>
           <span
             v-for="(castName, castIndex) in formattedCastNames"
             :key="`${castName}-${castIndex}`"
@@ -112,13 +114,7 @@ const emit = defineEmits<{
 
 function handleClick(event: MouseEvent) {
   // Let modified clicks (middle-click, ctrl+click, etc.) navigate natively
-  if (
-    event.button !== 0 ||
-    event.ctrlKey ||
-    event.metaKey ||
-    event.shiftKey ||
-    event.altKey
-  ) {
+  if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) {
     return
   }
   // Prevent default navigation for plain left-clicks and synthetic clicks

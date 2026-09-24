@@ -1,13 +1,7 @@
 // Search Web Worker - runs search off the main thread
 // This file is loaded as a Web Worker, not imported as a module.
 
-import type {
-  MovieUi,
-  SeriesUi,
-  MatchedPerson,
-  MatchedEpisode,
-  SearchMatchInfo,
-} from "./types"
+import type { MovieUi, SeriesUi, MatchedPerson, MatchedEpisode, SearchMatchInfo } from "./types"
 
 // ---------------------------------------------------------------------------
 // Message types
@@ -65,7 +59,7 @@ let series: SeriesUi[] = []
 function normalizeSearchText(value: string): string {
   return value
     .toLowerCase()
-    .replace(/[^a-z0-9\-]+/g, " ")
+    .replace(/[^a-z0-9-]+/g, " ")
     .trim()
     .replace(/\s+/g, " ")
 }
@@ -277,7 +271,9 @@ function getMatchedWordIndexes(queryWords: string[], value: string): number[] {
 }
 
 function mergePersonMatch(target: PersonMatch[], candidate: PersonCandidate): void {
-  const existing = target.find((person) => person.name.toLowerCase() === candidate.name.toLowerCase())
+  const existing = target.find(
+    (person) => person.name.toLowerCase() === candidate.name.toLowerCase(),
+  )
   if (existing) {
     if (!existing.roles.includes(candidate.role)) existing.roles.push(candidate.role)
     if (candidate.highlightRoles) existing.highlightRoles = true
@@ -292,9 +288,7 @@ function mergePersonMatch(target: PersonMatch[], candidate: PersonCandidate): vo
 }
 
 function getBestContiguousWordRun(indexes: number[], availableIndexes: Set<number>): number[] {
-  const sorted = indexes
-    .filter((index) => availableIndexes.has(index))
-    .sort((a, b) => a - b)
+  const sorted = indexes.filter((index) => availableIndexes.has(index)).sort((a, b) => a - b)
 
   if (sorted.length === 0) return []
 
