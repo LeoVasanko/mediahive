@@ -45,6 +45,9 @@
       :current-view="headerCurrentView"
       :search-query="searchQuery"
       :roots="headerRoots"
+      :scan-tasks="tasks"
+      :scan-connected="wsConnected"
+      :initial-scan-mode="isInitialScanMode"
       :mpc-be-connected="mpcBeConnected"
       :nav-row="1"
       :position="headerPosition"
@@ -209,7 +212,6 @@ import type {
   SeriesUi,
   MediaItem,
   EpisodeWithSeries,
-  TaskInfo,
   SeriesResumePoint,
 } from "./types"
 import {
@@ -228,6 +230,8 @@ import {
 } from "./composables/useKeyboardNavigation"
 import type { SyncedRowScrollSnapshot } from "./composables/useKeyboardNavigation"
 import { useMediaWebSocket } from "./composables/useMediaWebSocket"
+import { computeProgressRoots, type RootTaskInfo } from "./composables/useScanProgress"
+import { useSettingsOpen } from "./composables/useSettingsOpen"
 import Header from "./components/Header.vue"
 import CollageHero from "./components/CollageHero.vue"
 import MediaRow from "./components/MediaRow.vue"
@@ -292,20 +296,6 @@ const {
   roots: rootStatuses,
 } = useMediaWebSocket()
 
-type RootTaskInfo = TaskInfo & { root_id: string }
-
-interface ProgressRootState {
-  rootId: string
-  rootLabel: string
-  scanTarget: string | null
-  phaseLabel: string
-  phaseDetail: string | null
-  progressPercent: number
-  progressLabel: string | null
-  isDeterminate: boolean
-  toneClass: string
-}
-
 const activeTasks = computed<RootTaskInfo[]>(() => Array.from(tasks.value.values()))
 
 function getRootName(rootId: string | null | undefined): string | null {
@@ -313,132 +303,15 @@ function getRootName(rootId: string | null | undefined): string | null {
   return rootStatuses.value.get(rootId)?.root_id || null
 }
 
-function normalizePosixPath(value: string): string {
-  return value.replace(/\\/g, "/")
-}
+const progressRoots = computed(() =>
+  computeProgressRoots(
+    activeTasks.value,
+    (rootId) => rootStatuses.value.get(rootId)?.path || null,
+    isInitialScanMode.value,
+  ),
+)
 
-function extractScanPath(detail: string): string | null {
-  if (!detail.startsWith("Scanning:")) return null
-  let value = detail.replace(/^Scanning:\s*/i, "").trim()
-  value = value.replace(/\s*\(\d+\s+found\)\s*$/i, "").trim()
-  return value || null
-}
-
-function buildScanTarget(rootId: string, rootPath: string | null, detail: string): string | null {
-  const rawPath = extractScanPath(detail)
-  if (!rawPath) return null
-
-  const posixRaw = normalizePosixPath(rawPath)
-  const posixRoot = rootPath ? normalizePosixPath(rootPath) : null
-
-  let relative = posixRaw
-  if (posixRoot) {
-    const lowRaw = posixRaw.toLowerCase()
-    const lowRoot = posixRoot.toLowerCase()
-    if (lowRaw === lowRoot) {
-      relative = ""
-    } else if (lowRaw.startsWith(`${lowRoot}/`)) {
-      relative = posixRaw.slice(posixRoot.length).replace(/^\/+/, "")
-    }
-  }
-
-  if (!relative) return rootId
-  if (relative.toLowerCase().startsWith(`${rootId.toLowerCase()}/`)) return relative
-  return `${rootId}/${relative}`
-}
-
-function describeRootProgress(
-  rootId: string,
-  rootPath: string | null,
-  tasksForRoot: RootTaskInfo[],
-  isInitialScanMode: boolean,
-): ProgressRootState | null {
-  const running = tasksForRoot.filter((task) => task.status === "running")
-  const latestError = [...tasksForRoot].reverse().find((task) => task.status === "error") || null
-
-  if (running.length === 0 && !latestError) return null
-
-  const scanTask = running.find((task) => task.id.startsWith("scan-")) || null
-  const showreelCount = running.filter((task) => task.id.startsWith("showreel-")).length
-  const otherRunningCount = running.length - (scanTask ? 1 : 0) - showreelCount
-
-  let phaseLabel = "Processing media"
-  let phaseDetail: string | null = null
-  let scanTarget: string | null = null
-  let isDeterminate = false
-  let progressPercent = 0
-  let progressLabel: string | null = null
-  let toneClass = ""
-
-  if (scanTask) {
-    const detail = (scanTask.detail || "").trim()
-    scanTarget = buildScanTarget(rootId, rootPath, detail)
-    if (detail.startsWith("Scanning:")) {
-      phaseLabel = isInitialScanMode ? "Scanning folders" : "Checking for updates"
-      phaseDetail = isInitialScanMode ? "Looking for new files" : "Running background scan"
-    } else if (/^Processing\s+\d+\s+(items|movies|series)/i.test(detail)) {
-      phaseLabel = "Preparing titles"
-      phaseDetail = "Matching files and grouping releases"
-    } else {
-      phaseLabel = "Fetching metadata"
-      phaseDetail = detail ? `Current title: ${detail}` : "Updating titles and artwork"
-    }
-    if (scanTask.progress > 0 && scanTask.progress <= 1) {
-      isDeterminate = true
-      progressPercent = Math.max(1, Math.round(scanTask.progress * 100))
-      progressLabel = `${progressPercent}%`
-    }
-  } else if (showreelCount > 0) {
-    phaseLabel = "Generating previews"
-    phaseDetail =
-      showreelCount === 1 ? "Building 1 preview reel" : `Building ${showreelCount} preview reels`
-  } else if (otherRunningCount > 0) {
-    phaseLabel = "Finalizing updates"
-    phaseDetail = "Applying library changes"
-  } else if (latestError) {
-    phaseLabel = "Needs attention"
-    phaseDetail = latestError.detail || "A background task failed"
-    toneClass = "activity-root-error"
-  }
-
-  if (showreelCount > 0 && scanTask) {
-    phaseDetail = phaseDetail
-      ? `${phaseDetail}. Preview generation is running in parallel.`
-      : "Preview generation is running in parallel"
-  }
-
-  return {
-    rootId,
-    rootLabel: rootId,
-    scanTarget,
-    phaseLabel,
-    phaseDetail,
-    progressPercent,
-    progressLabel,
-    isDeterminate,
-    toneClass,
-  }
-}
-
-const progressRoots = computed<ProgressRootState[]>(() => {
-  const byRoot = new Map<string, RootTaskInfo[]>()
-  for (const task of activeTasks.value) {
-    const list = byRoot.get(task.root_id) || []
-    list.push(task)
-    byRoot.set(task.root_id, list)
-  }
-
-  const rows: ProgressRootState[] = []
-  const initial = isInitialScanMode.value
-  for (const [rootId, rootTasks] of byRoot) {
-    const rootPath = rootStatuses.value.get(rootId)?.path || null
-    const row = describeRootProgress(rootId, rootPath, rootTasks, initial)
-    if (row) rows.push(row)
-  }
-  return rows.sort((a, b) => a.rootLabel.localeCompare(b.rootLabel))
-})
-
-const isSettingsView = computed(() => route.path === "/settings")
+const isSettingsView = useSettingsOpen()
 const hasLibraryItems = computed(() => {
   if (!mediaIndex.value) return false
   return mediaIndex.value.movies.length > 0 || mediaIndex.value.series.length > 0
@@ -453,10 +326,8 @@ const headerRoots = computed(() =>
 )
 
 const showProgressPanel = computed(() => {
-  if (isInitialScanMode.value) {
-    return !wsConnected.value || progressRoots.value.length > 0
-  }
-  if (!isSettingsView.value) return false
+  if (isSettingsView.value) return false
+  if (!isInitialScanMode.value) return false
   return !wsConnected.value || progressRoots.value.length > 0
 })
 
@@ -1075,7 +946,7 @@ const activePanelScrollTop = computed(() => {
 })
 
 const headerStyle = computed(() => {
-  if (route.path === "/settings") {
+  if (isSettingsView.value) {
     return {}
   }
   return {

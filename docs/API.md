@@ -11,6 +11,9 @@ All media paths are scoped to a **root**, identified by a friendly `root_id`
 | `GET` | `/api/health` | Lightweight health check. |
 | `GET` | `/api/config` | Returns the current root configuration. |
 | `PUT` | `/api/config/roots` | Atomically replace the full root set. Returns `{ "status": "ok", "accepted": [{path, root_id}], "failed": [...] }`. |
+| `GET` | `/api/update` | Returns `{ "version", "auto_update", "pending_version" }` — installed version, auto-update preference, and any downloaded update staged for the next launch (Velopack GUI builds only; `null` elsewhere). |
+| `PUT` | `/api/config/auto-update` | Enable/disable automatic update downloads. Body `{ "enabled": bool }`, persisted in config. |
+| `POST` | `/api/update/restart` | Applies the staged update and restarts into it. `404` when no update is pending. |
 | `POST` | `/api/play/{root_id}` | Opens a media file with a media player. Also starts an assumed-playback session (see notes). |
 | `GET` | `/api/players` | Lists detected media players. Returns `{ "players": [{id, name, family, path}] }`, including synthetic `default` and `custom` entries. |
 | `POST` | `/api/activity` | Reports user input activity; finalizes any assumed-playback session. Returns `{ "status": "ok", "finalized": bool }`. |

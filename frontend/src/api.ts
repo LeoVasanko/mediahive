@@ -426,13 +426,42 @@ export function getCoverUrl(coverPath: string | null, rootId?: string | null): s
 }
 
 /**
- * Invoke the native OS folder picker via pywebview, then add the selected
- * folder to the server's root list. Only works inside the packaged desktop app.
+ * Invoke the native OS folder picker via pywebview.
+ * Only works inside the packaged desktop app; returns null elsewhere.
  */
-export async function pickFolderAndAddRoot(): Promise<string | null> {
+export async function pickFolder(): Promise<string | null> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const api = (window as any).pywebview?.api
   if (!api) return null
   const folder: string | null = await api.pick_folder()
   return folder
+}
+
+export interface UpdateStatus {
+  version: string
+  auto_update: boolean
+  pending_version: string | null
+}
+
+/** Fetch version, auto-update preference, and any downloaded pending update. */
+export async function fetchUpdateStatus(): Promise<UpdateStatus> {
+  const response = await fetch("/api/update")
+  if (!response.ok) throw new Error(`Failed to fetch update status: ${response.status}`)
+  return response.json()
+}
+
+/** Enable or disable automatic update downloads (persisted server-side). */
+export async function setAutoUpdate(enabled: boolean): Promise<void> {
+  const response = await fetch("/api/config/auto-update", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled }),
+  })
+  if (!response.ok) throw new Error(`Failed to save auto-update setting: ${response.status}`)
+}
+
+/** Apply a downloaded update and restart the app into it. */
+export async function restartForUpdate(): Promise<void> {
+  const response = await fetch("/api/update/restart", { method: "POST" })
+  if (!response.ok) throw new Error(`Failed to restart for update: ${response.status}`)
 }

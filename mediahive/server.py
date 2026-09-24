@@ -29,6 +29,7 @@ from pathlib import Path
 
 import aiofiles
 import msgspec
+import msgspec.structs
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import (
@@ -39,7 +40,8 @@ from fastapi.responses import (
 )
 from fastapi_vue import Frontend, env
 
-from mediahive.config import config, load_config, log_dir
+from mediahive import updater
+from mediahive.config import config, load_config, log_dir, save_config
 from mediahive.hivescan.images import close_image_client
 from mediahive.hivescan.scanner import RootScanner
 from mediahive.hivescan.tmdb_client import close_http_client
@@ -1077,6 +1079,46 @@ async def get_version():
     except importlib.metadata.PackageNotFoundError:
         version = "dev"
     return {"version": version}
+
+
+# --- Auto-update (Velopack, GUI builds only) ---
+
+
+@app.get("/api/update")
+async def get_update_status():
+    """Version, auto-update preference, and any staged (downloaded) update."""
+    version = (await get_version())["version"]
+    cfg = load_config()
+    pending = await asyncio.to_thread(updater.pending_update)
+    return {
+        "version": version,
+        "auto_update": cfg.auto_update,
+        "pending_version": pending,
+    }
+
+
+@app.put("/api/config/auto-update")
+async def put_auto_update(request: Request):
+    """Enable/disable automatic update downloads (persisted in config)."""
+    body = msgspec.json.decode(await request.body())
+    enabled = bool(body.get("enabled", True))
+    cfg = load_config()
+    save_config(msgspec.structs.replace(cfg, auto_update=enabled))
+    with suppress(AttributeError, TypeError):
+        config.auto_update = enabled
+    if enabled:
+        # Catch up on anything missed while updates were disabled.
+        asyncio.create_task(asyncio.to_thread(updater.check_and_download))
+    return {"auto_update": enabled}
+
+
+@app.post("/api/update/restart")
+async def restart_for_update():
+    """Apply the staged update and restart into it (never returns on success)."""
+    applied = await asyncio.to_thread(updater.apply_pending_and_restart)
+    if not applied:
+        raise HTTPException(status_code=404, detail="No downloaded update to apply")
+    return {"status": "restarting"}
 
 
 def _read_log() -> str:

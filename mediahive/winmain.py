@@ -37,6 +37,7 @@ from fastapi_vue.logging import patch_log_config
 from fastapi_vue.startupbox import print_box
 from tracerite.html import html_traceback
 
+from mediahive import updater
 from mediahive.config import config, load_config, log_dir, save_config
 from mediahive.volume_control import get_volume, set_volume, volume_max
 
@@ -48,7 +49,6 @@ HEALTH_TIMEOUT = 2  # seconds
 BACKEND_HEALTH_REQUEST_TIMEOUT = 2  # seconds
 BACKEND_HEALTH_POLL_SECONDS = 0.25
 MPC_BE_URL = "http://127.0.0.1:13579"
-VELOPACK_REPO_URL = "https://git.zi.fi/LeoVasanko/mediahive"
 GAMEPAD_REPEAT_SECONDS = 0.008
 GAMEPAD_POLL_SECONDS = 0.008
 MPC_BE_FRAME_REPEAT_SECONDS = 0.016
@@ -989,25 +989,14 @@ def _velopack_startup() -> None:
 
 
 def _check_for_updates() -> None:
-    """Download available updates in the background.
+    """Download available updates in the background (unless disabled in config).
 
     Downloaded updates are applied automatically by Velopack on the next app
     start (via _velopack_startup), so the running session is never
     interrupted. Not a Velopack install (dev/portable) and network failures
     are expected and skipped quietly.
     """
-    try:
-        mgr = velopack.UpdateManager(velopack.GiteaSource(VELOPACK_REPO_URL))
-        info = mgr.check_for_updates()
-        if info is None:
-            logger.info("Velopack: no update available")
-            return
-        version = info.TargetFullRelease.Version
-        logger.info("Velopack: downloading update %s", version)
-        mgr.download_updates(info)
-        logger.info("Velopack: update %s staged, applies on next launch", version)
-    except (RuntimeError, OSError) as exc:
-        logger.info("Velopack update check skipped: %s", exc)
+    updater.check_and_download()
 
 
 def gui_main() -> None:

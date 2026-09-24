@@ -19,6 +19,7 @@ from platformdirs import user_config_path, user_log_path
 
 class Config(msgspec.Struct, omit_defaults=True):
     roots: dict[str, str] | None = None
+    auto_update: bool = True
 
 
 # Runtime config shared between the CLI entrypoint and the server process via

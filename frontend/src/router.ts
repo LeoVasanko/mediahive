@@ -37,9 +37,9 @@ const router = createRouter({
       component: EmptyRouteComponent,
     },
     {
+      // Settings is now an overlay with no URL of its own; keep old links working.
       path: "/settings",
-      name: "settings",
-      component: EmptyRouteComponent,
+      redirect: "/movies",
     },
     {
       path: "/series",
