@@ -54,6 +54,8 @@ MediaHive opens files with the OS default player, but one specific player may be
 
 ## Background
 
-This project started as a personal project that I have used for browsing my warez for some time now. It is still in early development, but I have just now made it public for a wider audience.
+This project started as a personal project that I have used for browsing my warez for some time now. After it grew in number of users, I've put serious development effort into it to provide a truly polished view, while responding to user needs.
+
+Little details include flags for audio and subtitle languages (also srt) and a series view with per episode video previews while avoiding spoilers of the episodes you haven't gotten to yet:
 
 ![Series view](https://git.zi.fi/LeoVasanko/mediahive/media/branch/main/docs/seriesview.avif)
