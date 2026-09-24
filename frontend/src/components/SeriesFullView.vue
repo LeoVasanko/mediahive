@@ -126,9 +126,7 @@
           @contextmenu="handleContextMenu($event, episode)"
         >
           <!-- SVG focus outline -->
-          <svg class="tile-focus-outline" viewBox="0 0 100 100" preserveAspectRatio="none">
-            <rect x="0" y="0" width="100" height="100" />
-          </svg>
+          <div class="tile-focus-outline"></div>
 
           <!-- Episode preview media -->
           <div class="tile-media">
@@ -1845,23 +1843,19 @@ html:not(.mouse-active) .season-poster-card.nav-focused,
   }
 }
 
-/* SVG focus outline styles for tiles */
+/* Focus outline for tiles; border width is half the SVG stroke width used on
+   poster cards, since a CSS border paints fully inside while an SVG stroke
+   is centered on the path (half of it clipped away). */
 .tile-focus-outline {
   position: absolute;
   inset: 0;
-  width: 100%;
-  height: 100%;
+  border: 2px solid rgba(255, 255, 255, 0.9);
+  border-radius: inherit;
+  box-sizing: border-box;
   pointer-events: none;
   z-index: 5;
   opacity: 0;
   transition: opacity 0.2s ease;
-}
-
-.tile-focus-outline rect {
-  fill: none;
-  stroke: rgba(255, 255, 255, 0.9);
-  stroke-width: 4;
-  vector-effect: non-scaling-stroke;
 }
 
 /* Show outline on hover and focus */
@@ -1872,9 +1866,9 @@ html:not(.mouse-active) .episode-tile.nav-focused .tile-focus-outline {
 }
 
 /* Brighter outline for keyboard focus */
-html:not(.mouse-active) .episode-tile.nav-focused .tile-focus-outline rect {
-  stroke: #ffffff;
-  stroke-width: 5;
+html:not(.mouse-active) .episode-tile.nav-focused .tile-focus-outline {
+  border-color: #ffffff;
+  border-width: 2.5px;
   filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.8));
 }
 
