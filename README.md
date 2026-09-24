@@ -32,11 +32,10 @@ Note that `.mediahive` folder is created in your media folder to hold all the me
 
 MediaHive is designed to work with a mouse, keyboard, or gamepad.
 
-| Input | Controls |
-| --- | --- |
-| Mouse | Click posters, rows, search, play, and folder actions directly. |
-| Keyboard | Arrow keys move focus, `Enter` activates the focused item, `Escape` goes back, and `/` or `Ctrl`/`Cmd`+`F` jumps to search. |
-| Gamepad | D-pad or left stick moves focus, `A` selects or plays, and `B` goes back. `RB`/`LB` browses adjacent items, and the Search bar has an OSD keyboard. Player controls during playback. |
+**Keyboard:** Arrow keys, Enter and Escape to navigate, `/` to search and the usual ones you already know.
+
+![Controller bindings](https://git.zi.fi/LeoVasanko/mediahive/media/branch/main/docs/controls.avif)
+*Navigational controls work across the application. Search bar offers OSD keyboard. In-player controls are currently available only on MPC-BE, with its WebUI enabled.*
 
 ## Recommended Players
 
@@ -45,9 +44,6 @@ MediaHive is designed to work with a mouse, keyboard, or gamepad.
 - Linux: SMPlayer
 
 MediaHive opens files with the OS default player, but one specific player may be configured via settings. You are of course free to use any player instead.
-
-![Controller bindings](https://git.zi.fi/LeoVasanko/mediahive/media/branch/main/docs/controls.avif)
-**Gamepad controls are currently available only on MPC-BE, with its WebUI enabled.**
 
 ## Background
 
