@@ -46,11 +46,8 @@ MediaHive is designed to work with a mouse, keyboard, or gamepad.
 
 MediaHive opens files with the OS default player, but one specific player may be configured via settings. You are of course free to use any player instead.
 
-- `A` toggles play and pause.
-- `B` closes the player.
-- `Y` toggles mute.
-- D-pad up and down change volume.
-- D-pad left and right seek during playback, or step frames while paused.
+![Controller bindings](https://git.zi.fi/LeoVasanko/mediahive/media/branch/main/docs/controls.avif)
+**Gamepad controls are currently available only on MPC-BE, with its WebUI enabled.**
 
 ## Background
 
