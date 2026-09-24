@@ -20,3 +20,5 @@ package-lock.json
 .*
 !.gitignore
 !.gitea/
+!.git-blame-ignore-revs
+!.pre-commit-config.yaml

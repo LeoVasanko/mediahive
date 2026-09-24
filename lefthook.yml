@@ -1,0 +1,19 @@
+pre-commit:
+  parallel: true
+  commands:
+    ruff-check:
+      glob: "*.py"
+      run: .venv/bin/ruff check --fix {staged_files}
+      stage_fixed: true
+    ruff-format:
+      glob: "*.py"
+      run: .venv/bin/ruff format {staged_files}
+      stage_fixed: true
+    oxlint:
+      glob: "frontend/src/**"
+      run: npm --prefix frontend run lint
+      stage_fixed: true
+    oxfmt:
+      glob: "frontend/src/**"
+      run: npm --prefix frontend run format
+      stage_fixed: true
